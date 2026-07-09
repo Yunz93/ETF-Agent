@@ -54,17 +54,15 @@ python3 -m desktop
 ./packaging/build_mac.sh
 ```
 
-安装已打包的 `.app`（推荐，自动处理未签名 / Gatekeeper 拦截）：
+一键安装桌面版（推荐，自动下载最新 Release 并处理未签名 / Gatekeeper 拦截）：
 
 ```bash
-# 下载 Release / Actions 产物中的 zip 与 install_mac.sh 后：
-chmod +x install_mac.sh
-./install_mac.sh StockAgent-*.zip
+curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/install_mac.sh | bash
 ```
 
-脚本会清除隔离属性、重新 ad-hoc 签名，并安装到 `/Applications`。详见 [docs/DESKTOP.md](docs/DESKTOP.md)。
+脚本会下载最新 macOS 产物、清除隔离属性、重新 ad-hoc 签名，并安装到 `/Applications`。详见 [docs/DESKTOP.md](docs/DESKTOP.md)。
 
-GitHub Actions 会在改动桌面相关文件或打 `v*` tag 时自动编译 `.app` / zip / dmg，并附带 `install_mac.sh`。
+GitHub Actions 会在改动桌面相关文件或打 `v*` tag 时自动编译 `.app` / zip / dmg。
 
 ## 数据源替换点
 

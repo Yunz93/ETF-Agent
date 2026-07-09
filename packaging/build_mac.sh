@@ -73,20 +73,21 @@ echo "==> Installer script"
 cp "$ROOT/packaging/install_mac.sh" "$ARTIFACT_DIR/install_mac.sh"
 chmod +x "$ARTIFACT_DIR/install_mac.sh"
 cat > "$ARTIFACT_DIR/INSTALL.txt" <<EOF
-StockAgent macOS 安装说明
+StockAgent macOS 一键安装
 ========================
 
-推荐（自动处理未签名 / Gatekeeper 拦截）：
+推荐（自动下载最新版，并处理未签名 / Gatekeeper 拦截）：
+
+  curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/install_mac.sh | bash
+
+使用本目录中的脚本 / 安装包：
 
   chmod +x install_mac.sh
-  ./install_mac.sh StockAgent-${stamp}-macos-${arch}.zip
-
-或把 zip / dmg 与 install_mac.sh 放在同一目录后直接：
-
-  ./install_mac.sh
+  ./install_mac.sh                                          # 下载最新 Release
+  ./install_mac.sh StockAgent-${stamp}-macos-${arch}.zip    # 安装本地包
 
 脚本会：
-  1. 解压 / 挂载安装包
+  1. 下载（或解压 / 挂载）安装包
   2. 清除 com.apple.quarantine 隔离属性
   3. 重新 ad-hoc codesign
   4. 安装到 /Applications/StockAgent.app 并启动
