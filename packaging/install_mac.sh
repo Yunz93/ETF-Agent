@@ -72,10 +72,17 @@ fetch_release_json() {
   else
     url="$GITHUB_API/repos/$REPO/releases/tags/$TAG"
   fi
+  # GitHub API rejects anonymous requests without a User-Agent (403).
   if have curl; then
-    curl -fsSL -H "Accept: application/vnd.github+json" "$url"
+    curl -fsSL \
+      -H "Accept: application/vnd.github+json" \
+      -H "User-Agent: StockAgent-install_mac" \
+      "$url"
   elif have wget; then
-    wget -qO- --header="Accept: application/vnd.github+json" "$url"
+    wget -qO- \
+      --header="Accept: application/vnd.github+json" \
+      --header="User-Agent: StockAgent-install_mac" \
+      "$url"
   else
     die "需要 curl 或 wget 才能查询 GitHub Release"
   fi

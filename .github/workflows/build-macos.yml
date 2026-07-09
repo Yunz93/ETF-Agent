@@ -74,7 +74,17 @@ jobs:
             exit 1
           fi
           # Resolve latest Release asset without installing.
-          STOCKAGENT_INSTALL_CHECK=1 packaging/install_mac.sh | grep -E 'StockAgent-.*\.(zip|dmg)'
+          # Soft-skip on transient GitHub API 403/rate-limit in CI.
+          if ! out="$(STOCKAGENT_INSTALL_CHECK=1 packaging/install_mac.sh 2>&1)"; then
+            echo "$out"
+            if echo "$out" | grep -Eqi '403|rate limit|无法获取 Release'; then
+              echo "WARN: GitHub API unavailable; skipping asset resolve check"
+              exit 0
+            fi
+            exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -Eq 'StockAgent-.*\.(zip|dmg)'
 
   build-macos:
     name: Build StockAgent.app
