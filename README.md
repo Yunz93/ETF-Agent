@@ -54,7 +54,17 @@ python3 -m desktop
 ./packaging/build_mac.sh
 ```
 
-GitHub Actions 会在改动桌面相关文件或打 `v*` tag 时自动编译 `.app` / zip / dmg，详见 [docs/DESKTOP.md](docs/DESKTOP.md)。
+安装已打包的 `.app`（推荐，自动处理未签名 / Gatekeeper 拦截）：
+
+```bash
+# 下载 Release / Actions 产物中的 zip 与 install_mac.sh 后：
+chmod +x install_mac.sh
+./install_mac.sh StockAgent-*.zip
+```
+
+脚本会清除隔离属性、重新 ad-hoc 签名，并安装到 `/Applications`。详见 [docs/DESKTOP.md](docs/DESKTOP.md)。
+
+GitHub Actions 会在改动桌面相关文件或打 `v*` tag 时自动编译 `.app` / zip / dmg，并附带 `install_mac.sh`。
 
 ## 数据源替换点
 

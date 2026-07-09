@@ -68,6 +68,8 @@ Outputs:
 - `dist/StockAgent.app`
 - `dist/artifacts/StockAgent-<version>+<build>-macos-<arch>.zip`
 - `dist/artifacts/StockAgent-<version>+<build>-macos-<arch>.dmg`
+- `dist/artifacts/install_mac.sh` — recommended installer (clears quarantine)
+- `dist/artifacts/INSTALL.txt`
 - `dist/artifacts/build-info.json`
 
 Supporting files:
@@ -80,8 +82,34 @@ Supporting files:
 | `packaging/entitlements.plist` | Network + user-selected file access |
 | `packaging/generate_icons.py` | Builds iconset / `.icns` |
 | `packaging/build_mac.sh` | Install → icons → PyInstaller → sign → zip/dmg |
+| `packaging/install_mac.sh` | User-facing installer for ad-hoc / unsigned builds |
 
-Phase 1 ships **ad-hoc signed** builds. Gatekeeper may still require right-click → Open on other Macs.
+## Install on another Mac (recommended)
+
+Phase 1 ships **ad-hoc signed** (not Developer ID / not notarized) builds. Downloading the zip/dmg normally sets `com.apple.quarantine`, so Gatekeeper may block a plain double-click.
+
+Use the installer script shipped with each artifact (or from this repo):
+
+```bash
+chmod +x install_mac.sh
+./install_mac.sh StockAgent-<version>+<build>-macos-<arch>.zip
+```
+
+If `install_mac.sh` sits next to the zip/dmg in `~/Downloads` or `dist/artifacts`, you can omit the path:
+
+```bash
+./install_mac.sh
+```
+
+What it does:
+
+1. Unpacks zip or mounts dmg
+2. Removes Gatekeeper quarantine (`xattr -cr`)
+3. Re-applies ad-hoc `codesign --force --deep --sign -`
+4. Copies to `/Applications/StockAgent.app` (override with `INSTALL_DIR=...`)
+5. Opens the app (`OPEN_AFTER=0` to skip)
+
+Manual fallback: drag `.app` into Applications, then right-click → Open, or System Settings → Privacy & Security → Open Anyway.
 
 Phase 2 (later): Developer ID signing + Apple notarization + Sparkle/auto-update.
 

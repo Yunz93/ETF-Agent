@@ -63,6 +63,16 @@ jobs:
       - name: Generate icons (PNG iconset)
         run: python packaging/generate_icons.py
 
+      - name: Check install_mac.sh
+        run: |
+          chmod +x packaging/install_mac.sh
+          bash -n packaging/install_mac.sh
+          # Non-macOS hosts must fail fast with a clear error.
+          if packaging/install_mac.sh; then
+            echo "expected non-zero exit on Linux" >&2
+            exit 1
+          fi
+
   build-macos:
     name: Build StockAgent.app
     needs: smoke-linux
@@ -97,8 +107,10 @@ jobs:
           MAKE_DMG: "1"
           MAKE_ZIP: "1"
         run: |
-          chmod +x packaging/build_mac.sh
+          chmod +x packaging/build_mac.sh packaging/install_mac.sh
           ./packaging/build_mac.sh
+          test -x dist/artifacts/install_mac.sh
+          test -f dist/artifacts/INSTALL.txt
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

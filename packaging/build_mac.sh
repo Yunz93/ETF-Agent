@@ -68,6 +68,33 @@ if [[ "$MAKE_DMG" == "1" ]]; then
     "$dmg_path"
 fi
 
+# Ship the Gatekeeper-friendly installer next to zip/dmg artifacts.
+echo "==> Installer script"
+cp "$ROOT/packaging/install_mac.sh" "$ARTIFACT_DIR/install_mac.sh"
+chmod +x "$ARTIFACT_DIR/install_mac.sh"
+cat > "$ARTIFACT_DIR/INSTALL.txt" <<EOF
+StockAgent macOS 安装说明
+========================
+
+推荐（自动处理未签名 / Gatekeeper 拦截）：
+
+  chmod +x install_mac.sh
+  ./install_mac.sh StockAgent-${stamp}-macos-${arch}.zip
+
+或把 zip / dmg 与 install_mac.sh 放在同一目录后直接：
+
+  ./install_mac.sh
+
+脚本会：
+  1. 解压 / 挂载安装包
+  2. 清除 com.apple.quarantine 隔离属性
+  3. 重新 ad-hoc codesign
+  4. 安装到 /Applications/StockAgent.app 并启动
+
+手动安装仍可用：解压后拖到「应用程序」，若被拦截请右键 → 打开，
+或到「系统设置 → 隐私与安全性」选择仍要打开。
+EOF
+
 # Machine-readable build metadata for CI
 cat > "$ARTIFACT_DIR/build-info.json" <<EOF
 {
@@ -76,6 +103,7 @@ cat > "$ARTIFACT_DIR/build-info.json" <<EOF
   "build": "$build_no",
   "arch": "$arch",
   "app_path": "dist/StockAgent.app",
+  "installer": "install_mac.sh",
   "commit": "${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 }
 EOF
@@ -84,4 +112,5 @@ echo
 echo "Built: $APP"
 echo "Artifacts: $ARTIFACT_DIR"
 ls -lah "$ARTIFACT_DIR" || true
+echo "Install: ./dist/artifacts/install_mac.sh <zip|dmg|app>"
 echo "Data dir at runtime: ~/Library/Application Support/StockAgent/"
