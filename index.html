@@ -84,44 +84,62 @@
         </header>
 
         <section id="workbenchView" class="view active">
-          <div class="metric-grid" id="workbenchMetrics"></div>
-          <div class="workbench-grid">
-            <section class="panel-block">
+          <p class="workbench-lede muted">打开先看三件事：自选变了什么、持仓怎样、今天该看什么。</p>
+          <div class="metric-grid workbench-metrics" id="workbenchMetrics"></div>
+          <div class="workbench-grid workbench-questions">
+            <section class="panel-block workbench-q" data-question="changed">
               <div class="panel-heading">
-                <h2 class="section-title">自选异动</h2>
-                <button class="ghost-button compact" data-goto="watchlist" type="button">打开自选</button>
+                <div>
+                  <p class="question-kicker">一</p>
+                  <h2 class="section-title">变了什么</h2>
+                </div>
+                <div class="inline-actions">
+                  <button id="enableNotify" class="ghost-button compact" type="button">开启通知</button>
+                  <button class="ghost-button compact" data-goto="watchlist" type="button">打开自选</button>
+                </div>
               </div>
-              <div id="workbenchWatchMoves" class="stack-list"></div>
+              <p class="question-hint muted">自选异动与价格 / 财报提醒</p>
+              <div id="workbenchChanged" class="stack-list"></div>
             </section>
-            <section class="panel-block">
+            <section class="panel-block workbench-q" data-question="position">
               <div class="panel-heading">
-                <h2 class="section-title">待办提醒</h2>
-                <button id="enableNotify" class="ghost-button compact" type="button">开启通知</button>
-              </div>
-              <div id="workbenchAlerts" class="stack-list"></div>
-            </section>
-            <section class="panel-block">
-              <div class="panel-heading">
-                <h2 class="section-title">近期财报</h2>
-                <span class="muted">45 天内</span>
-              </div>
-              <div id="workbenchEarnings" class="stack-list"></div>
-            </section>
-            <section class="panel-block">
-              <div class="panel-heading">
-                <h2 class="section-title">持仓摘要</h2>
+                <div>
+                  <p class="question-kicker">二</p>
+                  <h2 class="section-title">仓位怎样</h2>
+                </div>
                 <button class="ghost-button compact" data-goto="holdings" type="button">管理持仓</button>
               </div>
+              <p class="question-hint muted">浮盈亏、仓位占比、相对合理价</p>
               <div id="workbenchHoldings" class="stack-list"></div>
             </section>
+            <section class="panel-block workbench-q workbench-q-wide" data-question="today">
+              <div class="panel-heading">
+                <div>
+                  <p class="question-kicker">三</p>
+                  <h2 class="section-title">今天看什么</h2>
+                </div>
+                <span class="muted">财报 · 待复盘</span>
+              </div>
+              <p class="question-hint muted">近期财报与到期 / 久未更新的判断卡</p>
+              <div class="workbench-today-grid">
+                <div>
+                  <h3 class="subsection-title">近期财报</h3>
+                  <div id="workbenchEarnings" class="stack-list"></div>
+                </div>
+                <div>
+                  <h3 class="subsection-title">待复盘判断</h3>
+                  <div id="workbenchReviews" class="stack-list"></div>
+                </div>
+              </div>
+            </section>
           </div>
-          <section class="panel-block alert-history-block">
-            <div class="panel-heading">
-              <h2 class="section-title">提醒历史</h2>
+          <details class="panel-block alert-history-block">
+            <summary class="alert-history-summary">提醒历史</summary>
+            <div class="alert-history-toolbar">
               <button id="clearAlertHistory" class="ghost-button compact" type="button">清空</button>
             </div>
             <div id="alertHistory" class="stack-list"></div>
-          </section>
+          </details>
         </section>
 
         <section id="watchlistView" class="view">
@@ -316,7 +334,7 @@
           <nav class="detail-tabs" aria-label="股票详情二级目录">
             <a href="#detail-summary">概览</a>
             <a href="#detail-price">走势</a>
-            <a href="#detail-notes">笔记</a>
+            <a href="#detail-notes">判断卡</a>
             <a href="#detail-more">更多</a>
           </nav>
           <section class="detail-panel" id="stockDetail" aria-live="polite" aria-label="股票研究票据"></section>
@@ -443,24 +461,43 @@
           <div class="price-legend js-price-legend"></div>
         </section>
 
-        <section id="detail-notes" class="notes-section">
-          <h3 class="section-title">研究笔记</h3>
+        <section id="detail-notes" class="notes-section judgment-card">
+          <h3 class="section-title">判断卡</h3>
+          <p class="muted judgment-lede">留下可回看的判断：论点、失效条件、关注价与下次复盘。</p>
           <label>
             <span>投资论点</span>
-            <textarea class="js-thesis" rows="4" placeholder="为什么关注这只股票？关键点与否决条件…"></textarea>
+            <textarea class="js-thesis" rows="3" placeholder="为什么关注？关键点是什么…"></textarea>
           </label>
           <label>
-            <span>决策状态</span>
-            <select class="js-decision">
-              <option value="watch">观望</option>
-              <option value="buy">关注买入</option>
-              <option value="hold">持有</option>
-              <option value="trim">减仓</option>
-              <option value="exit">移出</option>
-            </select>
+            <span>失效条件</span>
+            <textarea class="js-invalidation" rows="2" placeholder="什么情况下这套判断作废？"></textarea>
+          </label>
+          <div class="judgment-grid">
+            <label>
+              <span>决策状态</span>
+              <select class="js-decision">
+                <option value="watch">观望</option>
+                <option value="buy">关注买入</option>
+                <option value="hold">持有</option>
+                <option value="trim">减仓</option>
+                <option value="exit">移出</option>
+              </select>
+            </label>
+            <label>
+              <span>关注价</span>
+              <input class="js-watch-price" type="number" step="any" min="0" placeholder="可选" />
+            </label>
+            <label>
+              <span>下次复盘</span>
+              <input class="js-review-date" type="date" />
+            </label>
+          </div>
+          <label>
+            <span>证据链接</span>
+            <textarea class="js-evidence" rows="2" placeholder="每行一个 URL，或用逗号分隔"></textarea>
           </label>
           <div class="inline-actions">
-            <button class="primary-button compact js-save-note" type="button">保存笔记</button>
+            <button class="primary-button compact js-save-note" type="button">保存判断卡</button>
             <span class="muted js-note-status"></span>
           </div>
         </section>

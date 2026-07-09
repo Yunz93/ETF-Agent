@@ -1227,11 +1227,52 @@ canvas {
   font-size: 13px;
 }
 
+.workbench-lede {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.workbench-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .workbench-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.workbench-questions .workbench-q-wide {
+  grid-column: 1 / -1;
+}
+
+.question-kicker {
+  margin: 0 0 2px;
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.question-hint {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.subsection-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.workbench-today-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 10px;
 }
 
 .panel-block {
@@ -1392,6 +1433,38 @@ canvas {
   box-shadow: 0 0 0 1px var(--line);
 }
 
+.judgment-lede {
+  margin: -2px 0 2px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.judgment-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.notes-section label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.notes-section input,
+.notes-section select {
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+  padding: 0 12px;
+  font: inherit;
+}
+
 .price-section .panel-heading {
   align-items: start;
 }
@@ -1516,6 +1589,36 @@ canvas {
 
 .alert-history-block {
   margin-top: 4px;
+}
+
+.alert-history-block > summary.alert-history-summary {
+  cursor: pointer;
+  list-style: none;
+  font-weight: 650;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.alert-history-block > summary.alert-history-summary::-webkit-details-marker {
+  display: none;
+}
+
+.alert-history-block > summary.alert-history-summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.alert-history-block[open] > summary.alert-history-summary::before {
+  transform: rotate(90deg);
+}
+
+.alert-history-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 10px 0 0;
 }
 
 .watchlist-grid {
@@ -1753,8 +1856,14 @@ button:active {
   .settings-layout,
   .watchlist-grid,
   .workbench-grid,
+  .workbench-today-grid,
+  .judgment-grid,
   .add-symbol-strip {
     grid-template-columns: 1fr;
+  }
+
+  .workbench-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .add-symbol-strip {
