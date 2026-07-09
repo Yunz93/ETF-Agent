@@ -515,7 +515,13 @@ const state = {
   holdings: {},
   notes: {},
   alertHistory: [],
-  prefs: { notify: false, baseCurrency: "CNY" },
+  prefs: {
+    notify: false,
+    baseCurrency: "CNY",
+    compactMode: false,
+    coreOnlyWorkbench: false,
+    showWatchTargets: false,
+  },
   compare: [],
   activeView: "workbench",
   market: "A",
@@ -575,6 +581,11 @@ const els = {
   compareBar: document.querySelector("#compareBar"),
   compareTable: document.querySelector("#compareTable"),
   clearCompare: document.querySelector("#clearCompare"),
+  comparePeers: document.querySelector("#comparePeers"),
+  watchShowTargets: document.querySelector("#watchShowTargets"),
+  prefCompact: document.querySelector("#prefCompact"),
+  prefCoreOnly: document.querySelector("#prefCoreOnly"),
+  researchEmptyHint: document.querySelector("#researchEmptyHint"),
   exportMarkdown: document.querySelector("#exportMarkdown"),
   printReport: document.querySelector("#printReport"),
   prefNotify: document.querySelector("#prefNotify"),
@@ -604,12 +615,11 @@ async function init() {
   initTheme();
   initSidebar();
   applyLocalWorkspace(readLocalWorkspaceBundle(), { source: "local-cache", markDirty: false });
-  if (els.baseCurrency) els.baseCurrency.value = state.prefs.baseCurrency || "CNY";
-  if (els.prefNotify) els.prefNotify.checked = Boolean(state.prefs.notify);
+  syncPrefControls();
   await loadAppConfig();
   await hydrateWorkspace();
-  if (els.baseCurrency) els.baseCurrency.value = state.prefs.baseCurrency || "CNY";
-  if (els.prefNotify) els.prefNotify.checked = Boolean(state.prefs.notify);
+  syncPrefControls();
+  applyWorkbenchPrefs();
   bindEvents();
   renderIndexSegment();
   await refreshStocks({ resetQuotes: true });
@@ -839,7 +849,7 @@ function bindEvents() {
 
   els.addSymbolForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await addSymbolToWatchlist(els.addMarket.value, els.addSymbol.value.trim());
+    await addSymbolsToWatchlist(els.addMarket.value, els.addSymbol.value);
   });
 
   els.addHoldingForm?.addEventListener("submit", async (event) => {
@@ -862,6 +872,25 @@ function bindEvents() {
   els.prefNotify?.addEventListener("change", () => {
     state.prefs.notify = els.prefNotify.checked;
     savePrefs();
+  });
+
+  els.prefCompact?.addEventListener("change", () => {
+    state.prefs.compactMode = els.prefCompact.checked;
+    savePrefs();
+    applyWorkbenchPrefs();
+    renderWorkbench();
+  });
+
+  els.prefCoreOnly?.addEventListener("change", () => {
+    state.prefs.coreOnlyWorkbench = els.prefCoreOnly.checked;
+    savePrefs();
+    renderWorkbench();
+  });
+
+  els.watchShowTargets?.addEventListener("change", () => {
+    state.prefs.showWatchTargets = els.watchShowTargets.checked;
+    savePrefs();
+    renderWatchlist();
   });
 
   els.enableNotify?.addEventListener("click", async () => {
@@ -893,6 +922,10 @@ function bindEvents() {
     state.compare = [];
     renderCompare();
     renderRows();
+  });
+
+  els.comparePeers?.addEventListener("click", () => {
+    compareIndustryPeers();
   });
 
   els.exportMarkdown?.addEventListener("click", exportSelectedMarkdown);
@@ -1145,6 +1178,9 @@ function renderPager() {
 
 function renderRows() {
   if (!els.stockRows) return;
+  if (els.researchEmptyHint) {
+    els.researchEmptyHint.hidden = Boolean(state.filtered.length || state.compare.length);
+  }
   if (!state.filtered.length) {
     els.stockRows.innerHTML = `<tr><td colspan="10"><div class="empty-state">暂无行情数据。请运行 python3 server.py 并确认网络可用。</div></td></tr>`;
     renderPager();
@@ -1286,8 +1322,24 @@ function paintDetail(stock) {
   root.querySelector(".js-base").textContent = money(stock.valuation.base_price, stock.currency);
   root.querySelector(".js-bull").textContent = money(stock.valuation.bull_price, stock.currency);
   const peer = peerContext(stock, provider.stocks);
-  root.querySelector(".js-peer").textContent = peer;
-  root.querySelector(".js-peer").hidden = !peer;
+  const peerEl = root.querySelector(".js-peer");
+  peerEl.innerHTML = "";
+  if (peer) {
+    peerEl.hidden = false;
+    peerEl.append(document.createTextNode(peer + " "));
+    const peerBtn = document.createElement("button");
+    peerBtn.type = "button";
+    peerBtn.className = "ghost-button compact js-compare-peers";
+    peerBtn.textContent = "同行业对比";
+    peerBtn.addEventListener("click", () => {
+      state.selected = stock;
+      compareIndustryPeers();
+      switchView("research");
+    });
+    peerEl.append(peerBtn);
+  } else {
+    peerEl.hidden = true;
+  }
 
   root.querySelector(".js-rating-label").textContent = stock.analysis.rating_label;
   root.querySelector(".js-summary").textContent = stock.analysis.summary;
@@ -1791,9 +1843,13 @@ function drawPriceChart(canvas, tooltip, points, markers, currency, error) {
 
 function renderWatchlist() {
   if (!els.watchlistRows) return;
+  const showTargets = Boolean(state.prefs.showWatchTargets);
+  document.querySelector("#watchTable")?.classList.toggle("show-targets", showTargets);
+  if (els.watchShowTargets) els.watchShowTargets.checked = showTargets;
+
   let items = Object.values(state.watchlist)
     .map((saved) => {
-      const stock = provider.stocks.find((item) => item.symbol === saved.symbol && item.market === saved.market);
+      const stock = findStock(saved.symbol, saved.market);
       return stock ? { stock, saved } : null;
     })
     .filter(Boolean);
@@ -1821,7 +1877,7 @@ function renderWatchlist() {
   }
   if (els.watchlistEmpty) els.watchlistEmpty.hidden = true;
   if (!items.length) {
-    els.watchlistRows.innerHTML = `<tr><td colspan="10"><div class="empty-state">当前筛选下没有自选。</div></td></tr>`;
+    els.watchlistRows.innerHTML = `<tr><td colspan="11"><div class="empty-state">当前筛选下没有自选。</div></td></tr>`;
     return;
   }
 
@@ -1829,12 +1885,14 @@ function renderWatchlist() {
     .map(({ stock, saved }) => {
       const level = watchAlertLevel(stock, saved);
       const alert = watchAlertText(stock, saved);
+      const note = state.notes[stockKey(stock)] || {};
+      const decision = DECISION_LABELS[note.decision] || "观望";
       return `
         <tr class="watch-row ${level === "hit" ? "hit" : ""}" data-key="${stockKey(stock)}">
           <td>
             <button class="linkish" data-open="${stockKey(stock)}" type="button">
               <strong>${escapeHtml(stock.name)}</strong>
-              <span class="muted">${stock.symbol} · ${marketLabel(stock.market)}</span>
+              <span class="muted">${stock.symbol} · ${marketLabel(stock.market)}${stock.industry ? ` · ${escapeHtml(stock.industry)}` : ""}</span>
             </button>
           </td>
           <td>
@@ -1846,11 +1904,12 @@ function renderWatchlist() {
           </td>
           <td class="num">${money(stock.quote.price, stock.currency)}</td>
           <td class="num ${stock.quote.change_pct >= 0 ? "up" : "down"}">${signed(stock.quote.change_pct)}%</td>
-          <td class="num"><input data-field="buy" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.buy ?? ""}" /></td>
-          <td class="num"><input data-field="add" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.add ?? ""}" /></td>
-          <td class="num"><input data-field="takeProfit" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.takeProfit ?? ""}" /></td>
-          <td class="num"><input data-field="stopLoss" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.stopLoss ?? ""}" /></td>
+          <td><span class="tag calm">${escapeHtml(decision)}</span></td>
           <td><span class="tag ${level}">${escapeHtml(alert)}</span></td>
+          <td class="num watch-extra"><input data-field="buy" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.buy ?? ""}" /></td>
+          <td class="num watch-extra"><input data-field="add" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.add ?? ""}" /></td>
+          <td class="num watch-extra"><input data-field="takeProfit" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.takeProfit ?? ""}" /></td>
+          <td class="num watch-extra"><input data-field="stopLoss" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.stopLoss ?? ""}" /></td>
           <td><button class="ghost-button compact" data-remove="${stockKey(stock)}" type="button">移除</button></td>
         </tr>
       `;
@@ -2183,6 +2242,7 @@ function collectChangedItems() {
       return stock ? { stock, saved } : null;
     })
     .filter(Boolean)
+    .filter(({ saved }) => !state.prefs.coreOnlyWorkbench || (saved.group || "watch") === "core")
     .sort((a, b) => Math.abs(b.stock.quote.change_pct || 0) - Math.abs(a.stock.quote.change_pct || 0))
     .slice(0, 6)
     .forEach(({ stock }) => {
@@ -2296,8 +2356,11 @@ function formatEvidenceLinks(evidence) {
 
 function renderCompare() {
   if (!els.compareBar || !els.compareTable) return;
+  if (els.researchEmptyHint) {
+    els.researchEmptyHint.hidden = Boolean(state.filtered.length || state.compare.length);
+  }
   if (!state.compare.length) {
-    els.compareBar.textContent = "勾选研究池中的股票加入对比（最多 4 只）。";
+    els.compareBar.textContent = "勾选研究池中的股票，或用「同行业一键对比」（最多 4 只）。";
     els.compareTable.innerHTML = "";
     return;
   }
@@ -2336,6 +2399,50 @@ function renderCompare() {
       </tbody>
     </table>
   `;
+}
+
+function compareIndustryPeers() {
+  const seed =
+    state.selected ||
+    state.compare[0] ||
+    state.filtered.find((stock) => stock.industry && !["未分类", "恒生成分", "标普500", "自定义"].includes(stock.industry));
+  if (!seed) {
+    if (els.compareBar) els.compareBar.textContent = "请先在研究池选择一只股票，或筛选到具体行业。";
+    return;
+  }
+  const industry = seed.industry;
+  if (!industry || ["未分类", "恒生成分", "标普500", "自定义"].includes(industry)) {
+    if (els.compareBar) els.compareBar.textContent = `${seed.name} 行业信息不足，无法一键同业对比。`;
+    return;
+  }
+  const peers = (provider.stocks || [])
+    .filter((item) => item.market === seed.market && item.industry === industry)
+    .sort((a, b) => marginOfSafety(b) - marginOfSafety(a));
+  const selected = [];
+  const seedMatch = peers.find((item) => sameStock(item, seed));
+  if (seedMatch) selected.push(seedMatch);
+  for (const peer of peers) {
+    if (selected.length >= 4) break;
+    if (!selected.some((item) => sameStock(item, peer))) selected.push(peer);
+  }
+  if (selected.length < 2) {
+    if (els.compareBar) els.compareBar.textContent = `${industry} 在当前已加载行情中不足 2 只，可先加载更多成分股。`;
+    return;
+  }
+  state.compare = selected.slice(0, 4);
+  if (els.industryFilter && [...els.industryFilter.options].some((option) => option.value === industry)) {
+    els.industryFilter.value = industry;
+    state.page = 1;
+    refreshStocks();
+  }
+  renderCompare();
+  renderRows();
+  if (els.compareBar) {
+    els.compareBar.insertAdjacentHTML(
+      "afterbegin",
+      `<span class="tag">同业 · ${escapeHtml(industry)}</span> `,
+    );
+  }
 }
 
 function switchView(view) {
@@ -2404,17 +2511,7 @@ function toggleWatch(stock) {
   if (state.watchlist[key]) {
     delete state.watchlist[key];
   } else {
-    state.watchlist[key] = {
-      symbol: stock.symbol,
-      market: stock.market,
-      group: "watch",
-      buy: stock.valuation.watch_zone[1],
-      add: stock.valuation.watch_zone[0],
-      takeProfit: stock.valuation.bull_price,
-      stopLoss: stock.valuation.bear_price,
-      targetPrice: stock.valuation.watch_zone[1],
-      createdAt: new Date().toISOString(),
-    };
+    state.watchlist[key] = createWatchlistEntry(stock);
   }
   saveWatchlist();
   renderDetail();
@@ -2422,32 +2519,85 @@ function toggleWatch(stock) {
   renderWorkbench();
 }
 
+function parseWatchlistTokens(raw, defaultMarket) {
+  return String(raw || "")
+    .split(/[\s,;，；\n\r\t]+/)
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map((token) => {
+      const prefixed = token.match(/^(A|HK|US)[:：\-/]?(.+)$/i);
+      if (prefixed) {
+        return {
+          market: prefixed[1].toUpperCase(),
+          symbol: normalizeClientSymbol(prefixed[2], prefixed[1].toUpperCase()),
+        };
+      }
+      return {
+        market: defaultMarket,
+        symbol: normalizeClientSymbol(token, defaultMarket),
+      };
+    })
+    .filter((item) => item.symbol)
+    .slice(0, 40);
+}
+
+function createWatchlistEntry(stock, group = "watch") {
+  return {
+    symbol: stock.symbol,
+    market: stock.market,
+    group,
+    buy: stock.valuation.watch_zone[1],
+    add: stock.valuation.watch_zone[0],
+    takeProfit: stock.valuation.bull_price,
+    stopLoss: stock.valuation.bear_price,
+    targetPrice: stock.valuation.watch_zone[1],
+    createdAt: new Date().toISOString(),
+  };
+}
+
 async function addSymbolToWatchlist(market, rawSymbol) {
+  return addSymbolsToWatchlist(market, rawSymbol);
+}
+
+async function addSymbolsToWatchlist(market, rawInput) {
   if (!els.addSymbolStatus) return;
-  els.addSymbolStatus.textContent = "查询中…";
-  const symbol = normalizeClientSymbol(rawSymbol, market);
-  const stock = await provider.ensureStock(symbol, market);
-  if (!stock) {
-    els.addSymbolStatus.textContent = "未找到行情，请检查代码与市场。";
+  const tokens = parseWatchlistTokens(rawInput, market);
+  if (!tokens.length) {
+    els.addSymbolStatus.textContent = "请输入至少一个代码。";
     return;
   }
-  const key = stockKey(stock);
-  if (!state.watchlist[key]) {
-    state.watchlist[key] = {
-      symbol: stock.symbol,
-      market: stock.market,
-      group: "watch",
-      buy: stock.valuation.watch_zone[1],
-      add: stock.valuation.watch_zone[0],
-      takeProfit: stock.valuation.bull_price,
-      stopLoss: stock.valuation.bear_price,
-      targetPrice: stock.valuation.watch_zone[1],
-      createdAt: new Date().toISOString(),
-    };
-    saveWatchlist();
+  els.addSymbolStatus.textContent = tokens.length > 1 ? `批量查询 ${tokens.length} 只…` : "查询中…";
+  const added = [];
+  const existed = [];
+  const failed = [];
+  for (const token of tokens) {
+    try {
+      const stock = await provider.ensureStock(token.symbol, token.market);
+      if (!stock) {
+        failed.push(`${token.market}:${token.symbol}`);
+        continue;
+      }
+      const key = stockKey(stock);
+      if (state.watchlist[key]) {
+        existed.push(stock.name);
+        continue;
+      }
+      state.watchlist[key] = createWatchlistEntry(stock);
+      added.push(stock.name);
+    } catch {
+      failed.push(`${token.market}:${token.symbol}`);
+    }
   }
-  els.addSymbol.value = "";
-  els.addSymbolStatus.textContent = `已加入 ${stock.name}`;
+  if (added.length) saveWatchlist();
+  if (els.addSymbol) els.addSymbol.value = "";
+  const parts = [];
+  if (added.length) parts.push(`新加入 ${added.length} 只`);
+  if (existed.length) parts.push(`已在自选 ${existed.length} 只`);
+  if (failed.length) parts.push(`失败 ${failed.length} 只`);
+  els.addSymbolStatus.textContent = parts.join(" · ") || "未加入任何标的";
+  if (failed.length && failed.length <= 5) {
+    els.addSymbolStatus.textContent += `（${failed.join(", ")}）`;
+  }
   renderWatchlist();
   renderWorkbench();
   evaluateAlerts({ notify: false });
@@ -2471,17 +2621,7 @@ async function upsertHolding({ market, symbol, shares, cost }) {
     updatedAt: new Date().toISOString(),
   };
   if (!state.watchlist[key]) {
-    state.watchlist[key] = {
-      symbol: stock.symbol,
-      market: stock.market,
-      group: "core",
-      buy: stock.valuation.watch_zone[1],
-      add: stock.valuation.watch_zone[0],
-      takeProfit: stock.valuation.bull_price,
-      stopLoss: stock.valuation.bear_price,
-      targetPrice: stock.valuation.watch_zone[1],
-      createdAt: new Date().toISOString(),
-    };
+    state.watchlist[key] = createWatchlistEntry(stock, "core");
   }
   persistWorkspace();
   els.holdingSymbol.value = "";
@@ -3300,6 +3440,29 @@ function migrateWatchlist(raw) {
   return next;
 }
 
+function normalizePrefs(prefs = {}) {
+  return {
+    notify: Boolean(prefs?.notify),
+    baseCurrency: prefs?.baseCurrency || "CNY",
+    compactMode: Boolean(prefs?.compactMode),
+    coreOnlyWorkbench: Boolean(prefs?.coreOnlyWorkbench),
+    showWatchTargets: Boolean(prefs?.showWatchTargets),
+  };
+}
+
+function syncPrefControls() {
+  if (els.baseCurrency) els.baseCurrency.value = state.prefs.baseCurrency || "CNY";
+  if (els.prefNotify) els.prefNotify.checked = Boolean(state.prefs.notify);
+  if (els.prefCompact) els.prefCompact.checked = Boolean(state.prefs.compactMode);
+  if (els.prefCoreOnly) els.prefCoreOnly.checked = Boolean(state.prefs.coreOnlyWorkbench);
+  if (els.watchShowTargets) els.watchShowTargets.checked = Boolean(state.prefs.showWatchTargets);
+}
+
+function applyWorkbenchPrefs() {
+  document.body.classList.toggle("compact-workbench", Boolean(state.prefs.compactMode));
+  document.querySelector("#watchTable")?.classList.toggle("show-targets", Boolean(state.prefs.showWatchTargets));
+}
+
 function emptyWorkspaceBundle() {
   return {
     version: 1,
@@ -3308,7 +3471,7 @@ function emptyWorkspaceBundle() {
     holdings: {},
     notes: {},
     alertHistory: [],
-    prefs: { notify: false, baseCurrency: "CNY" },
+    prefs: normalizePrefs(),
     customSymbols: [],
   };
 }
@@ -3332,10 +3495,11 @@ function readLegacyWorkspaceBundle() {
     holdings: loadJSON(HOLDINGS_KEY, {}),
     notes: loadJSON(NOTES_KEY, {}),
     alertHistory: loadJSON(ALERTS_KEY, []),
-    prefs: {
+    prefs: normalizePrefs({
       notify: Boolean(loadJSON(PREFS_KEY, { notify: false }).notify),
       baseCurrency: loadJSON(PREFS_KEY, { baseCurrency: "CNY" }).baseCurrency || "CNY",
-    },
+      ...loadJSON(PREFS_KEY, {}),
+    }),
     customSymbols: loadJSON(CUSTOM_KEY, []),
   };
 }
@@ -3347,10 +3511,7 @@ function readLocalWorkspaceBundle() {
       ...emptyWorkspaceBundle(),
       ...cached,
       watchlist: migrateWatchlist(cached.watchlist || {}),
-      prefs: {
-        notify: Boolean(cached.prefs?.notify),
-        baseCurrency: cached.prefs?.baseCurrency || "CNY",
-      },
+      prefs: normalizePrefs(cached.prefs || {}),
       customSymbols: Array.isArray(cached.customSymbols) ? cached.customSymbols : [],
     };
   }
@@ -3365,10 +3526,7 @@ function buildWorkspacePayload() {
     holdings: state.holdings,
     notes: state.notes,
     alertHistory: state.alertHistory.slice(0, 100),
-    prefs: {
-      notify: Boolean(state.prefs.notify),
-      baseCurrency: state.prefs.baseCurrency || "CNY",
-    },
+    prefs: normalizePrefs(state.prefs),
     customSymbols: (provider.customCatalog || []).map((item) => ({
       symbol: item.symbol,
       name: item.name,
@@ -3400,10 +3558,7 @@ function applyLocalWorkspace(bundle, { source = "local", markDirty = false } = {
     holdings: bundle?.holdings || {},
     notes: bundle?.notes || {},
     alertHistory: Array.isArray(bundle?.alertHistory) ? bundle.alertHistory : [],
-    prefs: {
-      notify: Boolean(bundle?.prefs?.notify),
-      baseCurrency: bundle?.prefs?.baseCurrency || "CNY",
-    },
+    prefs: normalizePrefs(bundle?.prefs || {}),
     customSymbols: Array.isArray(bundle?.customSymbols) ? bundle.customSymbols : [],
   };
 
@@ -3416,6 +3571,8 @@ function applyLocalWorkspace(bundle, { source = "local", markDirty = false } = {
   state.workspaceSync.source = source;
   state.workspaceSync.error = null;
   state.workspaceSync.status = markDirty ? "pending" : "synced";
+  syncPrefControls();
+  applyWorkbenchPrefs();
 
   provider.customCatalog = normalized.customSymbols.map((item, index) => ({
     ...item,
@@ -3565,6 +3722,8 @@ async function importWorkspaceBackup(event) {
     renderHoldings();
     if (els.baseCurrency) els.baseCurrency.value = state.prefs.baseCurrency || "CNY";
     if (els.prefNotify) els.prefNotify.checked = Boolean(state.prefs.notify);
+    syncPrefControls();
+    applyWorkbenchPrefs();
     renderWorkspaceStatus();
   } catch (error) {
     state.workspaceSync.status = "error";

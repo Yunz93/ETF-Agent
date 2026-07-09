@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import csv
 import http.cookiejar
 import json
 import re
@@ -25,7 +26,13 @@ DEFAULT_WORKSPACE = {
     "holdings": {},
     "notes": {},
     "alertHistory": [],
-    "prefs": {"notify": False, "baseCurrency": "CNY"},
+    "prefs": {
+      "notify": False,
+      "baseCurrency": "CNY",
+      "compactMode": False,
+      "coreOnlyWorkbench": False,
+      "showWatchTargets": False,
+    },
     "customSymbols": [],
 }
 
@@ -473,13 +480,191 @@ def a_share_exchange(symbol):
 
 def normalize_industry(value):
     text = str(value or "").strip()
-    if not text:
+    if not text or text in {"-", "None", "null", "未分类"}:
         return "未分类"
+    # Strip trailing sector level markers like "白酒Ⅱ"
+    text = re.sub(r"[ⅠⅡⅢIV]+$", "", text).strip() or text
     # Strip leading industry code like "J66 "
     parts = text.split(" ", 1)
     if len(parts) == 2 and parts[0][:1].isalpha() and parts[0][1:].isdigit():
         return parts[1]
     return text
+
+
+GICS_SECTOR_ZH = {
+    "Communication Services": "通信服务",
+    "Consumer Discretionary": "可选消费",
+    "Consumer Staples": "日常消费",
+    "Energy": "能源",
+    "Financials": "金融",
+    "Health Care": "医疗保健",
+    "Industrials": "工业",
+    "Information Technology": "信息技术",
+    "Materials": "原材料",
+    "Real Estate": "房地产",
+    "Utilities": "公用事业",
+}
+
+
+def industry_needs_enrichment(value):
+    text = normalize_industry(value)
+    return text in {"未分类", "恒生成分", "标普500", "自定义"}
+
+
+def eastmoney_quote_hosts():
+    return ("push2delay.eastmoney.com", "push2.eastmoney.com")
+
+
+def fetch_eastmoney_ulist_rows(secids, fields, batch_size=40):
+    rows = []
+    for index in range(0, len(secids), batch_size):
+        batch = secids[index : index + batch_size]
+        params = urllib.parse.urlencode(
+            {
+                "secids": ",".join(batch),
+                "fields": fields,
+                "fltt": 2,
+                "invt": 2,
+            }
+        )
+        last_error = None
+        for host in eastmoney_quote_hosts():
+            url = f"https://{host}/api/qt/ulist.np/get?{params}"
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": YAHOO_UA,
+                    "Accept": "application/json,text/plain,*/*",
+                    "Referer": "https://quote.eastmoney.com/",
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=18) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                diff = (payload.get("data") or {}).get("diff") or []
+                rows.extend(diff.values() if isinstance(diff, dict) else diff)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+        if last_error and not rows:
+            raise last_error
+        time.sleep(0.03)
+    return rows
+
+
+def fetch_eastmoney_industry_map(stocks):
+    """Map (market, symbol) -> industry via Eastmoney f100 for A/HK catalogs."""
+    mapping = {}
+    if not stocks:
+        return mapping
+    secids = []
+    meta = []
+    for stock in stocks:
+        market = stock.get("market")
+        if market not in {"A", "HK"}:
+            continue
+        symbol = stock.get("symbol")
+        yahoo = stock.get("yahoo_symbol") or symbol
+        secids.append(eastmoney_secid(symbol, market, yahoo))
+        meta.append((market, symbol))
+    if not secids:
+        return mapping
+    rows = fetch_eastmoney_ulist_rows(secids, "f12,f14,f100", batch_size=40)
+    by_code = {}
+    for item in rows:
+        code = str(item.get("f12") or "").upper()
+        if not code:
+            continue
+        by_code[code] = item
+        by_code[code.lstrip("0") or "0"] = item
+    for market, symbol in meta:
+        candidates = [
+            symbol.upper(),
+            symbol.upper().zfill(5 if market == "HK" else 6),
+            (symbol.upper().lstrip("0") or "0"),
+        ]
+        if market == "HK":
+            candidates.append(symbol.zfill(4).upper())
+        item = None
+        for candidate in candidates:
+            item = by_code.get(candidate) or by_code.get(candidate.lstrip("0") or "0")
+            if item:
+                break
+        if not item:
+            continue
+        industry = normalize_industry(item.get("f100"))
+        if industry != "未分类":
+            mapping[(market, symbol)] = industry
+    return mapping
+
+
+def fetch_sp500_sector_map():
+    urls = (
+        "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv",
+        "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv",
+    )
+    text = None
+    last_error = None
+    for url in urls:
+        try:
+            text = http_get_text(url, headers={"User-Agent": YAHOO_UA, "Accept": "text/csv,*/*"}, timeout=45)
+            break
+        except Exception as exc:
+            last_error = exc
+    if text is None:
+        raise RuntimeError(f"标普行业表拉取失败：{last_error}")
+    reader = csv.DictReader(text.splitlines())
+    mapping = {}
+    for row in reader:
+        symbol = str(row.get("Symbol") or "").strip().upper().replace("-", ".")
+        sector = str(row.get("GICS Sector") or "").strip()
+        if not symbol or not sector:
+            continue
+        label = GICS_SECTOR_ZH.get(sector, sector)
+        mapping[symbol] = label
+        mapping[symbol.replace(".", "-")] = label
+    return mapping
+
+
+def enrich_catalog_industries(stocks):
+    if not stocks:
+        return {"enriched": 0, "sources": []}
+    enriched = 0
+    sources = []
+    a_hk = [
+        stock
+        for stock in stocks
+        if stock.get("market") in {"A", "HK"} and industry_needs_enrichment(stock.get("industry"))
+    ]
+    us = [
+        stock
+        for stock in stocks
+        if stock.get("market") == "US" and industry_needs_enrichment(stock.get("industry"))
+    ]
+    if a_hk:
+        try:
+            industry_map = fetch_eastmoney_industry_map(a_hk)
+            for stock in a_hk:
+                industry = industry_map.get((stock["market"], stock["symbol"]))
+                if industry:
+                    stock["industry"] = industry
+                    enriched += 1
+            sources.append(f"eastmoney:{len(industry_map)}")
+        except Exception as exc:
+            sources.append(f"eastmoney_error:{exc}")
+    if us:
+        try:
+            sector_map = fetch_sp500_sector_map()
+            for stock in us:
+                industry = sector_map.get(stock["symbol"]) or sector_map.get(stock["symbol"].replace(".", "-"))
+                if industry:
+                    stock["industry"] = industry
+                    enriched += 1
+            sources.append(f"sp500_gics:{len(sector_map)}")
+        except Exception as exc:
+            sources.append(f"sp500_error:{exc}")
+    return {"enriched": enriched, "sources": sources}
 
 
 def parse_csindex_xls(data):
@@ -810,6 +995,14 @@ def refresh_catalog(force=False):
     if not force:
         disk_payload = load_catalog_disk_cache(cache_seconds)
         if disk_payload and disk_payload.get("total"):
+            stocks = []
+            for market in ("A", "HK", "US"):
+                stocks.extend(disk_payload.get("markets", {}).get(market, {}).get("stocks", []))
+            needs = sum(1 for stock in stocks if industry_needs_enrichment(stock.get("industry")))
+            if needs > max(20, int(len(stocks) * 0.2)):
+                industry_meta = enrich_catalog_industries(stocks)
+                disk_payload["industry_enrichment"] = industry_meta
+                save_catalog_disk_cache(disk_payload)
             return _apply_catalog_payload(disk_payload, now + cache_seconds)
 
     markets = {}
@@ -828,11 +1021,14 @@ def refresh_catalog(force=False):
             all_stocks.append(stock)
             by_key[(stock["market"], stock["symbol"])] = stock
 
+    industry_meta = enrich_catalog_industries(all_stocks)
+
     payload = {
         "markets": markets,
         "total": len(all_stocks),
         "updated_at": as_of(None),
         "note": catalog_settings().get("note", ""),
+        "industry_enrichment": industry_meta,
     }
     _apply_catalog_payload(payload, now + cache_seconds)
     save_catalog_disk_cache(payload)
@@ -1369,32 +1565,7 @@ def fetch_eastmoney_quotes(stocks):
         ["f43", "f47", "f57", "f58", "f59", "f116", "f162", "f167", "f170", "f124"]
     )
     secids = [eastmoney_secid(symbol, market, yahoo) for symbol, market, yahoo in stocks]
-    rows = []
-    for index in range(0, len(secids), 20):
-        batch = secids[index : index + 20]
-        url = (
-            "https://push2.eastmoney.com/api/qt/ulist.np/get?"
-            + urllib.parse.urlencode(
-                {
-                    "secids": ",".join(batch),
-                    "fields": fields,
-                    "fltt": 2,
-                    "invt": 2,
-                }
-            )
-        )
-        request = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": YAHOO_UA,
-                "Accept": "application/json,text/plain,*/*",
-                "Referer": "https://quote.eastmoney.com/",
-            },
-        )
-        with urllib.request.urlopen(request, timeout=12) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        diff = (payload.get("data") or {}).get("diff") or []
-        rows.extend(diff.values() if isinstance(diff, dict) else diff)
+    rows = fetch_eastmoney_ulist_rows(secids, fields, batch_size=20)
     by_code = {str(item.get("f57", "")).upper().lstrip("0"): item for item in rows}
     result = {}
     for symbol, market, _ in stocks:

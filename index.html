@@ -19,6 +19,12 @@
         }
       })();
     </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -157,6 +163,10 @@
                 <option value="hit">已触及</option>
                 <option value="near">接近目标</option>
               </select>
+              <label class="inline-label">
+                <input id="watchShowTargets" type="checkbox" />
+                显示目标价列
+              </label>
               <button id="clearWatchlist" class="ghost-button" type="button">清空自选</button>
             </div>
           </div>
@@ -171,24 +181,26 @@
             </label>
             <label class="grow">
               <span>代码</span>
-              <input id="addSymbol" type="text" placeholder="如 600519 / 0700 / AAPL" required />
+              <input id="addSymbol" type="text" placeholder="单个：600519；批量：600519, 0700, AAPL" required />
             </label>
             <button class="primary-button" type="submit">加入自选</button>
             <p id="addSymbolStatus" class="muted" role="status"></p>
           </form>
+          <p class="muted batch-hint">支持批量粘贴：逗号 / 空格 / 换行分隔；可带市场前缀如 <code>HK:0700</code>、<code>US:AAPL</code>。</p>
           <div class="table-wrap">
-            <table class="stock-table watch-table">
+            <table class="stock-table watch-table" id="watchTable">
               <thead>
                 <tr>
                   <th>股票</th>
                   <th>分组</th>
                   <th class="num">现价</th>
                   <th class="num">涨跌</th>
-                  <th class="num">买入关注</th>
-                  <th class="num">加仓</th>
-                  <th class="num">止盈</th>
-                  <th class="num">止损</th>
+                  <th>决策</th>
                   <th>提醒</th>
+                  <th class="num watch-extra">买入关注</th>
+                  <th class="num watch-extra">加仓</th>
+                  <th class="num watch-extra">止盈</th>
+                  <th class="num watch-extra">止损</th>
                   <th></th>
                 </tr>
               </thead>
@@ -290,10 +302,19 @@
           <div class="compare-strip panel-block">
             <div class="panel-heading">
               <h2 class="section-title">同业对比</h2>
-              <button id="clearCompare" class="ghost-button compact" type="button">清空对比</button>
+              <div class="inline-actions">
+                <button id="comparePeers" class="ghost-button compact" type="button">同行业一键对比</button>
+                <button id="clearCompare" class="ghost-button compact" type="button">清空对比</button>
+              </div>
             </div>
-            <div id="compareBar" class="compare-bar muted">勾选研究池中的股票加入对比（最多 4 只）。</div>
+            <div id="compareBar" class="compare-bar muted">勾选研究池中的股票，或用「同行业一键对比」（最多 4 只）。</div>
             <div id="compareTable" class="table-wrap"></div>
+          </div>
+
+          <div class="research-empty-hint panel-block" id="researchEmptyHint">
+            <p class="question-kicker">研究路径</p>
+            <h3 class="section-title">先选指数 → 筛行业 → 加入自选并写判断卡</h3>
+            <p class="muted">研究池按指数成分加载。用行业筛选缩小范围，勾选同业对比，再把候选放进自选跟踪。</p>
           </div>
 
           <div class="content-grid list-only">
@@ -360,6 +381,14 @@
                 <label class="config-check">
                   <input id="prefNotify" type="checkbox" />
                   <span>允许浏览器价格 / 财报提醒</span>
+                </label>
+                <label class="config-check">
+                  <input id="prefCompact" type="checkbox" />
+                  <span>精简模式：今日工作台只保留三问</span>
+                </label>
+                <label class="config-check">
+                  <input id="prefCoreOnly" type="checkbox" />
+                  <span>工作台默认只看「核心仓」自选异动</span>
                 </label>
                 <p class="muted">提醒仅在本机浏览器生效；触及目标价或财报临近时会写入提醒历史。</p>
               </div>
