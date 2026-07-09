@@ -1835,3 +1835,69 @@ button:active {
     scroll-behavior: auto !important;
   }
 }
+
+
+.research-heading {
+  margin-bottom: 8px;
+}
+
+.index-segment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.index-segment .segment-button {
+  white-space: nowrap;
+}
+
+.research-load-status {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.research-load-status.is-loading {
+  color: var(--accent-ink);
+  border-color: color-mix(in oklab, var(--accent-strong) 35%, var(--line));
+}
+
+.research-load-actions {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: 10px;
+}
+
+.detail-more {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  padding: 0;
+}
+
+.detail-more-summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 14px 16px;
+  font-weight: 600;
+}
+
+.detail-more-summary::-webkit-details-marker {
+  display: none;
+}
+
+.detail-more-body {
+  padding: 0 16px 16px;
+  display: grid;
+  gap: 18px;
+}
+
+.detail-primary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}

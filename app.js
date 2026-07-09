@@ -49,6 +49,14 @@ const DEFAULT_SOURCES = {
 let appConfig = null;
 
 const PAGE_SIZE = 50;
+const QUOTE_BATCH_SIZE = 200;
+const RESEARCH_INDICES = [
+  { code: "000001", name: "上证指数", market: "A" },
+  { code: "399106", name: "深证综指", market: "A" },
+  { code: "HSI", name: "恒生指数", market: "HK" },
+  { code: "SPX", name: "标普500", market: "US" },
+];
+
 
 
 
@@ -89,10 +97,10 @@ const PAGE_TITLES = {
 
 class HybridProvider {
   constructor() {
-    this.catalogByMarket = { A: [], HK: [], US: [] };
-    this.stocksByMarket = { A: [], HK: [], US: [] };
-    this.catalogLoaded = { A: false, HK: false, US: false };
-    this.quoteLoaded = { A: false, HK: false, US: false };
+    this.catalogByIndex = {};
+    this.stocksByIndex = {};
+    this.catalogLoaded = {};
+    this.quoteProgress = {};
     this.catalogHydration = {};
     this.quoteHydration = {};
     this.catalogMeta = {};
@@ -111,20 +119,25 @@ class HybridProvider {
     };
   }
 
+  indexKey(indexCode) {
+    return String(indexCode || "").toUpperCase();
+  }
+
+  indexMeta(indexCode) {
+    const code = this.indexKey(indexCode);
+    return RESEARCH_INDICES.find((item) => item.code === code) || null;
+  }
+
   allCatalog() {
-    const base = [
-      ...(this.catalogByMarket.A || []),
-      ...(this.catalogByMarket.HK || []),
-      ...(this.catalogByMarket.US || []),
-    ];
+    const base = Object.values(this.catalogByIndex).flat();
     const seen = new Set(base.map(stockKey));
     return [...base, ...this.customCatalog.filter((item) => !seen.has(stockKey(item)))];
   }
 
   rebuildStocks() {
     const byKey = new Map();
-    for (const market of ["A", "HK", "US"]) {
-      for (const stock of this.stocksByMarket[market] || []) {
+    for (const stocks of Object.values(this.stocksByIndex)) {
+      for (const stock of stocks || []) {
         byKey.set(stockKey(stock), stock);
       }
     }
@@ -134,20 +147,27 @@ class HybridProvider {
     this.stocks = [...byKey.values()];
   }
 
-  async hydrateCatalog(market) {
-    const key = market || "A";
-    if (this.catalogLoaded[key]) return this.catalogByMarket[key];
+  async hydrateCatalog(indexCode) {
+    const key = this.indexKey(indexCode);
+    const meta = this.indexMeta(key);
+    if (!meta) return [];
+    if (this.catalogLoaded[key]) return this.catalogByIndex[key] || [];
     if (this.catalogHydration[key]) return this.catalogHydration[key];
-    this.catalogHydration[key] = fetch(`/api/catalog?market=${encodeURIComponent(key)}`)
+    this.catalogHydration[key] = fetch(
+      `/api/catalog?market=${encodeURIComponent(meta.market)}&index=${encodeURIComponent(key)}`,
+    )
       .then((response) => {
         if (!response.ok) throw new Error(`Catalog API ${response.status}`);
         return response.json();
       })
       .then((payload) => {
         const stocks = (payload.stocks || []).map((entry, index) => buildCatalogStockFromApi(entry, index));
-        this.catalogByMarket[key] = stocks;
+        this.catalogByIndex[key] = stocks;
         this.catalogMeta[key] = {
           count: payload.count || stocks.length,
+          market: meta.market,
+          index: key,
+          index_name: payload.index_name || meta.name,
           indices: payload.indices || [],
           errors: payload.errors || [],
           updated_at: payload.updated_at,
@@ -158,8 +178,15 @@ class HybridProvider {
       })
       .catch((error) => {
         console.warn("成分股目录获取失败。", error);
-        this.catalogByMarket[key] = [];
-        this.catalogMeta[key] = { count: 0, indices: [], errors: [String(error.message || error)] };
+        this.catalogByIndex[key] = [];
+        this.catalogMeta[key] = {
+          count: 0,
+          market: meta.market,
+          index: key,
+          index_name: meta.name,
+          indices: [],
+          errors: [String(error.message || error)],
+        };
         this.catalogLoaded[key] = true;
         return [];
       })
@@ -169,63 +196,119 @@ class HybridProvider {
     return this.catalogHydration[key];
   }
 
-  async hydrateQuotes(market = "A") {
-    const key = market || "A";
+  quoteState(indexCode) {
+    const key = this.indexKey(indexCode);
+    return (
+      this.quoteProgress[key] || {
+        loaded: 0,
+        total: 0,
+        hasMore: false,
+        nextOffset: 0,
+        loading: false,
+        error: null,
+        provider: null,
+      }
+    );
+  }
+
+  async hydrateQuotes(indexCode, { reset = false, more = false } = {}) {
+    const key = this.indexKey(indexCode);
+    const meta = this.indexMeta(key);
+    if (!meta) return [];
     await this.hydrateCatalog(key);
-    if (this.quoteLoaded[key]) {
+    const catalog = this.catalogByIndex[key] || [];
+    const progress = this.quoteState(key);
+
+    if (!reset && !more && (this.stocksByIndex[key] || []).length) {
       this.rebuildStocks();
-      return this.stocksByMarket[key];
+      return this.stocksByIndex[key];
     }
     if (this.quoteHydration[key]) return this.quoteHydration[key];
+
+    const offset = reset ? 0 : more ? progress.nextOffset || (this.stocksByIndex[key] || []).length : 0;
+    if (!reset && more && progress.hasMore === false && (this.stocksByIndex[key] || []).length) {
+      return this.stocksByIndex[key];
+    }
+
     this.status.quote = "connecting";
-    this.status.quoteLabel = `${marketLabel(key)}行情加载中`;
-    this.quoteHydration[key] = fetch(`/api/quotes?market=${encodeURIComponent(key)}`)
+    this.status.quoteLabel = `${meta.name}行情加载中`;
+    this.quoteProgress[key] = {
+      ...progress,
+      loading: true,
+      error: null,
+      total: catalog.length,
+    };
+
+    this.quoteHydration[key] = fetch(
+      `/api/quotes?market=${encodeURIComponent(meta.market)}&index=${encodeURIComponent(key)}&limit=${QUOTE_BATCH_SIZE}&offset=${offset}`,
+    )
       .then((response) => {
         if (!response.ok) throw new Error(`Quote API ${response.status}`);
         return response.json();
       })
       .then(async (payload) => {
         const quotes = new Map((payload.quotes || []).map((quote) => [`${quote.market}:${quote.symbol}`, quote]));
-        this.stocksByMarket[key] = this.catalogByMarket[key]
+        const batchEntries = catalog.slice(offset, offset + QUOTE_BATCH_SIZE);
+        const batchStocks = batchEntries
           .map((entry) => buildStockFromQuote(entry, quotes.get(stockKey(entry))))
           .filter(Boolean);
 
-        for (const entry of this.customCatalog.filter((item) => item.market === key)) {
+        const existing = reset ? [] : [...(this.stocksByIndex[key] || [])];
+        const byKey = new Map(existing.map((stock) => [stockKey(stock), stock]));
+        for (const stock of batchStocks) byKey.set(stockKey(stock), stock);
+
+        // Ensure custom symbols for this market are present once.
+        for (const entry of this.customCatalog.filter((item) => item.market === meta.market)) {
+          if (byKey.has(stockKey(entry))) continue;
           if (quotes.has(stockKey(entry))) {
             const stock = buildStockFromQuote(entry, quotes.get(stockKey(entry)));
-            if (stock && !this.stocksByMarket[key].some((item) => sameStock(item, stock))) {
-              this.stocksByMarket[key].push(stock);
-            }
+            if (stock) byKey.set(stockKey(stock), stock);
             continue;
           }
-          const fetched = await this.fetchCustomQuote(entry.symbol, entry.market);
-          if (fetched && !this.stocksByMarket[key].some((item) => sameStock(item, fetched))) {
-            this.stocksByMarket[key].push(fetched);
+          if (reset || offset === 0) {
+            const fetched = await this.fetchCustomQuote(entry.symbol, entry.market);
+            if (fetched) byKey.set(stockKey(fetched), fetched);
           }
         }
 
+        this.stocksByIndex[key] = [...byKey.values()];
         this.rebuildStocks();
-        this.status.quote = this.stocksByMarket[key].length ? "live" : "unavailable";
-        const indexNames = (this.catalogMeta[key]?.indices || [])
-          .map((item) => item.name)
-          .filter(Boolean)
-          .join(" / ");
-        this.status.quoteLabel = this.stocksByMarket[key].length
-          ? `${payload.provider || "真实行情"} · ${this.stocksByMarket[key].length}/${this.catalogMeta[key]?.count || this.catalogByMarket[key].length} · ${indexNames || marketLabel(key)}`
+        const loaded = this.stocksByIndex[key].length;
+        const total = payload.total ?? catalog.length;
+        const nextOffset = payload.next_offset;
+        this.quoteProgress[key] = {
+          loaded,
+          total,
+          hasMore: Boolean(payload.has_more),
+          nextOffset: nextOffset == null ? loaded : nextOffset,
+          loading: false,
+          error: payload.error || null,
+          provider: payload.provider || null,
+        };
+        this.status.quote = loaded ? "live" : "unavailable";
+        this.status.quoteLabel = loaded
+          ? `${payload.provider || "真实行情"} · ${loaded}/${total} · ${meta.name}`
           : payload.error
             ? `行情不可用 · ${payload.error}`
             : "暂无行情数据";
-        this.quoteLoaded[key] = true;
-        return this.stocksByMarket[key];
+        return this.stocksByIndex[key];
       })
       .catch((error) => {
         console.warn("行情获取失败。", error);
-        this.stocksByMarket[key] = [];
+        if (reset) this.stocksByIndex[key] = [];
         this.rebuildStocks();
+        this.quoteProgress[key] = {
+          loaded: (this.stocksByIndex[key] || []).length,
+          total: catalog.length,
+          hasMore: false,
+          nextOffset: (this.stocksByIndex[key] || []).length,
+          loading: false,
+          error: String(error.message || error),
+          provider: null,
+        };
         this.status.quote = "unavailable";
         this.status.quoteLabel = "行情不可用";
-        this.quoteLoaded[key] = true;
-        return [];
+        return this.stocksByIndex[key] || [];
       })
       .finally(() => {
         this.quoteHydration[key] = null;
@@ -234,16 +317,16 @@ class HybridProvider {
   }
 
   invalidateQuotes() {
-    this.quoteLoaded = { A: false, HK: false, US: false };
+    this.quoteProgress = {};
     this.quoteHydration = {};
-    this.stocksByMarket = { A: [], HK: [], US: [] };
+    this.stocksByIndex = {};
     this.stocks = this.stocks.filter((stock) => stock.custom);
   }
 
   invalidateAll() {
-    this.catalogLoaded = { A: false, HK: false, US: false };
+    this.catalogLoaded = {};
     this.catalogHydration = {};
-    this.catalogByMarket = { A: [], HK: [], US: [] };
+    this.catalogByIndex = {};
     this.catalogMeta = {};
     this.invalidateQuotes();
   }
@@ -277,7 +360,7 @@ class HybridProvider {
   }
 
   async ensureStock(symbol, market) {
-    await this.hydrateQuotes(market);
+    // Prefer single-quote path for detail/watchlist; avoid forcing full index hydrate.
     let stock = this.stocks.find((item) => item.symbol === symbol && item.market === market);
     if (stock) return stock;
     const fetched = await this.fetchCustomQuote(symbol, market);
@@ -307,13 +390,12 @@ class HybridProvider {
   }
 
   async search(filters) {
-    const market = filters.market && filters.market !== "all" ? filters.market : "A";
-    await this.hydrateQuotes(market);
-    return this.filterStocks(filters, market);
+    const indexCode = filters.index || state.index || RESEARCH_INDICES[0].code;
+    await this.hydrateQuotes(indexCode, { reset: false });
+    return this.filterStocks(filters, indexCode);
   }
 
   async getStock(symbol, market) {
-    await this.hydrateQuotes(market);
     let stock = this.stocks.find((item) => item.symbol === symbol && item.market === market);
     if (!stock) {
       stock = await this.ensureStock(symbol, market);
@@ -340,10 +422,10 @@ class HybridProvider {
     }
   }
 
-  filterStocks({ query = "", market = "all", industry = "all", valuation = "all" }, activeMarket = "A") {
+  filterStocks({ query = "", industry = "all", valuation = "all", index = null } = {}, activeIndex = null) {
     const term = query.trim().toLowerCase();
-    const poolMarket = market === "all" ? activeMarket : market;
-    const pool = this.stocksByMarket[poolMarket] || [];
+    const indexCode = this.indexKey(index || activeIndex || state.index || RESEARCH_INDICES[0].code);
+    const pool = this.stocksByIndex[indexCode] || [];
     return pool.filter((stock) => {
       const matchesTerm =
         !term ||
@@ -351,10 +433,9 @@ class HybridProvider {
           .join(" ")
           .toLowerCase()
           .includes(term);
-      const matchesMarket = market === "all" || stock.market === market;
       const matchesIndustry = industry === "all" || stock.industry === industry;
       const matchesValuation = valuation === "all" || stock.valuation.state === valuation;
-      return matchesTerm && matchesMarket && matchesIndustry && matchesValuation;
+      return matchesTerm && matchesIndustry && matchesValuation;
     });
   }
 
@@ -385,10 +466,11 @@ class HybridProvider {
       });
       const index = this.stocks.findIndex((item) => sameStock(item, stock));
       if (index >= 0) this.stocks[index] = { ...this.stocks[index], ...enriched, financials: payload.financials };
-      const marketPool = this.stocksByMarket[stock.market] || [];
-      const marketIndex = marketPool.findIndex((item) => sameStock(item, stock));
-      if (marketIndex >= 0) {
-        marketPool[marketIndex] = { ...marketPool[marketIndex], ...enriched, financials: payload.financials };
+      for (const pool of Object.values(this.stocksByIndex)) {
+        const marketIndex = (pool || []).findIndex((item) => sameStock(item, stock));
+        if (marketIndex >= 0) {
+          pool[marketIndex] = { ...pool[marketIndex], ...enriched, financials: payload.financials };
+        }
       }
       return enriched;
     } catch (error) {
@@ -437,6 +519,7 @@ const state = {
   compare: [],
   activeView: "workbench",
   market: "A",
+  index: RESEARCH_INDICES[0].code,
   priceRange: "1y",
   watchGroupFilter: "all",
   watchAlertFilter: "all",
@@ -495,7 +578,8 @@ const els = {
   exportMarkdown: document.querySelector("#exportMarkdown"),
   printReport: document.querySelector("#printReport"),
   prefNotify: document.querySelector("#prefNotify"),
-  marketShortcuts: document.querySelectorAll("[data-market-shortcut]"),
+  indexSegment: document.querySelector("#indexSegment"),
+  researchLoadStatus: document.querySelector("#researchLoadStatus"),
   topSourceStatus: document.querySelector("#topSourceStatus"),
   selectedStockSummary: document.querySelector("#selectedStockSummary"),
   backToList: document.querySelector("#backToList"),
@@ -526,9 +610,9 @@ async function init() {
   await hydrateWorkspace();
   if (els.baseCurrency) els.baseCurrency.value = state.prefs.baseCurrency || "CNY";
   if (els.prefNotify) els.prefNotify.checked = Boolean(state.prefs.notify);
-  fillIndustryFilter();
   bindEvents();
-  await refreshStocks();
+  renderIndexSegment();
+  await refreshStocks({ resetQuotes: true });
   await restoreRoute();
   evaluateAlerts({ notify: false });
   renderWorkbench();
@@ -698,7 +782,7 @@ async function saveAppConfig() {
     if (!response.ok) throw new Error(saved.error || `保存失败 ${response.status}`);
     appConfig = saved;
     provider.invalidateAll();
-    await refreshStocks();
+    await refreshStocks({ resetQuotes: true });
     renderSettings();
     els.settingsStatus.textContent = "已保存到 config.json";
   } catch (error) {
@@ -817,14 +901,7 @@ function bindEvents() {
   window.addEventListener("resize", syncSidebarForViewport);
   els.saveConfig?.addEventListener("click", saveAppConfig);
   els.resetConfig?.addEventListener("click", () => loadAppConfig({ rerender: true }));
-  els.marketShortcuts.forEach((button) => {
-    button.addEventListener("click", () => {
-      state.market = button.dataset.marketShortcut;
-      state.page = 1;
-      syncMarketShortcuts();
-      if (state.activeView === "research") refreshStocks();
-    });
-  });
+  // Index controls are bound in renderIndexSegment().
   els.backToList?.addEventListener("click", () => {
     if (state.activeView === "detail") {
       const fallback = Object.keys(state.watchlist).length ? "watchlist" : "research";
@@ -834,10 +911,15 @@ function bindEvents() {
   });
   window.addEventListener("hashchange", restoreRoute);
   window.addEventListener("popstate", restoreRoute);
-  els.detailTabs.forEach((link) => {
+    els.detailTabs.forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
-      const target = document.querySelector(link.getAttribute("href"));
+      const href = link.getAttribute("href");
+      const target = document.querySelector(href);
+      if (href === "#detail-more") {
+        const details = document.querySelector("#detail-more");
+        if (details) details.open = true;
+      }
       target?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   });
@@ -858,10 +940,62 @@ function bindEvents() {
   });
 }
 
-async function refreshStocks() {
+function renderIndexSegment() {
+  if (!els.indexSegment) return;
+  els.indexSegment.innerHTML = RESEARCH_INDICES.map(
+    (item) => `
+      <button class="segment-button ${state.index === item.code ? "active" : ""}" data-index="${item.code}" type="button">
+        ${item.name}
+      </button>
+    `,
+  ).join("");
+  els.indexSegment.querySelectorAll("[data-index]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (state.index === button.dataset.index) return;
+      state.index = button.dataset.index;
+      state.market = provider.indexMeta(state.index)?.market || state.market;
+      state.page = 1;
+      renderIndexSegment();
+      await refreshStocks({ resetQuotes: true });
+    });
+  });
+}
+
+function renderResearchLoadStatus() {
+  if (!els.researchLoadStatus) return;
+  const progress = provider.quoteState(state.index);
+  const meta = provider.catalogMeta[state.index] || provider.indexMeta(state.index) || {};
+  const name = meta.index_name || meta.name || state.index;
+  const loaded = progress.loaded || 0;
+  const total = progress.total || meta.count || 0;
+  els.researchLoadStatus.classList.toggle("is-loading", Boolean(progress.loading));
+  if (progress.loading) {
+    els.researchLoadStatus.innerHTML = `${name}加载中… 已获取 ${loaded}/${total || "?"} 只行情`;
+    return;
+  }
+  if (progress.error && !loaded) {
+    els.researchLoadStatus.textContent = `${name}行情不可用：${progress.error}`;
+    return;
+  }
+  const moreButton = progress.hasMore
+    ? `<span class="research-load-actions"><button class="ghost-button compact" id="loadMoreQuotes" type="button">继续加载下一批</button></span>`
+    : "";
+  els.researchLoadStatus.innerHTML = `${name} · 行情 ${loaded}/${total}${progress.provider ? ` · ${progress.provider}` : ""}${moreButton}`;
+  els.researchLoadStatus.querySelector("#loadMoreQuotes")?.addEventListener("click", async () => {
+    await refreshStocks({ loadMore: true });
+  });
+}
+
+async function refreshStocks({ resetQuotes = false, loadMore = false } = {}) {
+  renderIndexSegment();
+  if (resetQuotes) {
+    await provider.hydrateQuotes(state.index, { reset: true });
+  } else if (loadMore) {
+    await provider.hydrateQuotes(state.index, { more: true });
+  }
   state.filtered = await provider.search({
     query: els.searchInput?.value || "",
-    market: state.market,
+    index: state.index,
     industry: els.industryFilter?.value || "all",
     valuation: els.valuationFilter?.value || "all",
   });
@@ -870,8 +1004,8 @@ async function refreshStocks() {
   if (state.page > totalPages) state.page = totalPages;
   fillIndustryFilter();
   renderSourceStatus();
-  syncMarketShortcuts();
   renderMetrics();
+  renderResearchLoadStatus();
   renderUpcoming();
   renderRows();
   renderPager();
@@ -888,7 +1022,7 @@ async function refreshStocks() {
 function fillIndustryFilter() {
   if (!els.industryFilter) return;
   const current = els.industryFilter.value || "all";
-  const pool = provider.stocksByMarket[state.market] || [];
+  const pool = provider.stocksByIndex[state.index] || [];
   const industries = [...new Set(pool.map((stock) => stock.industry).filter(Boolean))].sort((a, b) =>
     a.localeCompare(b, "zh-CN"),
   );
@@ -905,15 +1039,15 @@ function fillIndustryFilter() {
 function renderMetrics() {
   if (!els.marketMetrics) return;
   const total = state.filtered.length;
-  const avgScore = average(state.filtered.map((stock) => stock.analysis.score));
   const undervalued = state.filtered.filter((stock) => stock.valuation.state === "undervalued").length;
   const highRisk = state.filtered.filter((stock) => stock.valuation.state === "risk" || stock.analysis.risks.length >= 3).length;
-  const catalogCount = provider.catalogMeta[state.market]?.count || total;
+  const progress = provider.quoteState(state.index);
+  const catalogCount = provider.catalogMeta[state.index]?.count || progress.total || total;
   const metrics = [
     ["指数成分", `${catalogCount} 只`],
+    ["已加载行情", `${progress.loaded || 0} 只`],
     ["当前筛选", `${total} 只`],
-    ["低估区间", `${undervalued} 只`],
-    ["风险提醒", `${highRisk} 条`],
+    ["低估 / 风险", `${undervalued} / ${highRisk}`],
   ];
   els.marketMetrics.innerHTML = metrics
     .map(
@@ -2055,8 +2189,15 @@ function switchView(view) {
   if (view === "watchlist") renderWatchlist();
   if (view === "holdings") renderHoldings();
   if (view === "research") {
-    renderRows();
-    renderCompare();
+    renderIndexSegment();
+    renderResearchLoadStatus();
+    if (!(provider.stocksByIndex[state.index] || []).length) {
+      refreshStocks({ resetQuotes: true });
+    } else {
+      renderRows();
+      renderPager();
+      renderCompare();
+    }
   }
   if (view !== "detail" && location.hash.startsWith("#/stock/")) {
     history.replaceState(null, "", location.pathname);
@@ -2088,9 +2229,7 @@ async function restoreRoute() {
 }
 
 function syncMarketShortcuts() {
-  els.marketShortcuts.forEach((button) => {
-    button.classList.toggle("active", button.dataset.marketShortcut === state.market);
-  });
+  // Market shortcuts removed from global topbar; index controls live in research view.
 }
 
 function renderSourceStatus() {
@@ -3232,7 +3371,7 @@ async function importWorkspaceBackup(event) {
     applyLocalWorkspace(payload, { source: "import", markDirty: false });
     await persistWorkspace({ immediate: true });
     provider.invalidateAll();
-    await refreshStocks();
+    await refreshStocks({ resetQuotes: true });
     renderWorkbench();
     renderWatchlist();
     renderHoldings();

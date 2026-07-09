@@ -77,11 +77,6 @@
             </div>
           </div>
           <div class="topbar-actions">
-            <div class="market-segment" aria-label="市场快捷切换">
-              <button class="segment-button active" data-market-shortcut="A" type="button">A 股</button>
-              <button class="segment-button" data-market-shortcut="HK" type="button">港股</button>
-              <button class="segment-button" data-market-shortcut="US" type="button">美股</button>
-            </div>
             <button id="themeToggle" class="theme-toggle ghost-button compact" type="button" aria-label="切换到暗黑模式">
               <span class="theme-icon" aria-hidden="true">☾</span>
             </button>
@@ -246,7 +241,12 @@
         </section>
 
         <section id="researchView" class="view">
+          <div class="panel-heading research-heading">
+            <h2 class="section-title">研究池</h2>
+            <div class="index-segment" id="indexSegment" aria-label="指数切换"></div>
+          </div>
           <div class="metric-grid" id="marketMetrics"></div>
+          <div id="researchLoadStatus" class="research-load-status muted" role="status">选择指数后加载成分股行情</div>
           <section id="upcomingPanel" class="upcoming-panel" hidden aria-label="近期财报"></section>
 
           <section class="control-strip" aria-label="搜索和筛选">
@@ -316,12 +316,8 @@
           <nav class="detail-tabs" aria-label="股票详情二级目录">
             <a href="#detail-summary">概览</a>
             <a href="#detail-price">走势</a>
-            <a href="#detail-valuation">估值区间</a>
-            <a href="#detail-analysis">分析</a>
-            <a href="#detail-financials">财报</a>
             <a href="#detail-notes">笔记</a>
-            <a href="#detail-events">事件</a>
-            <a href="#detail-sources">来源</a>
+            <a href="#detail-more">更多</a>
           </nav>
           <section class="detail-panel" id="stockDetail" aria-live="polite" aria-label="股票研究票据"></section>
         </section>
@@ -447,7 +443,34 @@
           <div class="price-legend js-price-legend"></div>
         </section>
 
-        <section id="detail-valuation" class="valuation-section">
+        <section id="detail-notes" class="notes-section">
+          <h3 class="section-title">研究笔记</h3>
+          <label>
+            <span>投资论点</span>
+            <textarea class="js-thesis" rows="4" placeholder="为什么关注这只股票？关键点与否决条件…"></textarea>
+          </label>
+          <label>
+            <span>决策状态</span>
+            <select class="js-decision">
+              <option value="watch">观望</option>
+              <option value="buy">关注买入</option>
+              <option value="hold">持有</option>
+              <option value="trim">减仓</option>
+              <option value="exit">移出</option>
+            </select>
+          </label>
+          <div class="inline-actions">
+            <button class="primary-button compact js-save-note" type="button">保存笔记</button>
+            <span class="muted js-note-status"></span>
+          </div>
+        </section>
+
+
+        <details id="detail-more" class="detail-more">
+          <summary class="detail-more-summary">更多分析 · 估值 / 财报 / 事件 / 来源</summary>
+          <div class="detail-more-body">
+<div id="detail-more-anchor"></div>
+<section id="detail-valuation" class="valuation-section">
           <div class="valuation-meta">
             <p class="muted js-valuation-method"></p>
             <div class="scenario-grid">
@@ -523,29 +546,7 @@
           </div>
         </section>
 
-        <section id="detail-notes" class="notes-section">
-          <h3 class="section-title">研究笔记</h3>
-          <label>
-            <span>投资论点</span>
-            <textarea class="js-thesis" rows="4" placeholder="为什么关注这只股票？关键点与否决条件…"></textarea>
-          </label>
-          <label>
-            <span>决策状态</span>
-            <select class="js-decision">
-              <option value="watch">观望</option>
-              <option value="buy">关注买入</option>
-              <option value="hold">持有</option>
-              <option value="trim">减仓</option>
-              <option value="exit">移出</option>
-            </select>
-          </label>
-          <div class="inline-actions">
-            <button class="primary-button compact js-save-note" type="button">保存笔记</button>
-            <span class="muted js-note-status"></span>
-          </div>
-        </section>
-
-        <section id="detail-events" class="events-section">
+                <section id="detail-events" class="events-section">
           <h4>事件与披露</h4>
           <div class="events-block">
             <p class="events-label">即将到来</p>
@@ -567,6 +568,8 @@
             <ul class="js-sources"></ul>
           </div>
         </section>
+          </div>
+        </details>
 
         <footer class="disclaimer js-disclaimer">
           仅供研究参考，不构成投资建议。估值区间基于延迟数据和模型假设，真实投资决策需结合个人风险承受能力。
