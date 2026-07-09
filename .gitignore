@@ -7,3 +7,13 @@ __pycache__/
 workspace.json
 workspace.json.tmp
 .catalog-cache.json
+build/
+dist/
+*.spec.bak
+.venv/
+venv/
+packaging/icons/StockAgent.iconset/
+packaging/icons/*.icns
+!packaging/icons/icon-1024.png
+!packaging/icons/.gitkeep
+
