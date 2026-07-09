@@ -427,16 +427,23 @@
 
         <section id="detail-price" class="price-section">
           <div class="panel-heading">
-            <h3 class="section-title">价格走势</h3>
+            <div>
+              <h3 class="section-title">价格走势</h3>
+              <p class="muted js-price-summary"></p>
+            </div>
             <div class="range-segment" role="group" aria-label="走势区间">
               <button class="segment-button js-range active" data-range="1m" type="button">1M</button>
               <button class="segment-button js-range" data-range="3m" type="button">3M</button>
+              <button class="segment-button js-range" data-range="6m" type="button">6M</button>
               <button class="segment-button js-range" data-range="1y" type="button">1Y</button>
               <button class="segment-button js-range" data-range="5y" type="button">5Y</button>
             </div>
           </div>
-          <canvas class="js-price-chart" width="900" height="280"></canvas>
-          <p class="muted js-price-legend"></p>
+          <div class="price-chart-shell">
+            <canvas class="js-price-chart" width="960" height="360" aria-label="价格走势图"></canvas>
+            <div class="price-tooltip js-price-tooltip" hidden></div>
+          </div>
+          <div class="price-legend js-price-legend"></div>
         </section>
 
         <section id="detail-valuation" class="valuation-section">
