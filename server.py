@@ -1513,8 +1513,19 @@ load_config()
 
 if __name__ == "__main__":
     port = int(CONFIG.get("server", {}).get("port", 5174))
-    # Bind all interfaces so Cursor preview / port-forward can reach the server.
-    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    # Prefer dual-stack so both 127.0.0.1 and ::1/localhost work for previews.
+    try:
+        server = ThreadingHTTPServer(("::", port), Handler)
+        if hasattr(server.socket, "setsockopt"):
+            import socket
+
+            # Allow IPv4 clients on the same socket when the platform supports it.
+            if hasattr(socket, "IPV6_V6ONLY"):
+                server.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        bind_label = f"[::]:{port} (dual-stack)"
+    except OSError:
+        server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+        bind_label = f"0.0.0.0:{port}"
     server.allow_reuse_address = True
-    print(f"StockAgent running at http://localhost:{port}", flush=True)
+    print(f"StockAgent running at http://localhost:{port} ({bind_label})", flush=True)
     server.serve_forever()
