@@ -1067,6 +1067,21 @@ td {
   margin: 0 0 12px;
 }
 
+#workspaceStatus[data-status="synced"] {
+  color: var(--accent-ink);
+}
+
+#workspaceStatus[data-status="pending"],
+#workspaceStatus[data-status="syncing"],
+#workspaceStatus[data-status="loading"] {
+  color: var(--blue);
+}
+
+#workspaceStatus[data-status="error"],
+#workspaceStatus[data-status="offline"] {
+  color: var(--warn);
+}
+
 .settings-form {
   display: grid;
   gap: 16px;

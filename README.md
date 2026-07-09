@@ -48,6 +48,6 @@ python3 -m http.server 5173
 
 核心字段已经包含 `source`, `source_url`, `as_of_date`, `currency`, `market`, `provider`, `updated_at`。
 
-本地状态（自选、持仓、笔记、提醒历史、自定义标的）保存在浏览器 `localStorage`。
+本地工作区（自选、持仓、笔记、提醒历史、自定义标的、偏好）通过 `GET/PUT /api/workspace` 持久化到项目根目录 `workspace.json`；浏览器 `localStorage` 仅作缓存与离线兜底。设置页支持导出 / 导入 JSON 备份。
 
 可通过 `GET /api/health` 核验三市场返回数量、交易所本地时间、数据年龄，以及 A/HK/US 财报连通状态。`status=live` 表示交易时段内数据延迟不超过阈值，`recent_close` 表示休市期间的最近收盘数据，`stale` 表示数据可能已经过期。

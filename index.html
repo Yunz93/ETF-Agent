@@ -349,6 +349,21 @@
                 <p class="muted">提醒仅在本机浏览器生效；触及目标价或财报临近时会写入提醒历史。</p>
               </div>
             </section>
+            <section class="settings-card">
+              <div class="panel-heading settings-heading">
+                <h2 class="section-title">工作区持久化</h2>
+                <div class="settings-actions">
+                  <button id="syncWorkspaceNow" class="ghost-button" type="button">立即同步</button>
+                  <button id="exportWorkspace" class="ghost-button" type="button">导出备份</button>
+                  <button id="importWorkspace" class="primary-button" type="button">导入备份</button>
+                  <input id="importWorkspaceFile" type="file" accept="application/json,.json" hidden />
+                </div>
+              </div>
+              <p class="muted settings-note">
+                自选、持仓、笔记、提醒历史与自定义标的会写入项目根目录 <code>workspace.json</code>；浏览器 localStorage 仅作缓存与离线兜底。首次启动若服务器为空，会自动迁移本地数据。
+              </p>
+              <p id="workspaceStatus" class="settings-status muted" role="status">尚未同步</p>
+            </section>
           </div>
         </section>
       </main>
