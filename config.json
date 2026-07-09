@@ -1,0 +1,51 @@
+{
+  "server": {
+    "port": 5174
+  },
+  "quotes": {
+    "provider": "tencent",
+    "provider_name": "腾讯行情",
+    "note": "腾讯公开行情接口，东方财富自动兜底",
+    "batch_size": 25,
+    "max_age_seconds": 1800
+  },
+  "sec": {
+    "enabled": true,
+    "user_agent": "StockAgent/0.1 personal-local contact@example.com"
+  },
+  "sources": {
+    "QUOTE": [
+      {
+        "name": "腾讯行情",
+        "url": "https://gu.qq.com/",
+        "role": "实时/延迟行情和基础估值"
+      }
+    ],
+    "A": [
+      {
+        "name": "巨潮资讯网",
+        "url": "https://www.cninfo.com.cn/new/index",
+        "role": "公告、财报与监管问询来源"
+      },
+      {
+        "name": "上交所",
+        "url": "https://www.sse.com.cn/",
+        "role": "沪市公告补充校验"
+      }
+    ],
+    "HK": [
+      {
+        "name": "HKEXnews",
+        "url": "https://www.hkexnews.hk/index.htm",
+        "role": "港股上市公司公告来源"
+      }
+    ],
+    "US": [
+      {
+        "name": "SEC EDGAR",
+        "url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+        "role": "10-K、10-Q、XBRL companyfacts 来源"
+      }
+    ]
+  }
+}

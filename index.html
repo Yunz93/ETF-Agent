@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StockAgent | 跨市场股票研究</title>
+    <script>
+      (function () {
+        const stored = localStorage.getItem("stockagent.theme");
+        const theme =
+          stored === "light" || stored === "dark"
+            ? stored
+            : window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        document.documentElement.dataset.theme = theme;
+        if (localStorage.getItem("stockagent.sidebar") === "collapsed" && window.innerWidth > 1180) {
+          document.documentElement.dataset.sidebar = "collapsed";
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="工作区导航">
+        <div class="brand">
+          <div class="brand-mark">SA</div>
+          <div class="brand-text">
+            <p>StockAgent</p>
+            <span>研究辅助工作台</span>
+          </div>
+        </div>
+
+        <nav class="nav-stack" aria-label="主导航">
+          <button class="nav-item active" data-view="dashboard" type="button" title="市场总览">
+            <span class="icon" aria-hidden="true">⌁</span>
+            <span class="nav-label">市场总览</span>
+          </button>
+          <button class="nav-item" data-view="watchlist" type="button" title="自选股">
+            <span class="icon" aria-hidden="true">◆</span>
+            <span class="nav-label">自选股</span>
+          </button>
+          <button class="nav-item" data-view="settings" type="button" title="数据源设置">
+            <span class="icon" aria-hidden="true">⚙</span>
+            <span class="nav-label">数据源设置</span>
+          </button>
+        </nav>
+
+        <button
+          id="sidebarToggle"
+          class="sidebar-toggle ghost-button compact"
+          type="button"
+          aria-label="收起侧边栏"
+          aria-expanded="true"
+        >
+          <span class="sidebar-toggle-icon" aria-hidden="true">‹</span>
+        </button>
+      </aside>
+
+      <main id="main-content" class="workspace" tabindex="-1">
+        <header class="topbar">
+          <div>
+            <h1>股票研究</h1>
+            <div class="session-strip" aria-label="数据状态摘要">
+              <span><i class="status-dot"></i><strong id="topSourceStatus">行情连接中</strong></span>
+              <span id="selectedStockSummary">等待选择标的</span>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <div class="market-segment" aria-label="市场快捷切换">
+              <button class="segment-button active" data-market-shortcut="A" type="button">A 股</button>
+              <button class="segment-button" data-market-shortcut="HK" type="button">港股</button>
+              <button class="segment-button" data-market-shortcut="US" type="button">美股</button>
+            </div>
+            <button id="themeToggle" class="theme-toggle ghost-button compact" type="button" aria-label="切换到暗黑模式">
+              <span class="theme-icon" aria-hidden="true">☾</span>
+            </button>
+          </div>
+        </header>
+
+        <section id="dashboardView" class="view active">
+          <div class="metric-grid" id="marketMetrics"></div>
+          <section id="upcomingPanel" class="upcoming-panel" hidden aria-label="近期财报"></section>
+
+          <section class="control-strip" aria-label="搜索和筛选">
+            <label class="search-box">
+              <input id="searchInput" type="search" placeholder="搜索代码、公司名、行业" aria-label="搜索" />
+            </label>
+            <label>
+              <select id="industryFilter" aria-label="行业">
+                <option value="all">全部行业</option>
+              </select>
+            </label>
+            <label>
+              <select id="valuationFilter" aria-label="估值状态">
+                <option value="all">全部状态</option>
+                <option value="undervalued">低估区间</option>
+                <option value="fair">合理区间</option>
+                <option value="expensive">偏贵区间</option>
+                <option value="risk">风险区间</option>
+              </select>
+            </label>
+          </section>
+
+          <div class="content-grid list-only">
+            <section class="stock-table-panel">
+              <div class="table-wrap">
+                <table class="stock-table">
+                  <thead>
+                    <tr>
+                      <th>股票</th>
+                      <th>市场</th>
+                      <th>行业</th>
+                      <th class="num">价格</th>
+                      <th class="num">涨跌</th>
+                      <th class="num">PE</th>
+                      <th class="num">安全边际</th>
+                      <th class="num">52 周</th>
+                      <th>状态</th>
+                    </tr>
+                  </thead>
+                  <tbody id="stockRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="detailView" class="view detail-view-shell">
+          <div class="detail-subheader">
+            <button id="backToList" class="ghost-button compact" type="button">返回股票池</button>
+            <h2 id="detailCrumb" class="section-title">选择一只股票</h2>
+          </div>
+          <nav class="detail-tabs" aria-label="股票详情二级目录">
+            <a href="#detail-summary">概览</a>
+            <a href="#detail-valuation">估值区间</a>
+            <a href="#detail-analysis">分析</a>
+            <a href="#detail-financials">财报</a>
+            <a href="#detail-events">事件</a>
+            <a href="#detail-sources">来源</a>
+          </nav>
+          <section class="detail-panel" id="stockDetail" aria-live="polite" aria-label="股票研究票据"></section>
+        </section>
+
+        <section id="watchlistView" class="view">
+          <div class="panel-heading">
+            <h2 class="section-title">自选股</h2>
+            <button id="clearWatchlist" class="ghost-button" type="button">清空自选</button>
+          </div>
+          <div id="watchlistContent" class="watchlist-grid"></div>
+        </section>
+
+        <section id="settingsView" class="view">
+          <div class="settings-layout">
+            <section class="settings-card">
+              <div class="panel-heading settings-heading">
+                <h2 class="section-title">数据源配置</h2>
+                <div class="settings-actions">
+                  <button id="resetConfig" class="ghost-button" type="button">重新加载</button>
+                  <button id="saveConfig" class="primary-button" type="button">保存配置</button>
+                </div>
+              </div>
+              <p class="muted settings-note">修改后保存至项目根目录 config.json；行情缓存会自动刷新。需通过 python3 server.py 启动本地代理。</p>
+              <div id="settingsForm" class="settings-form"></div>
+              <p id="settingsStatus" class="settings-status muted" role="status"></p>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <template id="detailTemplate">
+      <article class="report-card">
+        <div id="detail-summary" class="report-top">
+          <div>
+            <h2 class="js-name"></h2>
+            <p class="muted js-meta"></p>
+          </div>
+          <button class="watch-button js-watch" type="button"></button>
+        </div>
+
+        <div class="quote-grid">
+          <div>
+            <span>当前价</span>
+            <strong class="js-price"></strong>
+          </div>
+          <div>
+            <span>估值状态</span>
+            <strong class="js-valuation-state"></strong>
+          </div>
+          <div>
+            <span>安全边际</span>
+            <strong class="js-margin"></strong>
+          </div>
+          <div>
+            <span>综合评分</span>
+            <strong class="js-score"></strong>
+          </div>
+        </div>
+
+        <div class="metrics-grid">
+          <div>
+            <span>PE</span>
+            <strong class="js-pe"></strong>
+          </div>
+          <div>
+            <span>PB</span>
+            <strong class="js-pb"></strong>
+          </div>
+          <div>
+            <span>PS</span>
+            <strong class="js-ps"></strong>
+          </div>
+          <div>
+            <span>股息率</span>
+            <strong class="js-dividend"></strong>
+          </div>
+          <div>
+            <span>市值</span>
+            <strong class="js-market-cap"></strong>
+          </div>
+          <div>
+            <span>52 周区间</span>
+            <strong class="js-week52"></strong>
+          </div>
+        </div>
+
+        <section id="detail-valuation" class="valuation-section">
+          <div class="valuation-meta">
+            <p class="muted js-valuation-method"></p>
+            <div class="scenario-grid">
+              <div>
+                <span>保守</span>
+                <strong class="js-bear"></strong>
+              </div>
+              <div>
+                <span>基准</span>
+                <strong class="js-base"></strong>
+              </div>
+              <div>
+                <span>乐观</span>
+                <strong class="js-bull"></strong>
+              </div>
+            </div>
+            <p class="muted js-peer"></p>
+          </div>
+          <div class="band-track">
+            <span class="band-segment watch">低估</span>
+            <span class="band-segment fair">合理</span>
+            <span class="band-segment expensive">偏贵</span>
+            <span class="band-segment risk">风险</span>
+            <span class="price-marker js-marker"></span>
+          </div>
+          <div class="band-labels js-band-labels"></div>
+        </section>
+
+        <section id="detail-analysis" class="analysis-block">
+          <h3 class="js-rating-label"></h3>
+          <p class="js-summary"></p>
+          <div class="score-breakdown js-breakdown"></div>
+          <div class="evidence-grid">
+            <div>
+              <h4>积极因素</h4>
+              <ul class="js-positives"></ul>
+            </div>
+            <div>
+              <h4>风险因素</h4>
+              <ul class="js-risks"></ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="detail-financials" class="financial-grid">
+          <div>
+            <div class="mini-heading">
+              <span>收入</span>
+              <strong class="js-revenue-growth"></strong>
+            </div>
+            <canvas class="js-chart" data-metric="revenue" width="560" height="150"></canvas>
+          </div>
+          <div>
+            <div class="mini-heading">
+              <span>净利润</span>
+              <strong class="js-net-income"></strong>
+            </div>
+            <canvas class="js-chart" data-metric="net_income" width="560" height="150"></canvas>
+          </div>
+          <div>
+            <div class="mini-heading">
+              <span>毛利率</span>
+              <strong class="js-gross-margin"></strong>
+            </div>
+            <canvas class="js-chart" data-metric="gross_margin" width="560" height="150"></canvas>
+          </div>
+          <div>
+            <div class="mini-heading">
+              <span>负债率</span>
+              <strong class="js-debt-ratio"></strong>
+            </div>
+            <canvas class="js-chart" data-metric="debt_ratio" width="560" height="150"></canvas>
+          </div>
+        </section>
+
+        <section id="detail-events" class="events-section">
+          <h4>事件与披露</h4>
+          <div class="events-block">
+            <p class="events-label">即将到来</p>
+            <ul class="event-list js-events-upcoming"></ul>
+          </div>
+          <div class="events-block">
+            <p class="events-label">近期披露</p>
+            <ul class="event-list js-events-past"></ul>
+          </div>
+        </section>
+
+        <section id="detail-sources" class="facts-section">
+          <div>
+            <h4>估值假设</h4>
+            <ul class="js-assumptions"></ul>
+          </div>
+          <div>
+            <h4>数据来源</h4>
+            <ul class="js-sources"></ul>
+          </div>
+        </section>
+
+        <footer class="disclaimer js-disclaimer">
+          仅供研究参考，不构成投资建议。估值区间基于延迟数据和模型假设，真实投资决策需结合个人风险承受能力。
+        </footer>
+      </article>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
