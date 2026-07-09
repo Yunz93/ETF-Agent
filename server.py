@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import http.cookiejar
 import json
-import re
 import mimetypes
+import os
+import re
+import socket
+import sys
 import threading
 import time
 import urllib.error
@@ -13,9 +16,44 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = ROOT / "config.json"
-WORKSPACE_PATH = ROOT / "workspace.json"
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+def _resolve_resource_root():
+    raw = os.environ.get("STOCKAGENT_RESOURCE_DIR")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    # PyInstaller onefile/onedir support
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS).resolve()
+    return REPO_ROOT
+
+
+def _resolve_data_dir():
+    raw = os.environ.get("STOCKAGENT_DATA_DIR")
+    if raw:
+        path = Path(raw).expanduser().resolve()
+    elif os.environ.get("STOCKAGENT_DESKTOP") == "1":
+        if sys.platform == "darwin":
+            path = Path.home() / "Library" / "Application Support" / "StockAgent"
+        elif sys.platform == "win32":
+            base = os.environ.get("APPDATA") or str(Path.home())
+            path = Path(base) / "StockAgent"
+        else:
+            path = Path.home() / ".local" / "share" / "StockAgent"
+    else:
+        path = REPO_ROOT
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "logs").mkdir(parents=True, exist_ok=True)
+    return path
+
+
+RESOURCE_ROOT = _resolve_resource_root()
+DATA_DIR = _resolve_data_dir()
+# Back-compat alias used by older helpers / docs.
+ROOT = RESOURCE_ROOT
+CONFIG_PATH = DATA_DIR / "config.json"
+WORKSPACE_PATH = DATA_DIR / "workspace.json"
 WORKSPACE_LOCK = threading.Lock()
 
 DEFAULT_WORKSPACE = {
@@ -115,7 +153,7 @@ INDEX_UNIVERSES = {
 }
 
 CATALOG_CACHE = {"expires": 0, "payload": None, "by_key": {}, "stocks": []}
-CATALOG_DISK_CACHE = ROOT / ".catalog-cache.json"
+CATALOG_DISK_CACHE = DATA_DIR / ".catalog-cache.json"
 SEC_CIK_CACHE = {"expires": 0, "payload": {}}
 QUOTE_MARKET_CACHE = {}
 
@@ -145,8 +183,8 @@ class Handler(BaseHTTPRequestHandler):
             path = "/index.html"
         else:
             path = parsed.path
-        target = (ROOT / path.lstrip("/")).resolve()
-        if not str(target).startswith(str(ROOT)) or not target.exists() or target.is_dir():
+        target = (RESOURCE_ROOT / path.lstrip("/")).resolve()
+        if not str(target).startswith(str(RESOURCE_ROOT)) or not target.exists() or target.is_dir():
             self.send_error(404)
             return
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
@@ -210,6 +248,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/workspace":
             self.send_json(get_workspace())
             return
+        if parsed.path == "/api/runtime":
+            self.send_json(get_runtime_info())
+            return
         self.serve_static(parsed.path)
 
     def do_PUT(self):
@@ -240,8 +281,8 @@ class Handler(BaseHTTPRequestHandler):
     def serve_static(self, path):
         if path == "/":
             path = "/index.html"
-        target = (ROOT / path.lstrip("/")).resolve()
-        if not str(target).startswith(str(ROOT)) or not target.exists() or target.is_dir():
+        target = (RESOURCE_ROOT / path.lstrip("/")).resolve()
+        if not str(target).startswith(str(RESOURCE_ROOT)) or not target.exists() or target.is_dir():
             self.send_error(404)
             return
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
@@ -272,7 +313,15 @@ def load_config():
             loaded = json.load(handle)
         CONFIG = normalize_config(loaded)
     else:
-        CONFIG = json.loads(json.dumps(DEFAULT_CONFIG))
+        seed = RESOURCE_ROOT / "config.json"
+        if seed.exists() and seed.resolve() != CONFIG_PATH.resolve():
+            try:
+                loaded = json.loads(seed.read_text(encoding="utf-8"))
+                CONFIG = normalize_config(loaded)
+            except Exception:
+                CONFIG = json.loads(json.dumps(DEFAULT_CONFIG))
+        else:
+            CONFIG = json.loads(json.dumps(DEFAULT_CONFIG))
         save_config(CONFIG)
     return CONFIG
 
@@ -2041,24 +2090,57 @@ def ratio(numerator, denominator):
     return round(numerator / denominator * 100, 1)
 
 
+def get_runtime_info():
+    return {
+        "app": "StockAgent",
+        "mode": "desktop" if os.environ.get("STOCKAGENT_DESKTOP") == "1" else "server",
+        "resource_root": str(RESOURCE_ROOT),
+        "data_dir": str(DATA_DIR),
+        "config_path": str(CONFIG_PATH),
+        "workspace_path": str(WORKSPACE_PATH),
+        "catalog_cache_path": str(CATALOG_DISK_CACHE),
+        "platform": sys.platform,
+        "python": sys.version.split()[0],
+        "frozen": bool(getattr(sys, "frozen", False)),
+    }
+
+
+def create_server(host="127.0.0.1", port=None, dual_stack=False):
+    """Create the HTTP server. port=None or 0 picks an ephemeral free port."""
+    load_config()
+    if port is None:
+        configured = int(CONFIG.get("server", {}).get("port", 5174))
+        port = configured
+    if dual_stack:
+        try:
+            server = ThreadingHTTPServer(("::", port), Handler)
+            if hasattr(server.socket, "setsockopt") and hasattr(socket, "IPV6_V6ONLY"):
+                server.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            return server
+        except OSError:
+            pass
+    server = ThreadingHTTPServer((host, port), Handler)
+    server.allow_reuse_address = True
+    return server
+
+
+def serve_forever(host="127.0.0.1", port=None, dual_stack=False):
+    server = create_server(host=host, port=port, dual_stack=dual_stack)
+    bound_host, bound_port = server.server_address[:2]
+    print(f"StockAgent running at http://127.0.0.1:{bound_port} (bound {bound_host}:{bound_port})", flush=True)
+    print(f"data_dir={DATA_DIR}", flush=True)
+    server.serve_forever()
+    return server
+
+
 load_config()
 
 
 if __name__ == "__main__":
-    port = int(CONFIG.get("server", {}).get("port", 5174))
-    # Prefer dual-stack so both 127.0.0.1 and ::1/localhost work for previews.
-    try:
-        server = ThreadingHTTPServer(("::", port), Handler)
-        if hasattr(server.socket, "setsockopt"):
-            import socket
-
-            # Allow IPv4 clients on the same socket when the platform supports it.
-            if hasattr(socket, "IPV6_V6ONLY"):
-                server.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-        bind_label = f"[::]:{port} (dual-stack)"
-    except OSError:
-        server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-        bind_label = f"0.0.0.0:{port}"
-    server.allow_reuse_address = True
-    print(f"StockAgent running at http://localhost:{port} ({bind_label})", flush=True)
-    server.serve_forever()
+    # CLI / browser mode: keep previous dual-stack localhost behavior.
+    desktop = os.environ.get("STOCKAGENT_DESKTOP") == "1"
+    if desktop:
+        serve_forever(host="127.0.0.1", port=0, dual_stack=False)
+    else:
+        port = int(CONFIG.get("server", {}).get("port", 5174))
+        serve_forever(host="0.0.0.0", port=port, dual_stack=True)

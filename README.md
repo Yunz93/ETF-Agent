@@ -17,6 +17,8 @@
 
 ## 本地运行
 
+### 浏览器模式
+
 推荐用本地后端运行，这样可以绕过浏览器 CORS，拉取真实行情：
 
 ```bash
@@ -36,6 +38,15 @@ python3 -m http.server 5173
 ```
 
 然后访问 `http://localhost:5173`。
+
+### macOS 桌面模式
+
+```bash
+pip install -r requirements-desktop.txt
+python3 -m desktop
+```
+
+数据目录：`~/Library/Application Support/StockAgent/`。打包与菜单说明见 [docs/DESKTOP.md](docs/DESKTOP.md)。
 
 ## 数据源替换点
 
