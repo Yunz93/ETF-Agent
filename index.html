@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>StockAgent | 跨市场股票研究</title>
+    <title>StockAgent | 个人股票工作台</title>
     <script>
       (function () {
         const stored = localStorage.getItem("stockagent.theme");
@@ -29,22 +29,30 @@
           <div class="brand-mark">SA</div>
           <div class="brand-text">
             <p>StockAgent</p>
-            <span>研究辅助工作台</span>
+            <span>个人股票工作台</span>
           </div>
         </div>
 
         <nav class="nav-stack" aria-label="主导航">
-          <button class="nav-item active" data-view="dashboard" type="button" title="市场总览">
+          <button class="nav-item active" data-view="workbench" type="button" title="今日工作台">
             <span class="icon" aria-hidden="true">⌁</span>
-            <span class="nav-label">市场总览</span>
+            <span class="nav-label">今日工作台</span>
           </button>
-          <button class="nav-item" data-view="watchlist" type="button" title="自选股">
+          <button class="nav-item" data-view="watchlist" type="button" title="自选跟踪">
             <span class="icon" aria-hidden="true">◆</span>
-            <span class="nav-label">自选股</span>
+            <span class="nav-label">自选跟踪</span>
           </button>
-          <button class="nav-item" data-view="settings" type="button" title="数据源设置">
+          <button class="nav-item" data-view="holdings" type="button" title="持仓">
+            <span class="icon" aria-hidden="true">▣</span>
+            <span class="nav-label">持仓</span>
+          </button>
+          <button class="nav-item" data-view="research" type="button" title="研究池">
+            <span class="icon" aria-hidden="true">☰</span>
+            <span class="nav-label">研究池</span>
+          </button>
+          <button class="nav-item" data-view="settings" type="button" title="设置">
             <span class="icon" aria-hidden="true">⚙</span>
-            <span class="nav-label">数据源设置</span>
+            <span class="nav-label">设置</span>
           </button>
         </nav>
 
@@ -62,7 +70,7 @@
       <main id="main-content" class="workspace" tabindex="-1">
         <header class="topbar">
           <div>
-            <h1>股票研究</h1>
+            <h1 id="pageTitle">今日工作台</h1>
             <div class="session-strip" aria-label="数据状态摘要">
               <span><i class="status-dot"></i><strong id="topSourceStatus">行情连接中</strong></span>
               <span id="selectedStockSummary">等待选择标的</span>
@@ -80,7 +88,164 @@
           </div>
         </header>
 
-        <section id="dashboardView" class="view active">
+        <section id="workbenchView" class="view active">
+          <div class="metric-grid" id="workbenchMetrics"></div>
+          <div class="workbench-grid">
+            <section class="panel-block">
+              <div class="panel-heading">
+                <h2 class="section-title">自选异动</h2>
+                <button class="ghost-button compact" data-goto="watchlist" type="button">打开自选</button>
+              </div>
+              <div id="workbenchWatchMoves" class="stack-list"></div>
+            </section>
+            <section class="panel-block">
+              <div class="panel-heading">
+                <h2 class="section-title">待办提醒</h2>
+                <button id="enableNotify" class="ghost-button compact" type="button">开启通知</button>
+              </div>
+              <div id="workbenchAlerts" class="stack-list"></div>
+            </section>
+            <section class="panel-block">
+              <div class="panel-heading">
+                <h2 class="section-title">近期财报</h2>
+                <span class="muted">45 天内</span>
+              </div>
+              <div id="workbenchEarnings" class="stack-list"></div>
+            </section>
+            <section class="panel-block">
+              <div class="panel-heading">
+                <h2 class="section-title">持仓摘要</h2>
+                <button class="ghost-button compact" data-goto="holdings" type="button">管理持仓</button>
+              </div>
+              <div id="workbenchHoldings" class="stack-list"></div>
+            </section>
+          </div>
+          <section class="panel-block alert-history-block">
+            <div class="panel-heading">
+              <h2 class="section-title">提醒历史</h2>
+              <button id="clearAlertHistory" class="ghost-button compact" type="button">清空</button>
+            </div>
+            <div id="alertHistory" class="stack-list"></div>
+          </section>
+        </section>
+
+        <section id="watchlistView" class="view">
+          <div class="panel-heading">
+            <h2 class="section-title">自选跟踪</h2>
+            <div class="inline-actions">
+              <select id="watchGroupFilter" aria-label="分组筛选">
+                <option value="all">全部分组</option>
+                <option value="core">核心仓</option>
+                <option value="watch">观察</option>
+                <option value="long">长期</option>
+              </select>
+              <select id="watchAlertFilter" aria-label="提醒筛选">
+                <option value="all">全部状态</option>
+                <option value="hit">已触及</option>
+                <option value="near">接近目标</option>
+              </select>
+              <button id="clearWatchlist" class="ghost-button" type="button">清空自选</button>
+            </div>
+          </div>
+          <form id="addSymbolForm" class="add-symbol-strip" autocomplete="off">
+            <label>
+              <span>市场</span>
+              <select id="addMarket" aria-label="添加市场">
+                <option value="A">A 股</option>
+                <option value="HK">港股</option>
+                <option value="US">美股</option>
+              </select>
+            </label>
+            <label class="grow">
+              <span>代码</span>
+              <input id="addSymbol" type="text" placeholder="如 600519 / 0700 / AAPL" required />
+            </label>
+            <button class="primary-button" type="submit">加入自选</button>
+            <p id="addSymbolStatus" class="muted" role="status"></p>
+          </form>
+          <div class="table-wrap">
+            <table class="stock-table watch-table">
+              <thead>
+                <tr>
+                  <th>股票</th>
+                  <th>分组</th>
+                  <th class="num">现价</th>
+                  <th class="num">涨跌</th>
+                  <th class="num">买入关注</th>
+                  <th class="num">加仓</th>
+                  <th class="num">止盈</th>
+                  <th class="num">止损</th>
+                  <th>提醒</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="watchlistRows"></tbody>
+            </table>
+          </div>
+          <div id="watchlistEmpty" class="empty-state" hidden>还没有自选股。在研究池或上方表单添加标的。</div>
+        </section>
+
+        <section id="holdingsView" class="view">
+          <div class="panel-heading">
+            <h2 class="section-title">持仓</h2>
+            <div class="inline-actions">
+              <label class="inline-label">
+                本位币
+                <select id="baseCurrency" aria-label="本位币">
+                  <option value="CNY">CNY</option>
+                  <option value="HKD">HKD</option>
+                  <option value="USD">USD</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="metric-grid" id="holdingsMetrics"></div>
+          <form id="addHoldingForm" class="add-symbol-strip" autocomplete="off">
+            <label>
+              <span>市场</span>
+              <select id="holdingMarket">
+                <option value="A">A 股</option>
+                <option value="HK">港股</option>
+                <option value="US">美股</option>
+              </select>
+            </label>
+            <label>
+              <span>代码</span>
+              <input id="holdingSymbol" type="text" placeholder="代码" required />
+            </label>
+            <label>
+              <span>数量</span>
+              <input id="holdingShares" type="number" min="0" step="any" required />
+            </label>
+            <label>
+              <span>成本价</span>
+              <input id="holdingCost" type="number" min="0" step="any" required />
+            </label>
+            <button class="primary-button" type="submit">保存持仓</button>
+            <p id="holdingFormStatus" class="muted" role="status"></p>
+          </form>
+          <div class="table-wrap">
+            <table class="stock-table">
+              <thead>
+                <tr>
+                  <th>股票</th>
+                  <th class="num">数量</th>
+                  <th class="num">成本</th>
+                  <th class="num">现价</th>
+                  <th class="num">市值</th>
+                  <th class="num">浮盈亏</th>
+                  <th class="num">仓位</th>
+                  <th class="num">相对合理价</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="holdingsRows"></tbody>
+            </table>
+          </div>
+          <div id="holdingsEmpty" class="empty-state" hidden>还没有持仓。添加数量与成本后即可跟踪浮盈亏。</div>
+        </section>
+
+        <section id="researchView" class="view">
           <div class="metric-grid" id="marketMetrics"></div>
           <section id="upcomingPanel" class="upcoming-panel" hidden aria-label="近期财报"></section>
 
@@ -104,12 +269,22 @@
             </label>
           </section>
 
+          <div class="compare-strip panel-block">
+            <div class="panel-heading">
+              <h2 class="section-title">同业对比</h2>
+              <button id="clearCompare" class="ghost-button compact" type="button">清空对比</button>
+            </div>
+            <div id="compareBar" class="compare-bar muted">勾选研究池中的股票加入对比（最多 4 只）。</div>
+            <div id="compareTable" class="table-wrap"></div>
+          </div>
+
           <div class="content-grid list-only">
             <section class="stock-table-panel">
               <div class="table-wrap">
                 <table class="stock-table">
                   <thead>
                     <tr>
+                      <th></th>
                       <th>股票</th>
                       <th>市场</th>
                       <th>行业</th>
@@ -130,26 +305,24 @@
 
         <section id="detailView" class="view detail-view-shell">
           <div class="detail-subheader">
-            <button id="backToList" class="ghost-button compact" type="button">返回股票池</button>
+            <button id="backToList" class="ghost-button compact" type="button">返回</button>
             <h2 id="detailCrumb" class="section-title">选择一只股票</h2>
+            <div class="detail-actions">
+              <button id="exportMarkdown" class="ghost-button compact" type="button">导出 Markdown</button>
+              <button id="printReport" class="ghost-button compact" type="button">打印 / PDF</button>
+            </div>
           </div>
           <nav class="detail-tabs" aria-label="股票详情二级目录">
             <a href="#detail-summary">概览</a>
+            <a href="#detail-price">走势</a>
             <a href="#detail-valuation">估值区间</a>
             <a href="#detail-analysis">分析</a>
             <a href="#detail-financials">财报</a>
+            <a href="#detail-notes">笔记</a>
             <a href="#detail-events">事件</a>
             <a href="#detail-sources">来源</a>
           </nav>
           <section class="detail-panel" id="stockDetail" aria-live="polite" aria-label="股票研究票据"></section>
-        </section>
-
-        <section id="watchlistView" class="view">
-          <div class="panel-heading">
-            <h2 class="section-title">自选股</h2>
-            <button id="clearWatchlist" class="ghost-button" type="button">清空自选</button>
-          </div>
-          <div id="watchlistContent" class="watchlist-grid"></div>
         </section>
 
         <section id="settingsView" class="view">
@@ -165,6 +338,16 @@
               <p class="muted settings-note">修改后保存至项目根目录 config.json；行情缓存会自动刷新。需通过 python3 server.py 启动本地代理。</p>
               <div id="settingsForm" class="settings-form"></div>
               <p id="settingsStatus" class="settings-status muted" role="status"></p>
+            </section>
+            <section class="settings-card">
+              <h2 class="section-title">工作台偏好</h2>
+              <div class="settings-form">
+                <label class="config-check">
+                  <input id="prefNotify" type="checkbox" />
+                  <span>允许浏览器价格 / 财报提醒</span>
+                </label>
+                <p class="muted">提醒仅在本机浏览器生效；触及目标价或财报临近时会写入提醒历史。</p>
+              </div>
             </section>
           </div>
         </section>
@@ -226,6 +409,20 @@
             <strong class="js-week52"></strong>
           </div>
         </div>
+
+        <section id="detail-price" class="price-section">
+          <div class="panel-heading">
+            <h3 class="section-title">价格走势</h3>
+            <div class="range-segment" role="group" aria-label="走势区间">
+              <button class="segment-button js-range active" data-range="1m" type="button">1M</button>
+              <button class="segment-button js-range" data-range="3m" type="button">3M</button>
+              <button class="segment-button js-range" data-range="1y" type="button">1Y</button>
+              <button class="segment-button js-range" data-range="5y" type="button">5Y</button>
+            </div>
+          </div>
+          <canvas class="js-price-chart" width="900" height="280"></canvas>
+          <p class="muted js-price-legend"></p>
+        </section>
 
         <section id="detail-valuation" class="valuation-section">
           <div class="valuation-meta">
@@ -300,6 +497,28 @@
               <strong class="js-debt-ratio"></strong>
             </div>
             <canvas class="js-chart" data-metric="debt_ratio" width="560" height="150"></canvas>
+          </div>
+        </section>
+
+        <section id="detail-notes" class="notes-section">
+          <h3 class="section-title">研究笔记</h3>
+          <label>
+            <span>投资论点</span>
+            <textarea class="js-thesis" rows="4" placeholder="为什么关注这只股票？关键点与否决条件…"></textarea>
+          </label>
+          <label>
+            <span>决策状态</span>
+            <select class="js-decision">
+              <option value="watch">观望</option>
+              <option value="buy">关注买入</option>
+              <option value="hold">持有</option>
+              <option value="trim">减仓</option>
+              <option value="exit">移出</option>
+            </select>
+          </label>
+          <div class="inline-actions">
+            <button class="primary-button compact js-save-note" type="button">保存笔记</button>
+            <span class="muted js-note-status"></span>
           </div>
         </section>
 

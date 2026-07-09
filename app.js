@@ -4,6 +4,12 @@ const CURRENCY = {
   USD: "$",
 };
 
+const FX_TO_CNY = {
+  CNY: 1,
+  HKD: 0.92,
+  USD: 7.25,
+};
+
 const DEFAULT_SOURCES = {
   A: [
     {
@@ -105,17 +111,63 @@ const STOCK_SEEDS = [
   ["ADBE", "奥多比", "Adobe", "US", "NASDAQ", "USD", "软件"],
 ];
 
+
+const WATCHLIST_KEY = "stockagent.watchlist";
+const HOLDINGS_KEY = "stockagent.holdings";
+const NOTES_KEY = "stockagent.notes";
+const ALERTS_KEY = "stockagent.alertHistory";
+const PREFS_KEY = "stockagent.prefs";
+const THEME_KEY = "stockagent.theme";
+const SIDEBAR_KEY = "stockagent.sidebar";
+const SIDEBAR_COLLAPSE_MIN = 1181;
+const CUSTOM_KEY = "stockagent.customSymbols";
+
+const GROUP_LABELS = {
+  core: "核心仓",
+  watch: "观察",
+  long: "长期",
+};
+
+const DECISION_LABELS = {
+  watch: "观望",
+  buy: "关注买入",
+  hold: "持有",
+  trim: "减仓",
+  exit: "移出",
+};
+
+const PAGE_TITLES = {
+  workbench: "今日工作台",
+  watchlist: "自选跟踪",
+  holdings: "持仓",
+  research: "研究池",
+  detail: "股票详情",
+  settings: "设置",
+};
+
 class HybridProvider {
   constructor(seeds) {
     this.catalog = seeds.map((seed, index) => buildCatalogStock(seed, index));
+    this.customCatalog = loadCustomSymbols().map((item, index) => ({
+      ...item,
+      listing_status: "listed",
+      sortIndex: 1000 + index,
+      custom: true,
+    }));
     this.stocks = [];
     this.quoteHydrated = false;
     this.quoteHydration = null;
+    this.historyCache = new Map();
     this.status = {
       quote: "connecting",
       quoteLabel: "行情连接中",
       filing: "等待 SEC 数据",
     };
+  }
+
+  allCatalog() {
+    const seen = new Set(this.catalog.map(stockKey));
+    return [...this.catalog, ...this.customCatalog.filter((item) => !seen.has(stockKey(item)))];
   }
 
   async hydrateQuotes() {
@@ -126,11 +178,24 @@ class HybridProvider {
         if (!response.ok) throw new Error(`Quote API ${response.status}`);
         return response.json();
       })
-      .then((payload) => {
+      .then(async (payload) => {
         const quotes = new Map(payload.quotes.map((quote) => [`${quote.market}:${quote.symbol}`, quote]));
-        this.stocks = this.catalog
+        const seedStocks = this.catalog
           .map((entry) => buildStockFromQuote(entry, quotes.get(stockKey(entry))))
           .filter(Boolean);
+
+        const customStocks = [];
+        for (const entry of this.customCatalog) {
+          if (quotes.has(stockKey(entry))) {
+            const stock = buildStockFromQuote(entry, quotes.get(stockKey(entry)));
+            if (stock) customStocks.push(stock);
+            continue;
+          }
+          const fetched = await this.fetchCustomQuote(entry.symbol, entry.market);
+          if (fetched) customStocks.push(fetched);
+        }
+
+        this.stocks = [...seedStocks, ...customStocks];
         this.status.quote = this.stocks.length ? "live" : "unavailable";
         this.status.quoteLabel = this.stocks.length
           ? `${payload.provider || "真实行情"} · ${this.stocks.length} 条`
@@ -149,6 +214,64 @@ class HybridProvider {
     return this.quoteHydration;
   }
 
+  async fetchCustomQuote(symbol, market) {
+    try {
+      const response = await fetch(
+        `/api/quote?market=${encodeURIComponent(market)}&symbol=${encodeURIComponent(symbol)}`,
+      );
+      if (!response.ok) return null;
+      const payload = await response.json();
+      if (!payload.quote) return null;
+      const meta = payload.meta || {};
+      const entry = {
+        symbol: meta.symbol || symbol,
+        name: meta.name || symbol,
+        englishName: meta.englishName || meta.name || symbol,
+        market: meta.market || market,
+        exchange: meta.exchange || market,
+        currency: meta.currency || ({ A: "CNY", HK: "HKD", US: "USD" }[market] || "CNY"),
+        industry: meta.industry || "自定义",
+        listing_status: "listed",
+        sortIndex: 2000,
+        custom: true,
+      };
+      return buildStockFromQuote(entry, payload.quote);
+    } catch (error) {
+      console.warn("自定义行情失败", error);
+      return null;
+    }
+  }
+
+  async ensureStock(symbol, market) {
+    await this.hydrateQuotes();
+    let stock = this.stocks.find((item) => item.symbol === symbol && item.market === market);
+    if (stock) return stock;
+    const fetched = await this.fetchCustomQuote(symbol, market);
+    if (fetched) {
+      this.stocks.push(fetched);
+      this.rememberCustom(fetched);
+    }
+    return fetched;
+  }
+
+  rememberCustom(stock) {
+    const key = stockKey(stock);
+    if (this.catalog.some((item) => stockKey(item) === key)) return;
+    if (this.customCatalog.some((item) => stockKey(item) === key)) return;
+    const entry = {
+      symbol: stock.symbol,
+      name: stock.name,
+      englishName: stock.englishName,
+      market: stock.market,
+      exchange: stock.exchange,
+      currency: stock.currency,
+      industry: stock.industry || "自定义",
+      custom: true,
+    };
+    this.customCatalog.push(entry);
+    saveCustomSymbols(this.customCatalog);
+  }
+
   async search(filters) {
     await this.hydrateQuotes();
     return this.filterStocks(filters);
@@ -157,11 +280,29 @@ class HybridProvider {
   async getStock(symbol, market) {
     await this.hydrateQuotes();
     let stock = this.stocks.find((item) => item.symbol === symbol && item.market === market);
+    if (!stock) {
+      stock = await this.ensureStock(symbol, market);
+    }
     if (!stock) return stock;
     if (!(market === "US" && appConfig?.sec?.enabled === false)) {
       stock = await this.withFinancials(stock);
     }
     return this.withEvents(stock);
+  }
+
+  async getHistory(symbol, market, range = "1y") {
+    const cacheKey = `${market}:${symbol}:${range}`;
+    if (this.historyCache.has(cacheKey)) return this.historyCache.get(cacheKey);
+    try {
+      const response = await fetch(
+        `/api/history?market=${encodeURIComponent(market)}&symbol=${encodeURIComponent(symbol)}&range=${encodeURIComponent(range)}`,
+      );
+      const payload = await response.json();
+      this.historyCache.set(cacheKey, payload);
+      return payload;
+    } catch (error) {
+      return { points: [], error: String(error) };
+    }
   }
 
   filterStocks({ query = "", market = "all", industry = "all", valuation = "all" }) {
@@ -189,7 +330,7 @@ class HybridProvider {
       const payload = await response.json();
       if (!payload.financials?.length) return stock;
       this.status.filing = payload.provider || "真实财报";
-      return enrichStockMetrics({
+      const enriched = enrichStockMetrics({
         ...stock,
         financials: payload.financials,
         financialSource: {
@@ -205,6 +346,9 @@ class HybridProvider {
           updated_at: payload.updated_at,
         },
       });
+      const index = this.stocks.findIndex((item) => sameStock(item, stock));
+      if (index >= 0) this.stocks[index] = { ...this.stocks[index], ...enriched, financials: payload.financials };
+      return enriched;
     } catch (error) {
       console.warn("财报获取失败。", error);
       return stock;
@@ -241,12 +385,21 @@ const provider = new HybridProvider(STOCK_SEEDS);
 const state = {
   selected: null,
   filtered: [],
-  watchlist: loadWatchlist(),
-  activeView: "dashboard",
+  watchlist: migrateWatchlist(loadJSON(WATCHLIST_KEY, {})),
+  holdings: loadJSON(HOLDINGS_KEY, {}),
+  notes: loadJSON(NOTES_KEY, {}),
+  alertHistory: loadJSON(ALERTS_KEY, []),
+  prefs: loadJSON(PREFS_KEY, { notify: false, baseCurrency: "CNY" }),
+  compare: [],
+  activeView: "workbench",
   market: "A",
+  priceRange: "1y",
+  watchGroupFilter: "all",
+  watchAlertFilter: "all",
 };
 
 const els = {
+  pageTitle: document.querySelector("#pageTitle"),
   searchInput: document.querySelector("#searchInput"),
   industryFilter: document.querySelector("#industryFilter"),
   valuationFilter: document.querySelector("#valuationFilter"),
@@ -255,8 +408,39 @@ const els = {
   marketMetrics: document.querySelector("#marketMetrics"),
   upcomingPanel: document.querySelector("#upcomingPanel"),
   template: document.querySelector("#detailTemplate"),
-  watchlistContent: document.querySelector("#watchlistContent"),
+  watchlistRows: document.querySelector("#watchlistRows"),
+  watchlistEmpty: document.querySelector("#watchlistEmpty"),
   clearWatchlist: document.querySelector("#clearWatchlist"),
+  watchGroupFilter: document.querySelector("#watchGroupFilter"),
+  watchAlertFilter: document.querySelector("#watchAlertFilter"),
+  addSymbolForm: document.querySelector("#addSymbolForm"),
+  addMarket: document.querySelector("#addMarket"),
+  addSymbol: document.querySelector("#addSymbol"),
+  addSymbolStatus: document.querySelector("#addSymbolStatus"),
+  holdingsRows: document.querySelector("#holdingsRows"),
+  holdingsEmpty: document.querySelector("#holdingsEmpty"),
+  holdingsMetrics: document.querySelector("#holdingsMetrics"),
+  addHoldingForm: document.querySelector("#addHoldingForm"),
+  holdingMarket: document.querySelector("#holdingMarket"),
+  holdingSymbol: document.querySelector("#holdingSymbol"),
+  holdingShares: document.querySelector("#holdingShares"),
+  holdingCost: document.querySelector("#holdingCost"),
+  holdingFormStatus: document.querySelector("#holdingFormStatus"),
+  baseCurrency: document.querySelector("#baseCurrency"),
+  workbenchMetrics: document.querySelector("#workbenchMetrics"),
+  workbenchWatchMoves: document.querySelector("#workbenchWatchMoves"),
+  workbenchAlerts: document.querySelector("#workbenchAlerts"),
+  workbenchEarnings: document.querySelector("#workbenchEarnings"),
+  workbenchHoldings: document.querySelector("#workbenchHoldings"),
+  alertHistory: document.querySelector("#alertHistory"),
+  clearAlertHistory: document.querySelector("#clearAlertHistory"),
+  enableNotify: document.querySelector("#enableNotify"),
+  compareBar: document.querySelector("#compareBar"),
+  compareTable: document.querySelector("#compareTable"),
+  clearCompare: document.querySelector("#clearCompare"),
+  exportMarkdown: document.querySelector("#exportMarkdown"),
+  printReport: document.querySelector("#printReport"),
+  prefNotify: document.querySelector("#prefNotify"),
   marketShortcuts: document.querySelectorAll("[data-market-shortcut]"),
   topSourceStatus: document.querySelector("#topSourceStatus"),
   selectedStockSummary: document.querySelector("#selectedStockSummary"),
@@ -271,20 +455,23 @@ const els = {
   settingsStatus: document.querySelector("#settingsStatus"),
 };
 
-const THEME_KEY = "stockagent.theme";
-const SIDEBAR_KEY = "stockagent.sidebar";
-const SIDEBAR_COLLAPSE_MIN = 1181;
-
 init();
 
 async function init() {
   initTheme();
   initSidebar();
+  if (els.baseCurrency) els.baseCurrency.value = state.prefs.baseCurrency || "CNY";
+  if (els.prefNotify) els.prefNotify.checked = Boolean(state.prefs.notify);
   await loadAppConfig();
   fillIndustryFilter();
   bindEvents();
   await refreshStocks();
   await restoreRoute();
+  evaluateAlerts({ notify: false });
+  renderWorkbench();
+  renderWatchlist();
+  renderHoldings();
+  renderCompare();
   if (!state.selected && state.filtered[0]) {
     selectStock(state.filtered[0], { openDetail: false });
   }
@@ -463,21 +650,96 @@ function escapeAttr(value) {
     .replace(/</g, "&lt;");
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function bindEvents() {
   [els.searchInput, els.industryFilter, els.valuationFilter].forEach((el) => {
-    el.addEventListener("input", refreshStocks);
+    el?.addEventListener("input", refreshStocks);
   });
 
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => switchView(button.dataset.view));
   });
 
-  els.clearWatchlist.addEventListener("click", () => {
+  document.querySelectorAll("[data-goto]").forEach((button) => {
+    button.addEventListener("click", () => switchView(button.dataset.goto));
+  });
+
+  els.clearWatchlist?.addEventListener("click", () => {
     state.watchlist = {};
     saveWatchlist();
     renderWatchlist();
+    renderWorkbench();
     renderDetail();
   });
+
+  els.watchGroupFilter?.addEventListener("change", () => {
+    state.watchGroupFilter = els.watchGroupFilter.value;
+    renderWatchlist();
+  });
+  els.watchAlertFilter?.addEventListener("change", () => {
+    state.watchAlertFilter = els.watchAlertFilter.value;
+    renderWatchlist();
+  });
+
+  els.addSymbolForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await addSymbolToWatchlist(els.addMarket.value, els.addSymbol.value.trim());
+  });
+
+  els.addHoldingForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await upsertHolding({
+      market: els.holdingMarket.value,
+      symbol: els.holdingSymbol.value.trim(),
+      shares: Number(els.holdingShares.value),
+      cost: Number(els.holdingCost.value),
+    });
+  });
+
+  els.baseCurrency?.addEventListener("change", () => {
+    state.prefs.baseCurrency = els.baseCurrency.value;
+    savePrefs();
+    renderHoldings();
+    renderWorkbench();
+  });
+
+  els.prefNotify?.addEventListener("change", () => {
+    state.prefs.notify = els.prefNotify.checked;
+    savePrefs();
+  });
+
+  els.enableNotify?.addEventListener("click", async () => {
+    if (!("Notification" in window)) {
+      els.enableNotify.textContent = "浏览器不支持通知";
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    state.prefs.notify = permission === "granted";
+    savePrefs();
+    if (els.prefNotify) els.prefNotify.checked = state.prefs.notify;
+    els.enableNotify.textContent = state.prefs.notify ? "通知已开启" : "通知未授权";
+  });
+
+  els.clearAlertHistory?.addEventListener("click", () => {
+    state.alertHistory = [];
+    saveJSON(ALERTS_KEY, state.alertHistory);
+    renderWorkbench();
+  });
+
+  els.clearCompare?.addEventListener("click", () => {
+    state.compare = [];
+    renderCompare();
+    renderRows();
+  });
+
+  els.exportMarkdown?.addEventListener("click", exportSelectedMarkdown);
+  els.printReport?.addEventListener("click", () => window.print());
 
   els.themeToggle?.addEventListener("click", toggleTheme);
   els.sidebarToggle?.addEventListener("click", toggleSidebar);
@@ -488,10 +750,16 @@ function bindEvents() {
     button.addEventListener("click", () => {
       state.market = button.dataset.marketShortcut;
       syncMarketShortcuts();
-      refreshStocks();
+      if (state.activeView === "research") refreshStocks();
     });
   });
-  els.backToList.addEventListener("click", () => showDashboard({ clearHash: true }));
+  els.backToList?.addEventListener("click", () => {
+    if (state.activeView === "detail") {
+      const fallback = Object.keys(state.watchlist).length ? "watchlist" : "research";
+      switchView(fallback);
+      history.replaceState(null, "", location.pathname);
+    }
+  });
   window.addEventListener("hashchange", restoreRoute);
   window.addEventListener("popstate", restoreRoute);
   els.detailTabs.forEach((link) => {
@@ -505,10 +773,10 @@ function bindEvents() {
 
 async function refreshStocks() {
   state.filtered = await provider.search({
-    query: els.searchInput.value,
+    query: els.searchInput?.value || "",
     market: state.market,
-    industry: els.industryFilter.value,
-    valuation: els.valuationFilter.value,
+    industry: els.industryFilter?.value || "all",
+    valuation: els.valuationFilter?.value || "all",
   });
   state.filtered.sort((a, b) => marginOfSafety(b) - marginOfSafety(a));
   renderSourceStatus();
@@ -516,12 +784,18 @@ async function refreshStocks() {
   renderMetrics();
   renderUpcoming();
   renderRows();
-  if (!state.selected || !state.filtered.some((stock) => sameStock(stock, state.selected))) {
-    selectStock(state.filtered[0], { openDetail: false });
+  renderWorkbench();
+  renderWatchlist();
+  renderHoldings();
+  renderCompare();
+  evaluateAlerts({ notify: state.prefs.notify });
+  if (!state.selected || !provider.stocks.some((stock) => sameStock(stock, state.selected))) {
+    selectStock(state.filtered[0] || provider.stocks[0] || null, { openDetail: false });
   }
 }
 
 function fillIndustryFilter() {
+  if (!els.industryFilter) return;
   const industries = [...new Set(STOCK_SEEDS.map((seed) => seed[6]))].sort((a, b) => a.localeCompare(b, "zh-CN"));
   industries.forEach((industry) => {
     const option = document.createElement("option");
@@ -532,6 +806,7 @@ function fillIndustryFilter() {
 }
 
 function renderMetrics() {
+  if (!els.marketMetrics) return;
   const total = state.filtered.length;
   const avgScore = average(state.filtered.map((stock) => stock.analysis.score));
   const undervalued = state.filtered.filter((stock) => stock.valuation.state === "undervalued").length;
@@ -584,7 +859,7 @@ function renderUpcoming() {
           ({ stock, date, days }) => `
             <li>
               <button class="upcoming-item" data-symbol="${stock.symbol}" data-market="${stock.market}" type="button">
-                <strong>${stock.name}</strong>
+                <strong>${escapeHtml(stock.name)}</strong>
                 <span>${date} · ${days === 0 ? "今天" : `${days} 天后`}</span>
               </button>
             </li>
@@ -603,8 +878,9 @@ function renderUpcoming() {
 }
 
 function renderRows() {
+  if (!els.stockRows) return;
   if (!state.filtered.length) {
-    els.stockRows.innerHTML = `<tr><td colspan="9"><div class="empty-state">暂无行情数据。请运行 python3 server.py 并确认网络可用。</div></td></tr>`;
+    els.stockRows.innerHTML = `<tr><td colspan="10"><div class="empty-state">暂无行情数据。请运行 python3 server.py 并确认网络可用。</div></td></tr>`;
     return;
   }
   els.stockRows.innerHTML = state.filtered
@@ -613,16 +889,20 @@ function renderRows() {
       const mos = marginOfSafety(stock);
       const w52 = week52Stats(stock);
       const mosClass = mos >= 0 ? "up" : "down";
+      const compared = state.compare.some((item) => sameStock(item, stock));
       return `
         <tr class="stock-row ${selected}" data-symbol="${stock.symbol}" data-market="${stock.market}" tabindex="0" aria-selected="${selected ? "true" : "false"}">
           <td>
+            <input type="checkbox" class="compare-check" data-compare="${stockKey(stock)}" ${compared ? "checked" : ""} aria-label="加入对比" />
+          </td>
+          <td>
             <div class="stock-id">
-              <strong>${stock.name}</strong>
-              <span>${stock.symbol} · ${stock.englishName}</span>
+              <strong>${escapeHtml(stock.name)}</strong>
+              <span>${stock.symbol} · ${escapeHtml(stock.englishName)}</span>
             </div>
           </td>
           <td>${marketLabel(stock.market)}</td>
-          <td>${stock.industry}</td>
+          <td>${escapeHtml(stock.industry)}</td>
           <td class="num">${money(stock.quote.price, stock.currency)}</td>
           <td class="num ${stock.quote.change_pct >= 0 ? "up" : "down"}">${signed(stock.quote.change_pct)}%</td>
           <td class="num">${stock.quote.pe ? stock.quote.pe.toFixed(1) : "—"}</td>
@@ -639,7 +919,10 @@ function renderRows() {
       const stock = await provider.getStock(row.dataset.symbol, row.dataset.market);
       selectStock(stock, { openDetail: true });
     };
-    row.addEventListener("click", activate);
+    row.addEventListener("click", (event) => {
+      if (event.target.closest(".compare-check")) return;
+      activate();
+    });
     row.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
@@ -647,17 +930,39 @@ function renderRows() {
       }
     });
   });
+
+  document.querySelectorAll(".compare-check").forEach((input) => {
+    input.addEventListener("change", () => {
+      const [market, symbol] = input.dataset.compare.split(":");
+      const stock = provider.stocks.find((item) => item.market === market && item.symbol === symbol);
+      if (!stock) return;
+      if (input.checked) {
+        if (state.compare.length >= 4) {
+          input.checked = false;
+          return;
+        }
+        if (!state.compare.some((item) => sameStock(item, stock))) state.compare.push(stock);
+      } else {
+        state.compare = state.compare.filter((item) => !sameStock(item, stock));
+      }
+      renderCompare();
+    });
+  });
 }
 
 function selectStock(stock, { openDetail = false, updateHash = true } = {}) {
   if (!stock) {
     state.selected = null;
-    els.stockDetail.innerHTML = `<div class="empty-state">没有匹配的股票。请调整搜索或筛选条件。</div>`;
+    if (els.stockDetail) {
+      els.stockDetail.innerHTML = `<div class="empty-state">没有匹配的股票。请调整搜索或筛选条件。</div>`;
+    }
     return;
   }
   state.selected = stock;
   els.selectedStockSummary.textContent = `${stock.name} · ${formatMarginOfSafety(marginOfSafety(stock))} · ${valuationLabel(stock.valuation.state)}${stock.quote.as_of ? ` · ${stock.quote.as_of}` : ""}`;
-  els.detailCrumb.textContent = `${stock.name} ${stock.symbol} · ${marketLabel(stock.market)} · ${stock.industry}`;
+  if (els.detailCrumb) {
+    els.detailCrumb.textContent = `${stock.name} ${stock.symbol} · ${marketLabel(stock.market)} · ${stock.industry}`;
+  }
   renderSourceStatus();
   renderRows();
   renderDetail();
@@ -677,12 +982,15 @@ function renderDetail() {
 }
 
 function paintDetail(stock) {
+  if (!els.template || !els.stockDetail) return;
   const fragment = els.template.content.cloneNode(true);
   const root = fragment.querySelector(".report-card");
   const latest = latestFinancial(stock);
   const hasFinancials = Boolean(latest);
   const watchKey = stockKey(stock);
   const watched = Boolean(state.watchlist[watchKey]);
+  const note = state.notes[watchKey] || {};
+  const holding = state.holdings[watchKey];
 
   root.querySelector(".js-name").textContent = `${stock.name} ${stock.symbol}`;
   root.querySelector(".js-meta").textContent = `${marketLabel(stock.market)} · ${stock.exchange} · ${stock.industry} · ${stock.englishName} · ${stock.currency}${stock.quote.as_of ? ` · 更新 ${stock.quote.as_of}` : ""}`;
@@ -736,11 +1044,13 @@ function paintDetail(stock) {
     .map((label) => `<span>${label}</span>`)
     .join("");
 
-  root.querySelector(".js-positives").innerHTML = stock.analysis.positives.map((item) => `<li>${item}</li>`).join("");
-  root.querySelector(".js-risks").innerHTML = stock.analysis.risks.map((item) => `<li>${item}</li>`).join("");
-  root.querySelector(".js-assumptions").innerHTML = stock.valuation.assumptions.map((item) => `<li>${item}</li>`).join("");
+  root.querySelector(".js-positives").innerHTML = (stock.analysis.positives.length ? stock.analysis.positives : ["暂无自动提取的积极因素。"])
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("");
+  root.querySelector(".js-risks").innerHTML = stock.analysis.risks.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  root.querySelector(".js-assumptions").innerHTML = stock.valuation.assumptions.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   root.querySelector(".js-sources").innerHTML = sourceItems(stock)
-    .map((source) => `<li><a href="${source.url}" target="_blank" rel="noreferrer">${source.name}</a>：${source.role}</li>`)
+    .map((source) => `<li><a href="${source.url}" target="_blank" rel="noreferrer">${escapeHtml(source.name)}</a>：${escapeHtml(source.role)}</li>`)
     .join("");
 
   root.querySelector(".js-breakdown").innerHTML = hasFinancials
@@ -755,14 +1065,49 @@ function paintDetail(stock) {
       `,
         )
         .join("")
-    : `<p class="muted">需 SEC 财报数据后展示评分拆解。</p>`;
+    : `<p class="muted">需财报数据后展示评分拆解。</p>`;
 
   paintEvents(root, stock.events || []);
+
+  const thesis = root.querySelector(".js-thesis");
+  const decision = root.querySelector(".js-decision");
+  const noteStatus = root.querySelector(".js-note-status");
+  thesis.value = note.thesis || "";
+  decision.value = note.decision || "watch";
+  root.querySelector(".js-save-note").addEventListener("click", () => {
+    state.notes[watchKey] = {
+      thesis: thesis.value.trim(),
+      decision: decision.value,
+      updatedAt: new Date().toISOString(),
+    };
+    saveJSON(NOTES_KEY, state.notes);
+    noteStatus.textContent = "已保存";
+    pushDecisionLog(stock, decision.value);
+  });
 
   const watchButton = root.querySelector(".js-watch");
   watchButton.textContent = watched ? "已加入自选" : "加入自选";
   watchButton.classList.toggle("active", watched);
   watchButton.addEventListener("click", () => toggleWatch(stock));
+
+  root.querySelectorAll(".js-range").forEach((button) => {
+    button.classList.toggle("active", button.dataset.range === state.priceRange);
+    button.addEventListener("click", () => {
+      state.priceRange = button.dataset.range;
+      paintDetail(stock);
+    });
+  });
+
+  const legend = root.querySelector(".js-price-legend");
+  const markers = [];
+  const saved = state.watchlist[watchKey];
+  if (saved?.buy) markers.push({ label: "买入关注", value: saved.buy, color: "var(--accent-strong)" });
+  if (saved?.add) markers.push({ label: "加仓", value: saved.add, color: "var(--blue)" });
+  if (saved?.takeProfit) markers.push({ label: "止盈", value: saved.takeProfit, color: "var(--warn)" });
+  if (saved?.stopLoss) markers.push({ label: "止损", value: saved.stopLoss, color: "var(--danger)" });
+  if (holding?.cost) markers.push({ label: "成本", value: holding.cost, color: "var(--ink)" });
+  markers.push({ label: "合理下沿", value: stock.valuation.fair_zone[0], color: "var(--accent-ink)" });
+  legend.textContent = markers.map((item) => `${item.label} ${money(item.value, stock.currency)}`).join(" · ");
 
   els.stockDetail.replaceChildren(fragment);
   if (hasFinancials) {
@@ -770,78 +1115,505 @@ function paintDetail(stock) {
       drawMetricChart(canvas, stock.financials, canvas.dataset.metric);
     });
   }
+  const priceCanvas = els.stockDetail.querySelector(".js-price-chart");
+  loadAndDrawPriceChart(priceCanvas, stock, markers);
   renderWatchlist();
 }
 
+async function loadAndDrawPriceChart(canvas, stock, markers) {
+  if (!canvas) return;
+  const payload = await provider.getHistory(stock.symbol, stock.market, state.priceRange);
+  if (state.selected && !sameStock(state.selected, stock)) return;
+  drawPriceChart(canvas, payload.points || [], markers, stock.currency, payload.error);
+}
+
+function drawPriceChart(canvas, points, markers, currency, error) {
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const colors = themeChartColors();
+  ctx.clearRect(0, 0, width, height);
+  if (!points.length) {
+    ctx.fillStyle = colors.label;
+    ctx.font = "14px system-ui";
+    ctx.fillText(error ? `走势暂不可用：${error}` : "暂无历史价格", 24, height / 2);
+    return;
+  }
+  const pad = 28;
+  const values = points.map((point) => point.close);
+  const min = Math.min(...values, ...markers.map((item) => item.value).filter(Boolean)) * 0.98;
+  const max = Math.max(...values, ...markers.map((item) => item.value).filter(Boolean)) * 1.02;
+  const range = max - min || 1;
+
+  ctx.strokeStyle = colors.grid;
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 4; i += 1) {
+    const y = pad + ((height - pad * 2) / 3) * i;
+    ctx.beginPath();
+    ctx.moveTo(pad, y);
+    ctx.lineTo(width - pad, y);
+    ctx.stroke();
+  }
+
+  markers.forEach((marker) => {
+    if (!marker.value) return;
+    const y = height - pad - ((marker.value - min) / range) * (height - pad * 2);
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue(marker.color.replace("var(", "").replace(")", "")).trim() || colors.label;
+    // fallback: use muted dashed
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = colors.label;
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath();
+    ctx.moveTo(pad, y);
+    ctx.lineTo(width - pad, y);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = colors.label;
+    ctx.font = "11px system-ui";
+    ctx.fillText(`${marker.label} ${Number(marker.value).toFixed(2)}`, pad + 4, y - 4);
+  });
+
+  const chartPoints = values.map((value, index) => {
+    const x = pad + ((width - pad * 2) / Math.max(values.length - 1, 1)) * index;
+    const y = height - pad - ((value - min) / range) * (height - pad * 2);
+    return [x, y];
+  });
+
+  ctx.strokeStyle = colors.line;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  chartPoints.forEach(([x, y], index) => {
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = colors.label;
+  ctx.font = "11px system-ui";
+  ctx.fillText(points[0].date, pad, height - 8);
+  ctx.fillText(points[points.length - 1].date, width - pad - 70, height - 8);
+  ctx.fillText(money(values[values.length - 1], currency), width - pad - 90, pad + 4);
+}
+
 function renderWatchlist() {
-  const watchItems = Object.values(state.watchlist)
-    .map((item) => provider.stocks.find((stock) => stock.symbol === item.symbol && stock.market === item.market))
+  if (!els.watchlistRows) return;
+  let items = Object.values(state.watchlist)
+    .map((saved) => {
+      const stock = provider.stocks.find((item) => item.symbol === saved.symbol && item.market === saved.market);
+      return stock ? { stock, saved } : null;
+    })
     .filter(Boolean);
 
-  if (!watchItems.length) {
-    els.watchlistContent.innerHTML = `<div class="empty-state">还没有自选股。在股票详情页点击“加入自选”开始跟踪关注区间。</div>`;
+  if (state.watchGroupFilter !== "all") {
+    items = items.filter(({ saved }) => (saved.group || "watch") === state.watchGroupFilter);
+  }
+  if (state.watchAlertFilter === "hit") {
+    items = items.filter(({ stock, saved }) => watchAlertLevel(stock, saved) === "hit");
+  } else if (state.watchAlertFilter === "near") {
+    items = items.filter(({ stock, saved }) => ["hit", "near"].includes(watchAlertLevel(stock, saved)));
+  }
+
+  items.sort((a, b) => {
+    const rank = { hit: 0, near: 1, calm: 2 };
+    const diff = rank[watchAlertLevel(a.stock, a.saved)] - rank[watchAlertLevel(b.stock, b.saved)];
+    if (diff !== 0) return diff;
+    return (b.stock.quote.change_pct || 0) - (a.stock.quote.change_pct || 0);
+  });
+
+  if (!Object.keys(state.watchlist).length) {
+    els.watchlistRows.innerHTML = "";
+    if (els.watchlistEmpty) els.watchlistEmpty.hidden = false;
+    return;
+  }
+  if (els.watchlistEmpty) els.watchlistEmpty.hidden = true;
+  if (!items.length) {
+    els.watchlistRows.innerHTML = `<tr><td colspan="10"><div class="empty-state">当前筛选下没有自选。</div></td></tr>`;
     return;
   }
 
-  els.watchlistContent.innerHTML = watchItems
-    .map((stock) => {
-      const saved = state.watchlist[stockKey(stock)];
-      const alertText = alertStatus(stock, saved.targetPrice);
-      const mos = marginOfSafety(stock);
+  els.watchlistRows.innerHTML = items
+    .map(({ stock, saved }) => {
+      const level = watchAlertLevel(stock, saved);
+      const alert = watchAlertText(stock, saved);
       return `
-        <article class="watch-card">
-          <header>
-            <div>
-              <strong>${stock.name}</strong>
-              <p class="muted">${stock.symbol} · ${marketLabel(stock.market)}</p>
-            </div>
-            <span class="tag">${valuationLabel(stock.valuation.state)}</span>
-          </header>
-          <div class="watch-price">
-            <span class="muted">当前价</span>
-            <strong>${money(stock.quote.price, stock.currency)}</strong>
-          </div>
-          <div class="watch-stats">
-            <span>安全边际 <strong class="${mos >= 0 ? "up" : "down"}">${formatMarginOfSafety(mos)}</strong></span>
-            <span>距目标价 <strong>${distanceToTarget(stock.quote.price, saved.targetPrice)}</strong></span>
-          </div>
-          ${formatNextEarnings(stock.quote.earnings_date)}
-          <label>
-            <span>目标关注价</span>
-            <input data-target="${stockKey(stock)}" type="number" step="0.01" value="${saved.targetPrice}" />
-          </label>
-          <p class="${alertText.type}">${alertText.text}</p>
-          <button class="ghost-button" data-remove="${stockKey(stock)}" type="button">移出自选</button>
-        </article>
+        <tr class="watch-row ${level === "hit" ? "hit" : ""}" data-key="${stockKey(stock)}">
+          <td>
+            <button class="linkish" data-open="${stockKey(stock)}" type="button">
+              <strong>${escapeHtml(stock.name)}</strong>
+              <span class="muted">${stock.symbol} · ${marketLabel(stock.market)}</span>
+            </button>
+          </td>
+          <td>
+            <select data-group="${stockKey(stock)}">
+              ${Object.entries(GROUP_LABELS)
+                .map(([value, label]) => `<option value="${value}" ${ (saved.group || "watch") === value ? "selected" : ""}>${label}</option>`)
+                .join("")}
+            </select>
+          </td>
+          <td class="num">${money(stock.quote.price, stock.currency)}</td>
+          <td class="num ${stock.quote.change_pct >= 0 ? "up" : "down"}">${signed(stock.quote.change_pct)}%</td>
+          <td class="num"><input data-field="buy" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.buy ?? ""}" /></td>
+          <td class="num"><input data-field="add" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.add ?? ""}" /></td>
+          <td class="num"><input data-field="takeProfit" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.takeProfit ?? ""}" /></td>
+          <td class="num"><input data-field="stopLoss" data-key="${stockKey(stock)}" type="number" step="0.01" value="${saved.stopLoss ?? ""}" /></td>
+          <td><span class="tag ${level}">${escapeHtml(alert)}</span></td>
+          <td><button class="ghost-button compact" data-remove="${stockKey(stock)}" type="button">移除</button></td>
+        </tr>
       `;
     })
     .join("");
 
-  els.watchlistContent.querySelectorAll("[data-target]").forEach((input) => {
-    input.addEventListener("input", () => {
-      state.watchlist[input.dataset.target].targetPrice = Number(input.value);
-      saveWatchlist();
-      renderWatchlist();
+  els.watchlistRows.querySelectorAll("[data-open]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const [market, symbol] = button.dataset.open.split(":");
+      const stock = await provider.getStock(symbol, market);
+      selectStock(stock, { openDetail: true });
     });
   });
-
-  els.watchlistContent.querySelectorAll("[data-remove]").forEach((button) => {
+  els.watchlistRows.querySelectorAll("[data-group]").forEach((select) => {
+    select.addEventListener("change", () => {
+      state.watchlist[select.dataset.group].group = select.value;
+      saveWatchlist();
+      renderWatchlist();
+      renderWorkbench();
+    });
+  });
+  els.watchlistRows.querySelectorAll("input[data-field]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const key = input.dataset.key;
+      const field = input.dataset.field;
+      const value = input.value === "" ? null : Number(input.value);
+      state.watchlist[key][field] = value;
+      if (field === "buy") state.watchlist[key].targetPrice = value;
+      saveWatchlist();
+      renderWatchlist();
+      renderWorkbench();
+      evaluateAlerts({ notify: state.prefs.notify });
+    });
+  });
+  els.watchlistRows.querySelectorAll("[data-remove]").forEach((button) => {
     button.addEventListener("click", () => {
       delete state.watchlist[button.dataset.remove];
       saveWatchlist();
       renderWatchlist();
+      renderWorkbench();
       renderDetail();
     });
   });
 }
 
+function renderHoldings() {
+  if (!els.holdingsRows) return;
+  const base = state.prefs.baseCurrency || "CNY";
+  const rows = Object.values(state.holdings)
+    .map((holding) => {
+      const stock = provider.stocks.find((item) => item.symbol === holding.symbol && item.market === holding.market);
+      if (!stock) return null;
+      const marketValue = holding.shares * stock.quote.price;
+      const costValue = holding.shares * holding.cost;
+      const pnl = marketValue - costValue;
+      const pnlPct = costValue ? (pnl / costValue) * 100 : 0;
+      const marketValueBase = toBase(marketValue, stock.currency, base);
+      const fair = stock.valuation.base_price;
+      const vsFair = fair ? ((stock.quote.price - fair) / fair) * 100 : null;
+      return { stock, holding, marketValue, costValue, pnl, pnlPct, marketValueBase, vsFair };
+    })
+    .filter(Boolean);
+
+  const totalBase = rows.reduce((sum, row) => sum + row.marketValueBase, 0);
+  const totalPnlBase = rows.reduce((sum, row) => sum + toBase(row.pnl, row.stock.currency, base), 0);
+
+  if (els.holdingsMetrics) {
+    els.holdingsMetrics.innerHTML = [
+      ["持仓市值", money(totalBase, base)],
+      ["浮盈亏", `${money(totalPnlBase, base)}`],
+      ["持仓只数", `${rows.length}`],
+      ["本位币", base],
+    ]
+      .map(
+        ([label, value]) => `
+          <div class="metric-card">
+            <span>${label}</span>
+            <strong>${value}</strong>
+          </div>
+        `,
+      )
+      .join("");
+  }
+
+  if (!Object.keys(state.holdings).length) {
+    els.holdingsRows.innerHTML = "";
+    if (els.holdingsEmpty) els.holdingsEmpty.hidden = false;
+    return;
+  }
+  if (els.holdingsEmpty) els.holdingsEmpty.hidden = true;
+  if (!rows.length) {
+    els.holdingsRows.innerHTML = `<tr><td colspan="9"><div class="empty-state">持仓标的暂无行情，请确认代码或网络。</div></td></tr>`;
+    return;
+  }
+
+  els.holdingsRows.innerHTML = rows
+    .map(({ stock, holding, marketValue, pnl, pnlPct, marketValueBase, vsFair }) => {
+      const weight = totalBase ? (marketValueBase / totalBase) * 100 : 0;
+      return `
+        <tr>
+          <td>
+            <button class="linkish" data-open="${stockKey(stock)}" type="button">
+              <strong>${escapeHtml(stock.name)}</strong>
+              <span class="muted">${stock.symbol} · ${marketLabel(stock.market)}</span>
+            </button>
+          </td>
+          <td class="num"><input data-holding-field="shares" data-key="${stockKey(stock)}" type="number" step="any" value="${holding.shares}" /></td>
+          <td class="num"><input data-holding-field="cost" data-key="${stockKey(stock)}" type="number" step="any" value="${holding.cost}" /></td>
+          <td class="num">${money(stock.quote.price, stock.currency)}</td>
+          <td class="num">${money(marketValue, stock.currency)}</td>
+          <td class="num ${pnl >= 0 ? "up" : "down"}">${money(pnl, stock.currency)} (${signed(pnlPct)}%)</td>
+          <td class="num">${weight.toFixed(1)}%</td>
+          <td class="num ${vsFair == null ? "" : vsFair <= 0 ? "up" : "down"}">${vsFair == null ? "—" : `${signed(vsFair)}%`}</td>
+          <td><button class="ghost-button compact" data-remove-holding="${stockKey(stock)}" type="button">删除</button></td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  els.holdingsRows.querySelectorAll("[data-open]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const [market, symbol] = button.dataset.open.split(":");
+      const stock = await provider.getStock(symbol, market);
+      selectStock(stock, { openDetail: true });
+    });
+  });
+  els.holdingsRows.querySelectorAll("[data-holding-field]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const key = input.dataset.key;
+      const field = input.dataset.holdingField;
+      state.holdings[key][field] = Number(input.value);
+      saveJSON(HOLDINGS_KEY, state.holdings);
+      renderHoldings();
+      renderWorkbench();
+    });
+  });
+  els.holdingsRows.querySelectorAll("[data-remove-holding]").forEach((button) => {
+    button.addEventListener("click", () => {
+      delete state.holdings[button.dataset.removeHolding];
+      saveJSON(HOLDINGS_KEY, state.holdings);
+      renderHoldings();
+      renderWorkbench();
+    });
+  });
+}
+
+function renderWorkbench() {
+  if (!els.workbenchMetrics) return;
+  const watchCount = Object.keys(state.watchlist).length;
+  const hitCount = Object.values(state.watchlist).filter((saved) => {
+    const stock = findStock(saved.symbol, saved.market);
+    return stock && watchAlertLevel(stock, saved) === "hit";
+  }).length;
+  const earningsSoon = Object.values(state.watchlist)
+    .map((saved) => findStock(saved.symbol, saved.market))
+    .filter((stock) => stock?.quote.earnings_date && daysUntil(stock.quote.earnings_date) >= 0 && daysUntil(stock.quote.earnings_date) <= 14)
+    .length;
+  const holdingCount = Object.keys(state.holdings).length;
+  const base = state.prefs.baseCurrency || "CNY";
+  const holdingValue = Object.values(state.holdings).reduce((sum, holding) => {
+    const stock = findStock(holding.symbol, holding.market);
+    if (!stock) return sum;
+    return sum + toBase(holding.shares * stock.quote.price, stock.currency, base);
+  }, 0);
+
+  els.workbenchMetrics.innerHTML = [
+    ["自选", `${watchCount} 只`],
+    ["已触及", `${hitCount} 条`],
+    ["近两周财报", `${earningsSoon} 只`],
+    ["持仓市值", money(holdingValue, base)],
+  ]
+    .map(
+      ([label, value]) => `
+        <div class="metric-card">
+          <span>${label}</span>
+          <strong>${value}</strong>
+        </div>
+      `,
+    )
+    .join("");
+
+  const moves = Object.values(state.watchlist)
+    .map((saved) => {
+      const stock = findStock(saved.symbol, saved.market);
+      return stock ? { stock, saved } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => Math.abs(b.stock.quote.change_pct || 0) - Math.abs(a.stock.quote.change_pct || 0))
+    .slice(0, 6);
+
+  els.workbenchWatchMoves.innerHTML = moves.length
+    ? moves
+        .map(
+          ({ stock }) => `
+            <button class="stack-item" data-open="${stockKey(stock)}" type="button">
+              <div>
+                <strong>${escapeHtml(stock.name)}</strong>
+                <span class="muted">${stock.symbol}</span>
+              </div>
+              <strong class="${stock.quote.change_pct >= 0 ? "up" : "down"}">${signed(stock.quote.change_pct)}%</strong>
+            </button>
+          `,
+        )
+        .join("")
+    : `<div class="empty-state compact">自选为空。去研究池或自选页添加标的。</div>`;
+
+  const alerts = collectActiveAlerts().slice(0, 8);
+  els.workbenchAlerts.innerHTML = alerts.length
+    ? alerts
+        .map(
+          (alert) => `
+            <button class="stack-item" data-open="${alert.key}" type="button">
+              <div>
+                <strong>${escapeHtml(alert.title)}</strong>
+                <span class="muted">${escapeHtml(alert.detail)}</span>
+              </div>
+              <span class="tag ${alert.level}">${alert.level === "hit" ? "触及" : "临近"}</span>
+            </button>
+          `,
+        )
+        .join("")
+    : `<div class="empty-state compact">暂无待办提醒。</div>`;
+
+  const earnings = Object.values(state.watchlist)
+    .map((saved) => findStock(saved.symbol, saved.market))
+    .filter((stock) => stock?.quote.earnings_date && daysUntil(stock.quote.earnings_date) >= 0 && daysUntil(stock.quote.earnings_date) <= 45)
+    .sort((a, b) => daysUntil(a.quote.earnings_date) - daysUntil(b.quote.earnings_date))
+    .slice(0, 6);
+
+  els.workbenchEarnings.innerHTML = earnings.length
+    ? earnings
+        .map((stock) => {
+          const days = daysUntil(stock.quote.earnings_date);
+          return `
+            <button class="stack-item" data-open="${stockKey(stock)}" type="button">
+              <div>
+                <strong>${escapeHtml(stock.name)}</strong>
+                <span class="muted">${stock.quote.earnings_date}</span>
+              </div>
+              <span class="muted">${days === 0 ? "今天" : `${days} 天后`}</span>
+            </button>
+          `;
+        })
+        .join("")
+    : `<div class="empty-state compact">自选中暂无近期财报。</div>`;
+
+  const holdings = Object.values(state.holdings)
+    .map((holding) => {
+      const stock = findStock(holding.symbol, holding.market);
+      if (!stock) return null;
+      const pnl = holding.shares * (stock.quote.price - holding.cost);
+      return { stock, holding, pnl };
+    })
+    .filter(Boolean)
+    .slice(0, 6);
+
+  els.workbenchHoldings.innerHTML = holdings.length
+    ? holdings
+        .map(
+          ({ stock, pnl }) => `
+            <button class="stack-item" data-open="${stockKey(stock)}" type="button">
+              <div>
+                <strong>${escapeHtml(stock.name)}</strong>
+                <span class="muted">${money(stock.quote.price, stock.currency)}</span>
+              </div>
+              <strong class="${pnl >= 0 ? "up" : "down"}">${money(pnl, stock.currency)}</strong>
+            </button>
+          `,
+        )
+        .join("")
+    : `<div class="empty-state compact">尚未录入持仓。</div>`;
+
+  els.alertHistory.innerHTML = state.alertHistory.length
+    ? state.alertHistory
+        .slice(0, 12)
+        .map(
+          (item) => `
+            <div class="stack-item static">
+              <div>
+                <strong>${escapeHtml(item.title)}</strong>
+                <span class="muted">${escapeHtml(item.detail)}</span>
+              </div>
+              <span class="muted">${new Date(item.at).toLocaleString("zh-CN")}</span>
+            </div>
+          `,
+        )
+        .join("")
+    : `<div class="empty-state compact">暂无提醒历史。</div>`;
+
+  document.querySelectorAll("#workbenchView [data-open]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const [market, symbol] = button.dataset.open.split(":");
+      const stock = await provider.getStock(symbol, market);
+      selectStock(stock, { openDetail: true });
+    });
+  });
+}
+
+function renderCompare() {
+  if (!els.compareBar || !els.compareTable) return;
+  if (!state.compare.length) {
+    els.compareBar.textContent = "勾选研究池中的股票加入对比（最多 4 只）。";
+    els.compareTable.innerHTML = "";
+    return;
+  }
+  els.compareBar.innerHTML = state.compare
+    .map((stock) => `<span class="tag">${escapeHtml(stock.name)} ${stock.symbol}</span>`)
+    .join(" ");
+  const rows = [
+    ["价格", (s) => money(s.quote.price, s.currency)],
+    ["涨跌", (s) => `${signed(s.quote.change_pct)}%`],
+    ["PE", (s) => (s.quote.pe ? s.quote.pe.toFixed(1) : "—")],
+    ["PB", (s) => (s.quote.pb ? s.quote.pb.toFixed(2) : "—")],
+    ["安全边际", (s) => formatMarginOfSafety(marginOfSafety(s))],
+    ["估值", (s) => valuationLabel(s.valuation.state)],
+    ["评分", (s) => `${s.analysis.score}`],
+    ["行业", (s) => s.industry],
+  ];
+  els.compareTable.innerHTML = `
+    <table class="stock-table compare-table">
+      <thead>
+        <tr>
+          <th>指标</th>
+          ${state.compare.map((stock) => `<th>${escapeHtml(stock.name)}</th>`).join("")}
+        </tr>
+      </thead>
+      <tbody>
+        ${rows
+          .map(
+            ([label, getter]) => `
+              <tr>
+                <td>${label}</td>
+                ${state.compare.map((stock) => `<td>${escapeHtml(String(getter(stock)))}</td>`).join("")}
+              </tr>
+            `,
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
 function switchView(view) {
+  if (view === "dashboard") view = "workbench";
   state.activeView = view;
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
   document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === `${view}View`));
+  if (els.pageTitle) els.pageTitle.textContent = PAGE_TITLES[view] || "StockAgent";
   document.querySelector(`#${view}View`)?.scrollIntoView({ block: "start" });
-  if (view === "settings") {
-    renderSettings();
+  if (view === "settings") renderSettings();
+  if (view === "workbench") renderWorkbench();
+  if (view === "watchlist") renderWatchlist();
+  if (view === "holdings") renderHoldings();
+  if (view === "research") {
+    renderRows();
+    renderCompare();
   }
   if (view !== "detail" && location.hash.startsWith("#/stock/")) {
     history.replaceState(null, "", location.pathname);
@@ -852,33 +1624,24 @@ function showDetail(stock, { updateHash = true } = {}) {
   state.activeView = "detail";
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.remove("active"));
   document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === "detailView"));
-  document.querySelector("#detailView")?.scrollIntoView({ block: "start" });
+  if (els.pageTitle) els.pageTitle.textContent = PAGE_TITLES.detail;
   if (updateHash) {
     history.pushState(null, "", `#/stock/${stock.market}/${encodeURIComponent(stock.symbol)}`);
   }
 }
 
 function showDashboard({ clearHash = false } = {}) {
-  switchView("dashboard");
-  if (clearHash) {
-    history.pushState(null, "", location.pathname);
-  }
+  switchView("workbench");
+  if (clearHash) history.pushState(null, "", location.pathname);
 }
 
 async function restoreRoute() {
-  const match = location.hash.match(/^#\/stock\/([^/]+)\/(.+)$/);
-  if (!match) {
-    if (state.activeView === "detail") {
-      showDashboard({ clearHash: false });
-    }
-    return;
-  }
-  const [, market, encodedSymbol] = match;
-  const symbol = decodeURIComponent(encodedSymbol);
+  const match = location.hash.match(/^#\/stock\/(A|HK|US)\/([^/]+)$/i);
+  if (!match) return;
+  const market = match[1].toUpperCase();
+  const symbol = decodeURIComponent(match[2]).toUpperCase();
   const stock = await provider.getStock(symbol, market);
-  if (stock) {
-    selectStock(stock, { openDetail: true, updateHash: false });
-  }
+  if (stock) selectStock(stock, { openDetail: true, updateHash: false });
 }
 
 function syncMarketShortcuts() {
@@ -888,9 +1651,9 @@ function syncMarketShortcuts() {
 }
 
 function renderSourceStatus() {
-  if (!els.topSourceStatus) return;
-  els.topSourceStatus.textContent = provider.status.quoteLabel;
-  document.body.dataset.quoteStatus = provider.status.quote;
+  const label = provider.status.quoteLabel || "行情连接中";
+  els.topSourceStatus.textContent = label;
+  document.body.dataset.quoteStatus = provider.status.quote || "connecting";
 }
 
 function toggleWatch(stock) {
@@ -901,12 +1664,204 @@ function toggleWatch(stock) {
     state.watchlist[key] = {
       symbol: stock.symbol,
       market: stock.market,
+      group: "watch",
+      buy: stock.valuation.watch_zone[1],
+      add: stock.valuation.watch_zone[0],
+      takeProfit: stock.valuation.bull_price,
+      stopLoss: stock.valuation.bear_price,
       targetPrice: stock.valuation.watch_zone[1],
       createdAt: new Date().toISOString(),
     };
   }
   saveWatchlist();
   renderDetail();
+  renderWatchlist();
+  renderWorkbench();
+}
+
+async function addSymbolToWatchlist(market, rawSymbol) {
+  if (!els.addSymbolStatus) return;
+  els.addSymbolStatus.textContent = "查询中…";
+  const symbol = normalizeClientSymbol(rawSymbol, market);
+  const stock = await provider.ensureStock(symbol, market);
+  if (!stock) {
+    els.addSymbolStatus.textContent = "未找到行情，请检查代码与市场。";
+    return;
+  }
+  const key = stockKey(stock);
+  if (!state.watchlist[key]) {
+    state.watchlist[key] = {
+      symbol: stock.symbol,
+      market: stock.market,
+      group: "watch",
+      buy: stock.valuation.watch_zone[1],
+      add: stock.valuation.watch_zone[0],
+      takeProfit: stock.valuation.bull_price,
+      stopLoss: stock.valuation.bear_price,
+      targetPrice: stock.valuation.watch_zone[1],
+      createdAt: new Date().toISOString(),
+    };
+    saveWatchlist();
+  }
+  els.addSymbol.value = "";
+  els.addSymbolStatus.textContent = `已加入 ${stock.name}`;
+  renderWatchlist();
+  renderWorkbench();
+  evaluateAlerts({ notify: false });
+}
+
+async function upsertHolding({ market, symbol, shares, cost }) {
+  if (!els.holdingFormStatus) return;
+  els.holdingFormStatus.textContent = "保存中…";
+  const normalized = normalizeClientSymbol(symbol, market);
+  const stock = await provider.ensureStock(normalized, market);
+  if (!stock) {
+    els.holdingFormStatus.textContent = "未找到行情，无法保存持仓。";
+    return;
+  }
+  const key = stockKey(stock);
+  state.holdings[key] = {
+    symbol: stock.symbol,
+    market: stock.market,
+    shares,
+    cost,
+    updatedAt: new Date().toISOString(),
+  };
+  saveJSON(HOLDINGS_KEY, state.holdings);
+  if (!state.watchlist[key]) {
+    state.watchlist[key] = {
+      symbol: stock.symbol,
+      market: stock.market,
+      group: "core",
+      buy: stock.valuation.watch_zone[1],
+      add: stock.valuation.watch_zone[0],
+      takeProfit: stock.valuation.bull_price,
+      stopLoss: stock.valuation.bear_price,
+      targetPrice: stock.valuation.watch_zone[1],
+      createdAt: new Date().toISOString(),
+    };
+    saveWatchlist();
+  }
+  els.holdingSymbol.value = "";
+  els.holdingShares.value = "";
+  els.holdingCost.value = "";
+  els.holdingFormStatus.textContent = `已保存 ${stock.name}`;
+  renderHoldings();
+  renderWatchlist();
+  renderWorkbench();
+}
+
+function collectActiveAlerts() {
+  const alerts = [];
+  Object.values(state.watchlist).forEach((saved) => {
+    const stock = findStock(saved.symbol, saved.market);
+    if (!stock) return;
+    const level = watchAlertLevel(stock, saved);
+    if (level === "hit" || level === "near") {
+      alerts.push({
+        key: stockKey(stock),
+        title: stock.name,
+        detail: watchAlertText(stock, saved),
+        level,
+      });
+    }
+    if (stock.quote.earnings_date) {
+      const days = daysUntil(stock.quote.earnings_date);
+      if (days >= 0 && days <= 7) {
+        alerts.push({
+          key: stockKey(stock),
+          title: `${stock.name} 财报`,
+          detail: days === 0 ? "今天披露" : `${days} 天后披露`,
+          level: days <= 2 ? "hit" : "near",
+        });
+      }
+    }
+  });
+  return alerts;
+}
+
+function evaluateAlerts({ notify = false } = {}) {
+  const active = collectActiveAlerts();
+  active.forEach((alert) => {
+    const signature = `${alert.key}:${alert.detail}`;
+    const exists = state.alertHistory.some((item) => item.signature === signature && Date.now() - new Date(item.at).getTime() < 12 * 3600 * 1000);
+    if (exists) return;
+    state.alertHistory.unshift({
+      ...alert,
+      signature,
+      at: new Date().toISOString(),
+    });
+    if (notify && state.prefs.notify && "Notification" in window && Notification.permission === "granted") {
+      try {
+        new Notification(alert.title, { body: alert.detail });
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+  state.alertHistory = state.alertHistory.slice(0, 50);
+  saveJSON(ALERTS_KEY, state.alertHistory);
+}
+
+function pushDecisionLog(stock, decision) {
+  state.alertHistory.unshift({
+    key: stockKey(stock),
+    title: `${stock.name} 决策`,
+    detail: DECISION_LABELS[decision] || decision,
+    level: "near",
+    signature: `decision:${stockKey(stock)}:${decision}:${Date.now()}`,
+    at: new Date().toISOString(),
+  });
+  state.alertHistory = state.alertHistory.slice(0, 50);
+  saveJSON(ALERTS_KEY, state.alertHistory);
+  renderWorkbench();
+}
+
+function exportSelectedMarkdown() {
+  const stock = state.selected;
+  if (!stock) return;
+  const note = state.notes[stockKey(stock)] || {};
+  const holding = state.holdings[stockKey(stock)];
+  const lines = [
+    `# ${stock.name} (${stock.symbol})`,
+    "",
+    `- 市场：${marketLabel(stock.market)}`,
+    `- 行业：${stock.industry}`,
+    `- 现价：${money(stock.quote.price, stock.currency)}`,
+    `- 估值：${valuationLabel(stock.valuation.state)}`,
+    `- 安全边际：${formatMarginOfSafety(marginOfSafety(stock))}`,
+    `- 评分：${stock.analysis.score}/100`,
+    "",
+    "## 摘要",
+    stock.analysis.summary,
+    "",
+    "## 积极因素",
+    ...(stock.analysis.positives.map((item) => `- ${item}`) || ["- 无"]),
+    "",
+    "## 风险因素",
+    ...stock.analysis.risks.map((item) => `- ${item}`),
+    "",
+    "## 估值区间",
+    `- 保守：${money(stock.valuation.bear_price, stock.currency)}`,
+    `- 基准：${money(stock.valuation.base_price, stock.currency)}`,
+    `- 乐观：${money(stock.valuation.bull_price, stock.currency)}`,
+    "",
+    "## 笔记",
+    note.thesis || "（空）",
+    "",
+    `- 决策：${DECISION_LABELS[note.decision] || "观望"}`,
+  ];
+  if (holding) {
+    lines.push("", "## 持仓", `- 数量：${holding.shares}`, `- 成本：${money(holding.cost, stock.currency)}`);
+  }
+  lines.push("", "> 仅供研究参考，不构成投资建议。");
+  const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${stock.market}-${stock.symbol}.md`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 function buildCatalogStock(seed, index) {
@@ -1013,7 +1968,7 @@ function buildAnalysisFromQuote(stock, valuation) {
   return {
     score,
     rating_label: label,
-    summary: `${stock.name} 当前模型判断为「${valuationLabel(valuation.state)}」。仅基于 Yahoo 行情与估值模型，尚未接入财报明细。${stock.quote.as_of ? `行情更新 ${stock.quote.as_of}。` : ""}`,
+    summary: `${stock.name} 当前模型判断为「${valuationLabel(valuation.state)}」。仅基于行情与估值模型，尚未接入财报明细。${stock.quote.as_of ? `行情更新 ${stock.quote.as_of}。` : ""}`,
     positives: [],
     negatives: [],
     risks:
@@ -1039,7 +1994,7 @@ function scoreFromQuoteOnly(quote, valuation) {
 function buildValuation({ price, pe, pb, ps, eps, roe, dividendYield, industry, h }) {
   let method = "PE/PB blended";
   let base;
-  const normalizedEps = Math.max(eps, 0.18);
+  const normalizedEps = Math.max(eps || 0, 0.18);
   if (!pe) {
     method = "PS + PB for loss-making company";
     base = price * (1.05 - Math.min(ps || 0, 8) / 35);
@@ -1059,10 +2014,10 @@ function buildValuation({ price, pe, pb, ps, eps, roe, dividendYield, industry, 
   const fairLow = round(base * 0.9, 2);
   const fairHigh = round(base * 1.1, 2);
   const risk = round(bull * 1.12, 2);
-  let state = "fair";
-  if (price <= fairLow) state = "undervalued";
-  if (price > fairHigh && price <= risk) state = "expensive";
-  if (price > risk) state = "risk";
+  let stateName = "fair";
+  if (price <= fairLow) stateName = "undervalued";
+  if (price > fairHigh && price <= risk) stateName = "expensive";
+  if (price > risk) stateName = "risk";
 
   return {
     method,
@@ -1073,7 +2028,7 @@ function buildValuation({ price, pe, pb, ps, eps, roe, dividendYield, industry, 
     fair_zone: [fairLow, fairHigh],
     expensive_zone: [fairHigh, risk],
     risk_price: risk,
-    state,
+    state: stateName,
     assumptions: [
       `${method} 模型用于当前行业和盈利状态。`,
       `保守情景取基准估值的 78%，乐观情景取 128%。`,
@@ -1100,7 +2055,6 @@ function buildAnalysis({ name, industry, score, valuation, revenueGrowth, margin
   if (cashQuality > 82) positives.push(`经营现金流质量 ${cashQuality.toFixed(1)}%，利润含金量较好。`);
   if (roe > 16) positives.push(`ROE ${roe.toFixed(1)}%，资本回报水平较强。`);
   if (!positives.length) positives.push("财报数据已接入，可继续跟踪下一期披露。");
-
   if (valuation.state === "risk") risks.push("当前价格高于模型风险触发位，安全边际不足。");
   if (valuation.state === "expensive") risks.push("价格进入偏贵区间，后续收益更依赖业绩继续超预期。");
   if (revenueGrowth < 3) risks.push(`收入增长仅 ${revenueGrowth.toFixed(1)}%，需要警惕增长放缓。`);
@@ -1110,31 +2064,22 @@ function buildAnalysis({ name, industry, score, valuation, revenueGrowth, margin
   if (!risks.length) risks.push("主要风险来自市场估值波动、行业景气度变化和数据延迟。");
 
   const label =
-    score >= 76
-      ? "高质量但仍需看价格区间"
-      : score >= 62
-        ? "基本面可跟踪，等待更好安全边际"
-        : score >= 48
-          ? "分歧较大，需要等待财报验证"
-          : "风险较高，暂不适合激进配置";
-
-  const summary = `${name} 所处 ${industry} 行业，当前模型判断为“${valuationLabel(valuation.state)}”。综合评分 ${score}/100，核心依据来自收入增速、盈利质量、现金流、杠杆和估值区间。该结论用于研究辅助，重点是观察价格是否进入关注区间，以及下一期财报能否验证增长和现金流。`;
+    score >= 78 ? "基本面与估值较有吸引力" : score >= 64 ? "可跟踪，等待更好买点" : score >= 50 ? "中性观察" : "风险偏高，谨慎";
 
   return {
     score,
     rating_label: label,
-    summary,
-    positives: positives.slice(0, 3),
+    summary: `${name}（${industry}）综合评分 ${score}。模型判断为「${valuationLabel(valuation.state)}」。`,
+    positives,
     negatives: [],
-    risks: risks.slice(0, 4),
-    data_quality: "B+",
+    risks,
+    data_quality: "财报+行情",
     generated_at: new Date().toISOString(),
     breakdown: {
-      基本面: clamp(Math.round(roe * 2 + margin * 0.5), 0, 100),
-      估值: valuation.state === "undervalued" ? 86 : valuation.state === "fair" ? 70 : valuation.state === "expensive" ? 48 : 30,
-      趋势: clamp(Math.round(50 + revenueGrowth * 1.2), 0, 100),
-      风险: clamp(Math.round(105 - debtRatio), 0, 100),
-      可信度: 76,
+      基本面: clamp(Math.round(roe * 2 + margin * 0.6 + revenueGrowth), 0, 100),
+      估值: valuation.state === "undervalued" ? 82 : valuation.state === "fair" ? 68 : valuation.state === "expensive" ? 45 : 28,
+      质量: clamp(Math.round(cashQuality), 0, 100),
+      风险: clamp(Math.round(100 - debtRatio), 0, 100),
     },
   };
 }
@@ -1146,34 +2091,31 @@ function resolveTheme(stored) {
 
 function initSidebar() {
   const stored = localStorage.getItem(SIDEBAR_KEY);
-  const collapsed = stored === "collapsed" && window.innerWidth >= SIDEBAR_COLLAPSE_MIN;
-  applySidebar(collapsed ? "collapsed" : "expanded", { persist: false });
+  applySidebar(stored === "collapsed" ? "collapsed" : "expanded", { persist: false });
+  syncSidebarForViewport();
 }
 
 function toggleSidebar() {
-  const collapsed = document.documentElement.dataset.sidebar === "collapsed";
-  applySidebar(collapsed ? "expanded" : "collapsed");
+  const next = document.documentElement.dataset.sidebar === "collapsed" ? "expanded" : "collapsed";
+  applySidebar(next);
 }
 
 function syncSidebarForViewport() {
-  if (window.innerWidth < SIDEBAR_COLLAPSE_MIN) {
-    document.documentElement.dataset.sidebar = "expanded";
-    return;
+  if (window.innerWidth <= SIDEBAR_COLLAPSE_MIN - 1) {
+    applySidebar("expanded", { persist: false });
+  } else {
+    const stored = localStorage.getItem(SIDEBAR_KEY);
+    if (stored === "collapsed") applySidebar("collapsed", { persist: false });
   }
-  const stored = localStorage.getItem(SIDEBAR_KEY);
-  applySidebar(stored === "collapsed" ? "collapsed" : "expanded", { persist: false });
 }
 
-function applySidebar(state, { persist = true } = {}) {
-  const collapsed = state === "collapsed" && window.innerWidth >= SIDEBAR_COLLAPSE_MIN;
-  const next = collapsed ? "collapsed" : "expanded";
-  document.documentElement.dataset.sidebar = next;
-  if (persist) {
-    localStorage.setItem(SIDEBAR_KEY, next);
-  }
+function applySidebar(next, { persist = true } = {}) {
+  if (next === "collapsed") document.documentElement.dataset.sidebar = "collapsed";
+  else delete document.documentElement.dataset.sidebar;
+  if (persist) localStorage.setItem(SIDEBAR_KEY, next);
   if (els.sidebarToggle) {
-    els.sidebarToggle.setAttribute("aria-label", collapsed ? "展开侧边栏" : "收起侧边栏");
-    els.sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+    els.sidebarToggle.setAttribute("aria-expanded", next !== "collapsed" ? "true" : "false");
+    els.sidebarToggle.setAttribute("aria-label", next === "collapsed" ? "展开侧边栏" : "收起侧边栏");
   }
 }
 
@@ -1189,19 +2131,12 @@ function toggleTheme() {
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   localStorage.setItem(THEME_KEY, theme);
-
   if (els.themeToggle) {
-    const dark = theme === "dark";
-    els.themeToggle.setAttribute("aria-label", dark ? "切换到明亮模式" : "切换到暗黑模式");
-    els.themeToggle.querySelector(".theme-icon").textContent = dark ? "☀" : "☾";
+    els.themeToggle.setAttribute("aria-label", theme === "dark" ? "切换到明亮模式" : "切换到暗黑模式");
+    const icon = els.themeToggle.querySelector(".theme-icon");
+    if (icon) icon.textContent = theme === "dark" ? "☀" : "☾";
   }
-
-  const canvas = els.stockDetail?.querySelector(".js-chart[data-metric='revenue']");
-  if (canvas && state.selected) {
-    els.stockDetail.querySelectorAll(".js-chart").forEach((node) => {
-      drawMetricChart(node, state.selected.financials, node.dataset.metric);
-    });
-  }
+  if (state.selected) renderDetail();
 }
 
 function themeChartColors() {
@@ -1237,7 +2172,7 @@ function drawMetricChart(canvas, financials, metric) {
   }
 
   const points = values.map((value, index) => {
-    const x = pad + ((width - pad * 2) / (values.length - 1)) * index;
+    const x = pad + ((width - pad * 2) / Math.max(values.length - 1, 1)) * index;
     const y = height - pad - ((value - min) / range) * (height - pad * 2);
     return [x, y];
   });
@@ -1258,7 +2193,7 @@ function drawMetricChart(canvas, financials, metric) {
     ctx.arc(x, y, 3.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = colors.label;
-    ctx.fillText(financials[index].period.replace("202", "'2"), x - 16, height - 6);
+    ctx.fillText(String(financials[index].period).replace("202", "'2"), x - 16, height - 6);
     ctx.fillStyle = colors.line;
   });
 }
@@ -1287,7 +2222,8 @@ function buildEventsFromQuote(stock) {
     events.push({
       date: stock.quote.earnings_date,
       kind: "earnings",
-      title: "预计财报披露",
+      title: "预计财报",
+      url: null,
       status: eventStatus(stock.quote.earnings_date),
     });
   }
@@ -1296,6 +2232,7 @@ function buildEventsFromQuote(stock) {
       date: stock.quote.ex_dividend_date,
       kind: "dividend",
       title: "除息日",
+      url: null,
       status: eventStatus(stock.quote.ex_dividend_date),
     });
   }
@@ -1303,27 +2240,13 @@ function buildEventsFromQuote(stock) {
 }
 
 function marketDisclosureLinks(stock) {
-  if (stock.market === "A") {
-    return [
-      {
-        kind: "link",
-        title: "巨潮资讯网 · 公司公告",
-        url: "https://www.cninfo.com.cn/new/disclosure/stock",
-        status: "link",
-      },
-    ];
-  }
-  if (stock.market === "HK") {
-    return [
-      {
-        kind: "link",
-        title: "HKEXnews · 上市公司公告",
-        url: "https://www.hkexnews.hk/index.htm",
-        status: "link",
-      },
-    ];
-  }
-  return [];
+  return marketSources(stock.market).map((source) => ({
+    date: null,
+    kind: "source",
+    title: source.name,
+    url: source.url,
+    status: "link",
+  }));
 }
 
 function sortEvents(events) {
@@ -1331,34 +2254,30 @@ function sortEvents(events) {
   const links = events.filter((event) => !event.date);
   const upcoming = dated.filter((event) => daysUntil(event.date) >= 0).sort((a, b) => daysUntil(a.date) - daysUntil(b.date));
   const past = dated.filter((event) => daysUntil(event.date) < 0).sort((a, b) => daysUntil(b.date) - daysUntil(a.date));
-  return [...upcoming, ...past, ...links];
+  return { upcoming: [...upcoming, ...links], past };
 }
 
 function paintEvents(root, events) {
-  const upcoming = events.filter((event) => event.date && daysUntil(event.date) >= 0);
-  const past = events.filter((event) => (event.date && daysUntil(event.date) < 0) || event.status === "past");
-  const links = events.filter((event) => event.status === "link");
-
-  root.querySelector(".js-events-upcoming").innerHTML = [...upcoming, ...links].length
-    ? [...upcoming, ...links].map(renderEventItem).join("")
-    : `<li class="event-empty muted">暂无即将到来的事件</li>`;
-  root.querySelector(".js-events-past").innerHTML = past.length
-    ? past.map(renderEventItem).join("")
-    : `<li class="event-empty muted">暂无近期披露记录</li>`;
+  const bucket = events && !Array.isArray(events) ? events : sortEvents(events || []);
+  const upcoming = bucket.upcoming || [];
+  const past = bucket.past || [];
+  const upcomingList = root.querySelector(".js-events-upcoming");
+  const pastList = root.querySelector(".js-events-past");
+  upcomingList.innerHTML = upcoming.length ? upcoming.map(renderEventItem).join("") : `<li class="event-empty muted">暂无即将到来的事件。</li>`;
+  pastList.innerHTML = past.length ? past.map(renderEventItem).join("") : `<li class="event-empty muted">暂无近期披露。</li>`;
 }
 
 function renderEventItem(event) {
   const badge = eventKindLabel(event.kind);
-  const title = event.url
-    ? `<a href="${event.url}" target="_blank" rel="noreferrer">${event.title}</a>`
-    : event.title;
-  const when = event.date ? `<span class="muted">${event.date}${formatDaysLabel(event.date)}</span>` : "";
+  const body = event.url
+    ? `<a href="${event.url}" target="_blank" rel="noreferrer">${escapeHtml(event.title)}</a>`
+    : `<strong>${escapeHtml(event.title)}</strong>`;
   return `
     <li class="event-item">
       <span class="event-badge">${badge}</span>
       <div class="event-copy">
-        <strong>${title}</strong>
-        ${when}
+        ${body}
+        <span class="muted">${event.date || "外部入口"} ${event.date ? `· ${formatDaysLabel(event.date)}` : ""}</span>
       </div>
     </li>
   `;
@@ -1367,47 +2286,35 @@ function renderEventItem(event) {
 function formatNextEarnings(date) {
   if (!date) return "";
   const days = daysUntil(date);
-  if (days < 0 || days > 60) return "";
-  const label = days === 0 ? "今天财报" : `${days} 天后财报`;
-  return `<p class="watch-earnings muted">下一事件：${date} · ${label}</p>`;
+  if (days == null) return "";
+  return `<p class="watch-earnings muted">财报 ${date} · ${days === 0 ? "今天" : days > 0 ? `${days} 天后` : `${Math.abs(days)} 天前`}</p>`;
 }
 
 function eventKindLabel(kind) {
-  return {
-    earnings: "财报",
-    dividend: "分红",
-    filing: "披露",
-    link: "查阅",
-  }[kind] || "事件";
+  return { earnings: "财报", dividend: "分红", filing: "披露", source: "来源" }[kind] || "事件";
 }
 
 function eventStatus(date) {
-  return daysUntil(date) >= 0 ? "upcoming" : "past";
+  const days = daysUntil(date);
+  if (days == null) return "unknown";
+  return days >= 0 ? "upcoming" : "past";
 }
 
 function formatDaysLabel(date) {
   const days = daysUntil(date);
-  if (days > 0) return ` · ${days} 天后`;
-  if (days === 0) return " · 今天";
-  return ` · ${Math.abs(days)} 天前`;
+  if (days == null) return "";
+  if (days === 0) return "今天";
+  if (days > 0) return `${days} 天后`;
+  return `${Math.abs(days)} 天前`;
 }
 
 function daysUntil(date) {
-  if (!date) return NaN;
+  if (!date) return null;
   const target = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(target.getTime())) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return Math.round((target - today) / 86400000);
-}
-
-function formatISODate(date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function addDays(date, offset) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + offset);
-  return next;
 }
 
 function marginOfSafety(stock) {
@@ -1466,29 +2373,38 @@ function peerContext(stock, pool) {
   return `同业 ${peers.length} 只：PE 排名 ${rank}/${sorted.length}，行业均值 ${avg.toFixed(1)}x，当前 ${stock.quote.pe.toFixed(1)}x。`;
 }
 
-function distanceToTarget(price, targetPrice) {
-  if (!targetPrice) return "—";
-  const gap = ((price - targetPrice) / targetPrice) * 100;
-  if (gap <= 0) return `${Math.abs(gap).toFixed(1)}% 以内`;
-  return `+${gap.toFixed(1)}%`;
-}
-
 function markerPosition(stock) {
   const min = stock.valuation.bear_price;
   const max = stock.valuation.risk_price;
   return clamp(((stock.quote.price - min) / (max - min)) * 100, 1, 99);
 }
 
-function alertStatus(stock, targetPrice) {
-  const mos = marginOfSafety(stock);
-  if (stock.quote.price <= targetPrice) {
-    return { type: "up", text: "已进入关注区间，可复核财报和估值假设。" };
-  }
-  if (mos >= 5) {
-    return { type: "up", text: `安全边际 ${formatMarginOfSafety(mos)}，价格低于合理区间下沿。` };
-  }
-  const gap = ((stock.quote.price - targetPrice) / targetPrice) * 100;
-  return { type: "muted", text: `距关注价仍高 ${gap.toFixed(1)}%，安全边际 ${formatMarginOfSafety(mos)}。` };
+function watchAlertLevel(stock, saved) {
+  const price = stock.quote.price;
+  if (saved.stopLoss && price <= saved.stopLoss) return "hit";
+  if (saved.buy && price <= saved.buy) return "hit";
+  if (saved.takeProfit && price >= saved.takeProfit) return "hit";
+  if (saved.buy && price <= saved.buy * 1.03) return "near";
+  if (saved.takeProfit && price >= saved.takeProfit * 0.97) return "near";
+  if (saved.stopLoss && price <= saved.stopLoss * 1.03) return "near";
+  return "calm";
+}
+
+function watchAlertText(stock, saved) {
+  const price = stock.quote.price;
+  if (saved.stopLoss && price <= saved.stopLoss) return "触及止损";
+  if (saved.buy && price <= saved.buy) return "触及买入关注";
+  if (saved.takeProfit && price >= saved.takeProfit) return "触及止盈";
+  if (saved.buy && price <= saved.buy * 1.03) return `接近买入 ${distanceToTarget(price, saved.buy)}`;
+  if (saved.takeProfit && price >= saved.takeProfit * 0.97) return "接近止盈";
+  return "跟踪中";
+}
+
+function distanceToTarget(price, targetPrice) {
+  if (!targetPrice) return "—";
+  const gap = ((price - targetPrice) / targetPrice) * 100;
+  if (gap <= 0) return `${Math.abs(gap).toFixed(1)}% 以内`;
+  return `+${gap.toFixed(1)}%`;
 }
 
 function stockKey(stock) {
@@ -1497,6 +2413,10 @@ function stockKey(stock) {
 
 function sameStock(a, b) {
   return a.symbol === b.symbol && a.market === b.market;
+}
+
+function findStock(symbol, market) {
+  return provider.stocks.find((item) => item.symbol === symbol && item.market === market);
 }
 
 function marketLabel(market) {
@@ -1513,6 +2433,7 @@ function valuationLabel(stateName) {
 }
 
 function money(value, currency) {
+  if (value == null || Number.isNaN(Number(value))) return "—";
   return `${CURRENCY[currency] || ""}${Number(value).toLocaleString("zh-CN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -1520,6 +2441,7 @@ function money(value, currency) {
 }
 
 function signed(value) {
+  if (value == null || Number.isNaN(Number(value))) return "—";
   return `${value > 0 ? "+" : ""}${Number(value).toFixed(1)}`;
 }
 
@@ -1546,14 +2468,78 @@ function hash(input) {
   return Math.abs(h >>> 0);
 }
 
-function loadWatchlist() {
+function toBase(amount, fromCurrency, baseCurrency) {
+  const from = FX_TO_CNY[fromCurrency] || 1;
+  const to = FX_TO_CNY[baseCurrency] || 1;
+  return (amount * from) / to;
+}
+
+function normalizeClientSymbol(symbol, market) {
+  const raw = String(symbol || "").trim().toUpperCase();
+  if (market === "HK") {
+    const digits = raw.replace(/\D/g, "");
+    return digits.padStart(4, "0");
+  }
+  if (market === "A") {
+    const digits = raw.replace(/\D/g, "");
+    return digits.padStart(6, "0");
+  }
+  return raw.replace("/", ".");
+}
+
+function loadJSON(key, fallback) {
   try {
-    return JSON.parse(localStorage.getItem("stockagent.watchlist") || "{}");
+    return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
   } catch {
-    return {};
+    return fallback;
   }
 }
 
+function saveJSON(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function migrateWatchlist(raw) {
+  const next = {};
+  Object.entries(raw || {}).forEach(([key, value]) => {
+    next[key] = {
+      symbol: value.symbol,
+      market: value.market,
+      group: value.group || "watch",
+      buy: value.buy ?? value.targetPrice ?? null,
+      add: value.add ?? null,
+      takeProfit: value.takeProfit ?? null,
+      stopLoss: value.stopLoss ?? null,
+      targetPrice: value.targetPrice ?? value.buy ?? null,
+      createdAt: value.createdAt || new Date().toISOString(),
+    };
+  });
+  return next;
+}
+
 function saveWatchlist() {
-  localStorage.setItem("stockagent.watchlist", JSON.stringify(state.watchlist));
+  saveJSON(WATCHLIST_KEY, state.watchlist);
+}
+
+function savePrefs() {
+  saveJSON(PREFS_KEY, state.prefs);
+}
+
+function loadCustomSymbols() {
+  return loadJSON(CUSTOM_KEY, []);
+}
+
+function saveCustomSymbols(list) {
+  saveJSON(
+    CUSTOM_KEY,
+    list.map((item) => ({
+      symbol: item.symbol,
+      name: item.name,
+      englishName: item.englishName,
+      market: item.market,
+      exchange: item.exchange,
+      currency: item.currency,
+      industry: item.industry || "自定义",
+    })),
+  );
 }

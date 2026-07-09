@@ -1212,6 +1212,212 @@ canvas {
   font-size: 13px;
 }
 
+.workbench-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.panel-block {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--panel-shadow);
+}
+
+.stack-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.stack-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.stack-item.static {
+  cursor: default;
+}
+
+.stack-item strong {
+  display: block;
+  font-size: 14px;
+}
+
+.stack-item .muted,
+.stack-item span.muted {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.empty-state.compact {
+  padding: 16px;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inline-label select {
+  min-height: 34px;
+  width: auto;
+}
+
+.add-symbol-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0;
+  padding: 12px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--panel-shadow);
+}
+
+.add-symbol-strip .grow {
+  min-width: 0;
+  grid-column: span 2;
+}
+
+@media (max-width: 780px) {
+  .add-symbol-strip .grow {
+    grid-column: auto;
+  }
+}
+
+.add-symbol-strip label span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.watch-table input,
+.holdingsView input,
+#holdingsRows input,
+#watchlistRows input,
+#watchlistRows select {
+  min-height: 34px;
+  width: 100%;
+  max-width: 110px;
+  padding: 0 8px;
+}
+
+#watchlistRows select {
+  max-width: 110px;
+}
+
+.watch-row.hit {
+  background: var(--accent-soft);
+}
+
+.linkish {
+  display: grid;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+
+.linkish:hover strong {
+  color: var(--accent-ink);
+}
+
+.tag.hit {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.tag.near {
+  background: oklch(62% 0.14 82 / 0.16);
+  color: var(--warn);
+}
+
+.tag.calm {
+  background: var(--surface);
+}
+
+.price-section,
+.notes-section {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.notes-section textarea {
+  width: 100%;
+  min-height: 110px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+  padding: 10px 12px;
+  resize: vertical;
+  font: inherit;
+}
+
+.range-segment {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.compare-strip {
+  margin-bottom: 12px;
+}
+
+.compare-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.compare-table {
+  min-width: 480px;
+}
+
+.alert-history-block {
+  margin-top: 4px;
+}
+
 .watchlist-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1317,7 +1523,9 @@ canvas {
   .stock-row:hover,
   .watch-button:hover,
   .segment-button:hover,
-  .upcoming-item:hover {
+  .upcoming-item:hover,
+  .stack-item:hover:not(.static),
+  .linkish:hover {
     background: var(--surface-3);
   }
 
@@ -1425,8 +1633,14 @@ button:active {
   .financial-grid,
   .facts-section,
   .settings-layout,
-  .watchlist-grid {
+  .watchlist-grid,
+  .workbench-grid,
+  .add-symbol-strip {
     grid-template-columns: 1fr;
+  }
+
+  .add-symbol-strip {
+    align-items: stretch;
   }
 
   .session-strip {

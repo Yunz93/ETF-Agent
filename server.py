@@ -149,6 +149,7 @@ SEC_CIK = {
 }
 
 QUOTE_CACHE = {"expires": 0, "payload": None}
+HISTORY_CACHE = {}
 SEC_CACHE = {}
 FILINGS_CACHE = {}
 FINANCIAL_CACHE = {}
@@ -209,6 +210,19 @@ class Handler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed.query)
             symbol = query.get("symbol", [""])[0].upper()
             self.send_json(get_sec_filings(symbol))
+            return
+        if parsed.path == "/api/quote":
+            query = urllib.parse.parse_qs(parsed.query)
+            symbol = query.get("symbol", [""])[0].strip().upper()
+            market = query.get("market", [""])[0].strip().upper()
+            self.send_json(get_single_quote(symbol, market))
+            return
+        if parsed.path == "/api/history":
+            query = urllib.parse.parse_qs(parsed.query)
+            symbol = query.get("symbol", [""])[0].strip().upper()
+            market = query.get("market", [""])[0].strip().upper()
+            range_key = query.get("range", ["1y"])[0].strip().lower() or "1y"
+            self.send_json(get_price_history(symbol, market, range_key))
             return
         self.serve_static(parsed.path)
 
@@ -312,6 +326,37 @@ def sec_settings():
     return CONFIG.get("sec", DEFAULT_CONFIG["sec"])
 
 
+def stock_tuple(symbol, market):
+    symbol = normalize_symbol(symbol, market)
+    market = market.upper()
+    for item in STOCKS:
+        if item[0] == symbol and item[1] == market:
+            return item
+    yahoo = infer_yahoo_symbol(symbol, market)
+    return (symbol, market, yahoo)
+
+
+def normalize_symbol(symbol, market):
+    symbol = str(symbol or "").strip().upper()
+    market = str(market or "").strip().upper()
+    if market == "HK":
+        digits = "".join(ch for ch in symbol if ch.isdigit())
+        return digits.zfill(4) if digits else symbol
+    if market == "A":
+        digits = "".join(ch for ch in symbol if ch.isdigit())
+        return digits.zfill(6) if digits else symbol
+    return symbol.replace("/", ".")
+
+
+def infer_yahoo_symbol(symbol, market):
+    symbol = normalize_symbol(symbol, market)
+    if market == "A":
+        return f"{symbol}.{'SS' if symbol.startswith(('5', '6', '9')) else 'SZ'}"
+    if market == "HK":
+        return f"{symbol.zfill(4)}.HK"
+    return symbol.replace(".", "-")
+
+
 def get_quotes():
     now = time.time()
     cached = QUOTE_CACHE["payload"]
@@ -342,6 +387,178 @@ def get_quotes():
         QUOTE_CACHE["expires"] = now + 10
 
     return response
+
+
+def get_single_quote(symbol, market):
+    if not symbol or market not in {"A", "HK", "US"}:
+        return {"error": "需要有效的 market 与 symbol", "quote": None}
+    symbol, market, yahoo_symbol = stock_tuple(symbol, market)
+    stocks = [(symbol, market, yahoo_symbol)]
+    try:
+        by_tencent = fetch_tencent_quotes(stocks)
+        item = by_tencent.get((market, symbol))
+        if item:
+            quote = quote_from_tencent_item(symbol, market, yahoo_symbol, item)
+            name = field_at(item, 1) or symbol
+            return {
+                "quote": quote,
+                "meta": {
+                    "symbol": symbol,
+                    "market": market,
+                    "name": name,
+                    "englishName": name,
+                    "exchange": {"A": "SSE/SZSE", "HK": "HKEX", "US": "US"}.get(market, market),
+                    "currency": {"A": "CNY", "HK": "HKD", "US": "USD"}[market],
+                    "industry": "自定义",
+                },
+                "provider": quote.get("provider"),
+                "updated_at": as_of(None),
+            }
+    except Exception as primary_error:
+        try:
+            by_eastmoney = fetch_eastmoney_quotes(stocks)
+            item = by_eastmoney.get((market, symbol))
+            if item:
+                quote = quote_from_eastmoney_item(symbol, market, yahoo_symbol, item)
+                quote["note"] = f"腾讯行情不可用，东方财富兜底；主源错误：{primary_error}"
+                name = item.get("f58") or symbol
+                return {
+                    "quote": quote,
+                    "meta": {
+                        "symbol": symbol,
+                        "market": market,
+                        "name": name,
+                        "englishName": name,
+                        "exchange": {"A": "SSE/SZSE", "HK": "HKEX", "US": "US"}.get(market, market),
+                        "currency": {"A": "CNY", "HK": "HKD", "US": "USD"}[market],
+                        "industry": "自定义",
+                    },
+                    "provider": quote.get("provider"),
+                    "updated_at": as_of(None),
+                }
+            return {"error": f"未找到行情：{primary_error}", "quote": None}
+        except Exception as fallback_error:
+            return {"error": f"腾讯：{primary_error}；东方财富：{fallback_error}", "quote": None}
+    return {"error": "未找到行情", "quote": None}
+
+
+def get_price_history(symbol, market, range_key="1y"):
+    if not symbol or market not in {"A", "HK", "US"}:
+        return {"error": "需要有效的 market 与 symbol", "points": []}
+    symbol, market, yahoo_symbol = stock_tuple(symbol, market)
+    allowed = {"1m": "1mo", "3m": "3mo", "6m": "6mo", "1y": "1y", "5y": "5y"}
+    yahoo_range = allowed.get(range_key, "1y")
+    cache_key = f"{market}:{symbol}:{yahoo_range}"
+    now = time.time()
+    cached = HISTORY_CACHE.get(cache_key)
+    if cached and cached["expires"] > now:
+        return cached["payload"]
+
+    errors = []
+    points = []
+    provider_name = "Yahoo Finance"
+    source_url = f"https://finance.yahoo.com/quote/{urllib.parse.quote(yahoo_symbol)}"
+
+    url = (
+        "https://query2.finance.yahoo.com/v8/finance/chart/"
+        f"{urllib.parse.quote(yahoo_symbol, safe='')}?interval=1d&range={yahoo_range}"
+    )
+    try:
+        opener = get_yahoo_bootstrap_opener()
+        request = urllib.request.Request(url, headers=yahoo_headers())
+        with opener.open(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        chart_result = (payload.get("chart") or {}).get("result") or []
+        if not chart_result:
+            raise RuntimeError("Yahoo chart 无数据")
+        result = chart_result[0]
+        timestamps = result.get("timestamp") or []
+        closes = ((result.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+        for ts, close in zip(timestamps, closes):
+            if close is None:
+                continue
+            points.append(
+                {
+                    "date": time.strftime("%Y-%m-%d", time.gmtime(ts)),
+                    "close": round(float(close), 4),
+                }
+            )
+        if not points:
+            raise RuntimeError("Yahoo chart 无有效收盘价")
+    except Exception as exc:
+        errors.append(f"Yahoo: {exc}")
+        try:
+            points = fetch_eastmoney_history(symbol, market, yahoo_symbol, range_key)
+            provider_name = "东方财富"
+            source_url = "https://quote.eastmoney.com/"
+            if not points:
+                raise RuntimeError("东方财富 K 线无数据")
+        except Exception as fallback_error:
+            errors.append(f"东方财富: {fallback_error}")
+            return {
+                "symbol": symbol,
+                "market": market,
+                "yahoo_symbol": yahoo_symbol,
+                "range": range_key,
+                "points": [],
+                "error": "；".join(errors),
+                "updated_at": as_of(None),
+            }
+
+    response_payload = {
+        "symbol": symbol,
+        "market": market,
+        "yahoo_symbol": yahoo_symbol,
+        "range": range_key,
+        "points": points,
+        "provider": provider_name,
+        "source_url": source_url,
+        "updated_at": as_of(None),
+    }
+    if errors:
+        response_payload["warning"] = "；".join(errors)
+    HISTORY_CACHE[cache_key] = {"expires": now + 300, "payload": response_payload}
+    return response_payload
+
+
+def history_limit(range_key):
+    return {"1m": 30, "3m": 90, "6m": 180, "1y": 260, "5y": 1300}.get(range_key, 260)
+
+
+def fetch_eastmoney_history(symbol, market, yahoo_symbol, range_key="1y"):
+    secid = eastmoney_secid(symbol, market, yahoo_symbol)
+    limit = history_limit(range_key)
+    params = {
+        "secid": secid,
+        "klt": "101",
+        "fqt": "1",
+        "lmt": str(limit),
+        "end": "20500101",
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+    }
+    url = "https://push2his.eastmoney.com/api/qt/stock/kline/get?" + urllib.parse.urlencode(params)
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": YAHOO_UA,
+            "Accept": "application/json,text/plain,*/*",
+            "Referer": "https://quote.eastmoney.com/",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    klines = ((payload.get("data") or {}).get("klines")) or []
+    points = []
+    for row in klines:
+        parts = str(row).split(",")
+        if len(parts) < 3:
+            continue
+        try:
+            points.append({"date": parts[0], "close": round(float(parts[2]), 4)})
+        except (TypeError, ValueError):
+            continue
+    return points[-limit:]
 
 
 def get_eastmoney_fallback_quotes(primary_error):
