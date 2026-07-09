@@ -63,6 +63,29 @@ jobs:
       - name: Generate icons (PNG iconset)
         run: python packaging/generate_icons.py
 
+      - name: Check install_mac.sh
+        run: |
+          chmod +x packaging/install_mac.sh
+          bash -n packaging/install_mac.sh
+          packaging/install_mac.sh --help | grep -q "一键安装"
+          # Non-macOS hosts must fail fast with a clear error.
+          if packaging/install_mac.sh; then
+            echo "expected non-zero exit on Linux" >&2
+            exit 1
+          fi
+          # Resolve latest Release asset without installing.
+          # Soft-skip on transient GitHub API 403/rate-limit in CI.
+          if ! out="$(STOCKAGENT_INSTALL_CHECK=1 packaging/install_mac.sh 2>&1)"; then
+            echo "$out"
+            if echo "$out" | grep -Eqi '403|rate limit|无法获取 Release'; then
+              echo "WARN: GitHub API unavailable; skipping asset resolve check"
+              exit 0
+            fi
+            exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -Eq 'StockAgent-.*\.(zip|dmg)'
+
   build-macos:
     name: Build StockAgent.app
     needs: smoke-linux
@@ -97,8 +120,10 @@ jobs:
           MAKE_DMG: "1"
           MAKE_ZIP: "1"
         run: |
-          chmod +x packaging/build_mac.sh
+          chmod +x packaging/build_mac.sh packaging/install_mac.sh
           ./packaging/build_mac.sh
+          test -x dist/artifacts/install_mac.sh
+          test -f dist/artifacts/INSTALL.txt
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

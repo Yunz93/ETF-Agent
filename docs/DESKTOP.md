@@ -68,6 +68,8 @@ Outputs:
 - `dist/StockAgent.app`
 - `dist/artifacts/StockAgent-<version>+<build>-macos-<arch>.zip`
 - `dist/artifacts/StockAgent-<version>+<build>-macos-<arch>.dmg`
+- `dist/artifacts/install_mac.sh` — one-click installer (download + clear quarantine)
+- `dist/artifacts/INSTALL.txt`
 - `dist/artifacts/build-info.json`
 
 Supporting files:
@@ -80,8 +82,44 @@ Supporting files:
 | `packaging/entitlements.plist` | Network + user-selected file access |
 | `packaging/generate_icons.py` | Builds iconset / `.icns` |
 | `packaging/build_mac.sh` | Install → icons → PyInstaller → sign → zip/dmg |
+| `packaging/install_mac.sh` | One-click installer for ad-hoc / unsigned builds |
 
-Phase 1 ships **ad-hoc signed** builds. Gatekeeper may still require right-click → Open on other Macs.
+## One-click install (recommended)
+
+Phase 1 ships **ad-hoc signed** (not Developer ID / not notarized) builds. Downloading the zip/dmg normally sets `com.apple.quarantine`, so Gatekeeper may block a plain double-click.
+
+On a Mac, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/install_mac.sh | bash
+```
+
+Or from a local checkout / artifact:
+
+```bash
+./packaging/install_mac.sh          # downloads latest Release
+./packaging/install_mac.sh StockAgent-*.zip
+```
+
+What it does:
+
+1. Fetches the latest GitHub Release zip/dmg for the current arch (or uses a local/URL argument)
+2. Unpacks zip or mounts dmg
+3. Removes Gatekeeper quarantine (`xattr -cr`)
+4. Re-applies ad-hoc `codesign --force --deep --sign -`
+5. Copies to `/Applications/StockAgent.app` (override with `INSTALL_DIR=...`)
+6. Opens the app (`OPEN_AFTER=0` to skip)
+
+Optional env:
+
+| Var | Default | Meaning |
+|-----|---------|---------|
+| `TAG` | `latest` | Pin a release tag, e.g. `TAG=v0.0.1` |
+| `PREFER` | `zip` | Prefer `zip` or `dmg` |
+| `INSTALL_DIR` | `/Applications` | Install destination |
+| `OPEN_AFTER` | `1` | Launch after install |
+
+Manual fallback: drag `.app` into Applications, then right-click → Open, or System Settings → Privacy & Security → Open Anyway.
 
 Phase 2 (later): Developer ID signing + Apple notarization + Sparkle/auto-update.
 
