@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -18,16 +19,71 @@ from desktop.paths import configure_env, data_dir, maybe_migrate_repo_workspace,
 from desktop.version import __version__ as APP_VERSION
 
 
-def _wait_for_health(url: str, timeout: float = 20.0) -> dict:
+def _log_dir(data_path: Path | None = None) -> Path:
+    base = Path(data_path) if data_path else data_dir()
+    path = base / "logs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _write_crash_log(message: str, *, data_path: Path | None = None) -> Path:
+    log_path = _log_dir(data_path) / "launch.log"
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n===== {stamp} =====\n")
+        handle.write(message.rstrip() + "\n")
+    return log_path
+
+
+def _notify_launch_failure(detail: str, log_path: Path | None = None) -> None:
+    text = detail.strip()
+    if log_path:
+        text = f"{text}\n\n日志：{log_path}"
+    print(text, file=sys.stderr)
+    if sys.platform == "darwin":
+        script = (
+            f'display alert "StockAgent 启动失败" message {json.dumps(text[:900])} '
+            f'as critical buttons {{"好"}} default button 1'
+        )
+        try:
+            subprocess.run(  # noqa: S603
+                ["osascript", "-e", script],
+                check=False,
+                timeout=15,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _wait_for_ready(base: str, timeout: float = 15.0) -> dict:
+    """Poll a lightweight endpoint until the local HTTP server accepts requests.
+
+    Do NOT use /api/health here — that route refreshes catalogs and samples quotes
+    across markets, and can exceed desktop launch budgets (causing silent quit in
+    windowed .app builds). Prefer /api/ready, then fall back to /api/runtime.
+    """
+    candidates = (
+        f"{base.rstrip('/')}/api/ready",
+        f"{base.rstrip('/')}/api/runtime",
+    )
     deadline = time.time() + timeout
     last_error = None
     while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=2) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except Exception as exc:  # noqa: BLE001 - startup probe
-            last_error = exc
-            time.sleep(0.15)
+        for url in candidates:
+            try:
+                with urllib.request.urlopen(url, timeout=1.5) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if not isinstance(payload, dict):
+                    last_error = RuntimeError(f"unexpected payload from {url}: {payload!r}")
+                    continue
+                if payload.get("ready") is True or payload.get("app") == "StockAgent":
+                    return payload
+                last_error = RuntimeError(f"unexpected payload from {url}: {payload!r}")
+            except Exception as exc:  # noqa: BLE001 - startup probe
+                last_error = exc
+        time.sleep(0.1)
     raise RuntimeError(f"本地服务启动超时：{last_error}")
 
 
@@ -57,30 +113,37 @@ def _start_server():
 def run(width: int = 1280, height: int = 860, debug: bool = False) -> int:
     data_path = configure_env(desktop=True)
     maybe_migrate_repo_workspace(data_path)
+    _write_crash_log(f"launch begin version={APP_VERSION}", data_path=data_path)
 
     try:
         import webview
     except ImportError:
-        print(
-            "缺少 pywebview。请先安装：\n  pip install -r requirements-desktop.txt",
-            file=sys.stderr,
-        )
+        message = "缺少 pywebview。请先安装：\n  pip install -r requirements-desktop.txt"
+        log_path = _write_crash_log(message, data_path=data_path)
+        _notify_launch_failure(message, log_path)
         return 1
 
     httpd, port = _start_server()
     base = f"http://127.0.0.1:{port}"
     try:
-        health = _wait_for_health(f"{base}/api/health")
-    except Exception:
-        httpd.shutdown()
-        raise
+        runtime = _wait_for_ready(base)
+    except Exception as exc:
+        try:
+            httpd.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+        log_path = _write_crash_log(
+            "ready probe failed\n" + "".join(traceback.format_exception(exc)),
+            data_path=data_path,
+        )
+        _notify_launch_failure(f"本地服务未能在时限内就绪。\n{exc}", log_path)
+        return 1
 
-    runtime = {}
-    try:
-        with urllib.request.urlopen(f"{base}/api/runtime", timeout=3) as response:
-            runtime = json.loads(response.read().decode("utf-8"))
-    except Exception:  # noqa: BLE001
-        runtime = {"data_dir": str(data_path)}
+    runtime.setdefault("data_dir", str(data_path))
+    _write_crash_log(
+        f"ready ok port={port} data_dir={runtime.get('data_dir')}",
+        data_path=data_path,
+    )
 
     window_holder = {"window": None}
 
@@ -95,9 +158,9 @@ def run(width: int = 1280, height: int = 860, debug: bool = False) -> int:
     def on_about():
         window = window_holder["window"]
         detail = (
-            f"StockAgent Desktop {APP_VERSION}\n"
+            f"StockAgent Desktop {runtime.get('version') or APP_VERSION}\n"
             f"数据目录：{runtime.get('data_dir') or data_path}\n"
-            f"行情：{health.get('quote_provider') or '本地代理'}"
+            f"模式：{runtime.get('mode') or 'desktop'}"
         )
         if window:
             window.evaluate_js(f"alert({json.dumps(detail)})")
@@ -180,6 +243,7 @@ def run(width: int = 1280, height: int = 860, debug: bool = False) -> int:
         webview.start(debug=debug, menu=menu)
     finally:
         _shutdown()
+        _write_crash_log("launch end", data_path=data_path)
     return 0
 
 
@@ -195,9 +259,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Override Application Support data directory",
     )
     args = parser.parse_args(argv)
-    if args.data_dir:
-        configure_env(desktop=True, data=Path(args.data_dir))
-    return run(width=args.width, height=args.height, debug=args.debug)
+    data_override = Path(args.data_dir) if args.data_dir else None
+    if data_override:
+        configure_env(desktop=True, data=data_override)
+    try:
+        return run(width=args.width, height=args.height, debug=args.debug)
+    except Exception as exc:  # noqa: BLE001 - last-resort for windowed .app
+        data_path = None
+        try:
+            data_path = data_dir()
+        except Exception:  # noqa: BLE001
+            pass
+        log_path = _write_crash_log(
+            "unhandled launch error\n" + "".join(traceback.format_exception(exc)),
+            data_path=data_path,
+        )
+        _notify_launch_failure(f"启动异常：{exc}", log_path)
+        return 1
 
 
 if __name__ == "__main__":

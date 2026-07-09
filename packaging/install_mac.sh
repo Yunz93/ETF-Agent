@@ -289,6 +289,11 @@ clear_quarantine() {
   fi
 }
 
+script_dir() {
+  local src="${BASH_SOURCE[0]}"
+  (cd "$(dirname "$src")" && pwd)
+}
+
 adhoc_sign() {
   local target="$1"
   [[ "$ADHOC_SIGN" == "1" ]] || return 0
@@ -297,8 +302,27 @@ adhoc_sign() {
     return 0
   fi
   log "==> Ad-hoc codesign"
-  codesign --force --deep --sign - "$target" 2>/dev/null \
-    || log "WARN: codesign 失败（可继续尝试打开）"
+  # Prefer shipping entitlements so re-sign keeps network client/server rights.
+  local ents=""
+  local candidate
+  local here
+  here="$(script_dir)"
+  for candidate in \
+    "$here/entitlements.plist" \
+    "$target/Contents/Resources/packaging/entitlements.plist" \
+    "$target/Contents/Frameworks/packaging/entitlements.plist"; do
+    if [[ -f "$candidate" ]]; then
+      ents="$candidate"
+      break
+    fi
+  done
+  if [[ -n "$ents" ]]; then
+    codesign --force --deep --sign - --entitlements "$ents" "$target" 2>/dev/null \
+      || log "WARN: codesign 失败（可继续尝试打开）"
+  else
+    codesign --force --deep --sign - "$target" 2>/dev/null \
+      || log "WARN: codesign 失败（可继续尝试打开）"
+  fi
 }
 
 same_path() {

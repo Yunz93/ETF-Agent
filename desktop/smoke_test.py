@@ -13,9 +13,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, ROOT)
 
 from desktop.paths import configure_env  # noqa: E402
+
+
+def _get_json(url: str, timeout: float = 3.0) -> dict:
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def main() -> int:
@@ -32,21 +37,37 @@ def main() -> int:
         try:
             deadline = time.time() + 10
             runtime = None
+            ready = None
             while time.time() < deadline:
                 try:
-                    with urllib.request.urlopen(f"{base}/api/runtime", timeout=2) as response:
-                        runtime = json.loads(response.read().decode("utf-8"))
+                    ready = _get_json(f"{base}/api/ready")
+                    runtime = _get_json(f"{base}/api/runtime")
                     break
                 except Exception:
                     time.sleep(0.1)
+            assert ready and ready.get("ready") is True, "ready endpoint unavailable"
             assert runtime, "runtime endpoint unavailable"
             assert runtime["mode"] == "desktop"
             assert runtime.get("version"), "runtime version missing"
             assert Path(runtime["data_dir"]) == data.resolve()
+
+            # Desktop launch must succeed against a lightweight probe even when
+            # /api/health would block (catalog/quote fan-out).
+            from desktop.bootstrap import _wait_for_ready
+
+            started = time.time()
+            payload = _wait_for_ready(base, timeout=5.0)
+            elapsed = time.time() - started
+            assert payload.get("ready") is True or payload.get("app") == "StockAgent"
+            assert elapsed < 2.0, f"ready probe too slow for launch: {elapsed:.2f}s"
+
             with urllib.request.urlopen(f"{base}/index.html", timeout=3) as response:
                 html = response.read().decode("utf-8", errors="replace")
             assert "StockAgent" in html
-            print("desktop smoke ok", json.dumps({"port": port, "data_dir": runtime["data_dir"]}))
+            print(
+                "desktop smoke ok",
+                json.dumps({"port": port, "data_dir": runtime["data_dir"], "ready_ms": int(elapsed * 1000)}),
+            )
             return 0
         finally:
             httpd.shutdown()
