@@ -163,11 +163,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/catalog":
             market = query.get("market", [""])[0].upper()
-            self.send_json(get_catalog(market or None))
+            index = query.get("index", [""])[0].strip().upper()
+            self.send_json(get_catalog(market or None, index or None))
             return
         if parsed.path == "/api/quotes":
             market = query.get("market", [""])[0].upper()
-            self.send_json(get_quotes(market or None))
+            index = query.get("index", [""])[0].strip().upper()
+            limit_raw = query.get("limit", [""])[0].strip()
+            offset_raw = query.get("offset", ["0"])[0].strip() or "0"
+            limit = int(limit_raw) if limit_raw.isdigit() else None
+            offset = int(offset_raw) if offset_raw.isdigit() else 0
+            self.send_json(get_quotes(market or None, index or None, limit=limit, offset=offset))
             return
         if parsed.path == "/api/health":
             self.send_json(get_data_health())
@@ -833,8 +839,53 @@ def refresh_catalog(force=False):
     return payload
 
 
-def get_catalog(market=None):
+def index_meta_by_code(index_code):
+    code = str(index_code or "").strip().upper()
+    for market, items in INDEX_UNIVERSES.items():
+        for item in items:
+            if str(item.get("code", "")).upper() == code:
+                return market, item
+    return None, None
+
+
+def filter_catalog_stocks(stocks, market=None, index=None):
+    rows = stocks
+    if market:
+        market = market.upper()
+        rows = [row for row in rows if row.get("market") == market]
+    if index:
+        index = str(index).upper()
+        rows = [
+            row
+            for row in rows
+            if index in [str(code).upper() for code in (row.get("index_codes") or [])]
+        ]
+    return rows
+
+
+def get_catalog(market=None, index=None):
     payload = refresh_catalog()
+    if index:
+        index = index.upper()
+        index_market, meta = index_meta_by_code(index)
+        if not meta:
+            return {"index": index, "count": 0, "stocks": [], "error": "Unsupported index"}
+        stocks = filter_catalog_stocks(payload["markets"][index_market]["stocks"], index_market, index)
+        return {
+            "market": index_market,
+            "index": index,
+            "index_name": meta.get("name"),
+            "count": len(stocks),
+            "indices": [
+                item
+                for item in payload["markets"][index_market]["indices"]
+                if str(item.get("code", "")).upper() == index
+            ],
+            "errors": payload["markets"][index_market]["errors"],
+            "updated_at": payload["updated_at"],
+            "note": payload["note"],
+            "stocks": stocks,
+        }
     if not market:
         return {
             "total": payload["total"],
@@ -848,6 +899,15 @@ def get_catalog(market=None):
                 }
                 for key, value in payload["markets"].items()
             },
+            "indices": [
+                {
+                    "code": item["code"],
+                    "name": item["name"],
+                    "market": market_key,
+                }
+                for market_key, items in INDEX_UNIVERSES.items()
+                for item in items
+            ],
             "stocks": payload["markets"]["A"]["stocks"]
             + payload["markets"]["HK"]["stocks"]
             + payload["markets"]["US"]["stocks"],
@@ -867,27 +927,49 @@ def get_catalog(market=None):
     }
 
 
-def catalog_stock_tuples(market=None):
+def catalog_stock_tuples(market=None, index=None):
     refresh_catalog()
-    stocks = CATALOG_CACHE["stocks"]
-    if market:
-        stocks = [row for row in stocks if row["market"] == market]
+    stocks = filter_catalog_stocks(CATALOG_CACHE["stocks"], market, index)
     return [(row["symbol"], row["market"], row["yahoo_symbol"]) for row in stocks]
 
 
-def get_quotes(market=None):
+def get_quotes(market=None, index=None, limit=None, offset=0):
     market = market.upper() if market else None
+    index = index.upper() if index else None
+    if index:
+        index_market, meta = index_meta_by_code(index)
+        if not meta:
+            return {"quotes": [], "error": "Unsupported index", "updated_at": as_of(None)}
+        market = index_market
     if market and market not in {"A", "HK", "US"}:
         return {"quotes": [], "error": "Unsupported market", "updated_at": as_of(None)}
 
     now = time.time()
-    cache_key = market or "ALL"
+    offset = max(0, int(offset or 0))
+    limit_value = int(limit) if limit not in (None, "") else None
+    cache_key = f"{market or 'ALL'}|{index or '-'}|{offset}|{limit_value or 'ALL'}"
     cached = QUOTE_MARKET_CACHE.get(cache_key)
     if cached and cached["expires"] > now and (cached["payload"].get("quotes") or not cached["payload"].get("error")):
         return cached["payload"]
 
-    stocks = catalog_stock_tuples(market)
+    stocks = catalog_stock_tuples(market, index)
+    total = len(stocks)
+    if limit_value is not None:
+        stocks = stocks[offset : offset + max(0, limit_value)]
+    else:
+        stocks = stocks[offset:]
     response = fetch_quotes_for_stocks(stocks, market)
+    response.update(
+        {
+            "index": index,
+            "index_name": (index_meta_by_code(index)[1] or {}).get("name") if index else None,
+            "offset": offset,
+            "limit": limit_value,
+            "total": total,
+            "next_offset": offset + len(stocks) if offset + len(stocks) < total else None,
+            "has_more": offset + len(stocks) < total,
+        }
+    )
     ttl = 60 if response.get("quotes") and not response.get("error") else 10
     QUOTE_MARKET_CACHE[cache_key] = {"expires": now + ttl, "payload": response}
     QUOTE_CACHE["payload"] = response
@@ -1371,7 +1453,8 @@ def get_data_health():
     quote_provider = None
     quote_error = None
     for market in ("A", "HK", "US"):
-        sample = catalog_stock_tuples(market)[:120]
+        first_index = (INDEX_UNIVERSES.get(market) or [{}])[0].get("code")
+        sample = catalog_stock_tuples(market, first_index)[:120]
         payload = fetch_quotes_for_stocks(sample, market)
         quote_provider = payload.get("provider") or quote_provider
         if payload.get("error"):
