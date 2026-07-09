@@ -48,68 +48,8 @@ const DEFAULT_SOURCES = {
 
 let appConfig = null;
 
-const STOCK_SEEDS = [
-  ["600519", "贵州茅台", "Kweichow Moutai", "A", "SSE", "CNY", "白酒"],
-  ["300750", "宁德时代", "CATL", "A", "SZSE", "CNY", "新能源"],
-  ["601318", "中国平安", "Ping An Insurance", "A", "SSE", "CNY", "保险"],
-  ["600036", "招商银行", "China Merchants Bank", "A", "SSE", "CNY", "银行"],
-  ["000858", "五粮液", "Wuliangye", "A", "SZSE", "CNY", "白酒"],
-  ["002594", "比亚迪", "BYD", "A", "SZSE", "CNY", "汽车"],
-  ["600276", "恒瑞医药", "Hengrui Pharma", "A", "SSE", "CNY", "医药"],
-  ["601899", "紫金矿业", "Zijin Mining", "A", "SSE", "CNY", "有色金属"],
-  ["000333", "美的集团", "Midea Group", "A", "SZSE", "CNY", "家电"],
-  ["601012", "隆基绿能", "LONGi Green Energy", "A", "SSE", "CNY", "新能源"],
-  ["600900", "长江电力", "China Yangtze Power", "A", "SSE", "CNY", "公用事业"],
-  ["600309", "万华化学", "Wanhua Chemical", "A", "SSE", "CNY", "化工"],
-  ["688111", "金山办公", "Kingsoft Office", "A", "SSE STAR", "CNY", "软件"],
-  ["300760", "迈瑞医疗", "Mindray Medical", "A", "SZSE", "CNY", "医疗器械"],
-  ["601088", "中国神华", "China Shenhua", "A", "SSE", "CNY", "能源"],
-  ["600887", "伊利股份", "Yili Group", "A", "SSE", "CNY", "消费"],
-  ["002415", "海康威视", "Hikvision", "A", "SZSE", "CNY", "安防科技"],
-  ["000651", "格力电器", "Gree Electric", "A", "SZSE", "CNY", "家电"],
-  ["601166", "兴业银行", "Industrial Bank", "A", "SSE", "CNY", "银行"],
-  ["688981", "中芯国际", "SMIC", "A", "SSE STAR", "CNY", "半导体"],
-  ["0700", "腾讯控股", "Tencent", "HK", "HKEX", "HKD", "互联网"],
-  ["9988", "阿里巴巴-SW", "Alibaba", "HK", "HKEX", "HKD", "互联网"],
-  ["3690", "美团-W", "Meituan", "HK", "HKEX", "HKD", "本地生活"],
-  ["1299", "友邦保险", "AIA", "HK", "HKEX", "HKD", "保险"],
-  ["0388", "香港交易所", "HKEX", "HK", "HKEX", "HKD", "金融基础设施"],
-  ["0939", "建设银行", "CCB", "HK", "HKEX", "HKD", "银行"],
-  ["1398", "工商银行", "ICBC", "HK", "HKEX", "HKD", "银行"],
-  ["2318", "中国平安", "Ping An Insurance H", "HK", "HKEX", "HKD", "保险"],
-  ["1810", "小米集团-W", "Xiaomi", "HK", "HKEX", "HKD", "硬件"],
-  ["1024", "快手-W", "Kuaishou", "HK", "HKEX", "HKD", "互联网"],
-  ["9618", "京东集团-SW", "JD.com", "HK", "HKEX", "HKD", "电商"],
-  ["9999", "网易-S", "NetEase", "HK", "HKEX", "HKD", "游戏"],
-  ["1211", "比亚迪股份", "BYD H", "HK", "HKEX", "HKD", "汽车"],
-  ["0883", "中国海洋石油", "CNOOC", "HK", "HKEX", "HKD", "能源"],
-  ["0005", "汇丰控股", "HSBC", "HK", "HKEX", "HKD", "银行"],
-  ["2020", "安踏体育", "Anta Sports", "HK", "HKEX", "HKD", "运动消费"],
-  ["2269", "药明生物", "WuXi Biologics", "HK", "HKEX", "HKD", "医药"],
-  ["9868", "小鹏汽车-W", "XPeng", "HK", "HKEX", "HKD", "汽车"],
-  ["2015", "理想汽车-W", "Li Auto", "HK", "HKEX", "HKD", "汽车"],
-  ["1177", "中国生物制药", "Sino Biopharm", "HK", "HKEX", "HKD", "医药"],
-  ["AAPL", "苹果", "Apple", "US", "NASDAQ", "USD", "硬件"],
-  ["MSFT", "微软", "Microsoft", "US", "NASDAQ", "USD", "软件"],
-  ["NVDA", "英伟达", "NVIDIA", "US", "NASDAQ", "USD", "半导体"],
-  ["AMZN", "亚马逊", "Amazon", "US", "NASDAQ", "USD", "电商云计算"],
-  ["GOOGL", "谷歌", "Alphabet", "US", "NASDAQ", "USD", "互联网"],
-  ["META", "Meta", "Meta Platforms", "US", "NASDAQ", "USD", "互联网"],
-  ["TSLA", "特斯拉", "Tesla", "US", "NASDAQ", "USD", "汽车"],
-  ["BRK.B", "伯克希尔", "Berkshire Hathaway", "US", "NYSE", "USD", "综合金融"],
-  ["JPM", "摩根大通", "JPMorgan Chase", "US", "NYSE", "USD", "银行"],
-  ["V", "Visa", "Visa", "US", "NYSE", "USD", "支付"],
-  ["LLY", "礼来", "Eli Lilly", "US", "NYSE", "USD", "医药"],
-  ["UNH", "联合健康", "UnitedHealth", "US", "NYSE", "USD", "医疗保险"],
-  ["XOM", "埃克森美孚", "Exxon Mobil", "US", "NYSE", "USD", "能源"],
-  ["COST", "开市客", "Costco", "US", "NASDAQ", "USD", "零售"],
-  ["HD", "家得宝", "Home Depot", "US", "NYSE", "USD", "零售"],
-  ["NFLX", "奈飞", "Netflix", "US", "NASDAQ", "USD", "流媒体"],
-  ["AMD", "AMD", "Advanced Micro Devices", "US", "NASDAQ", "USD", "半导体"],
-  ["KO", "可口可乐", "Coca-Cola", "US", "NYSE", "USD", "消费"],
-  ["PEP", "百事", "PepsiCo", "US", "NASDAQ", "USD", "消费"],
-  ["ADBE", "奥多比", "Adobe", "US", "NASDAQ", "USD", "软件"],
-];
+const PAGE_SIZE = 50;
+
 
 
 const WATCHLIST_KEY = "stockagent.watchlist";
@@ -148,8 +88,14 @@ const PAGE_TITLES = {
 };
 
 class HybridProvider {
-  constructor(seeds) {
-    this.catalog = seeds.map((seed, index) => buildCatalogStock(seed, index));
+  constructor() {
+    this.catalogByMarket = { A: [], HK: [], US: [] };
+    this.stocksByMarket = { A: [], HK: [], US: [] };
+    this.catalogLoaded = { A: false, HK: false, US: false };
+    this.quoteLoaded = { A: false, HK: false, US: false };
+    this.catalogHydration = {};
+    this.quoteHydration = {};
+    this.catalogMeta = {};
     this.customCatalog = loadCustomSymbols().map((item, index) => ({
       ...item,
       listing_status: "listed",
@@ -157,8 +103,6 @@ class HybridProvider {
       custom: true,
     }));
     this.stocks = [];
-    this.quoteHydrated = false;
-    this.quoteHydration = null;
     this.historyCache = new Map();
     this.status = {
       quote: "connecting",
@@ -168,52 +112,140 @@ class HybridProvider {
   }
 
   allCatalog() {
-    const seen = new Set(this.catalog.map(stockKey));
-    return [...this.catalog, ...this.customCatalog.filter((item) => !seen.has(stockKey(item)))];
+    const base = [
+      ...(this.catalogByMarket.A || []),
+      ...(this.catalogByMarket.HK || []),
+      ...(this.catalogByMarket.US || []),
+    ];
+    const seen = new Set(base.map(stockKey));
+    return [...base, ...this.customCatalog.filter((item) => !seen.has(stockKey(item)))];
   }
 
-  async hydrateQuotes() {
-    if (this.quoteHydrated) return;
-    if (this.quoteHydration) return this.quoteHydration;
-    this.quoteHydration = fetch("/api/quotes")
+  rebuildStocks() {
+    const byKey = new Map();
+    for (const market of ["A", "HK", "US"]) {
+      for (const stock of this.stocksByMarket[market] || []) {
+        byKey.set(stockKey(stock), stock);
+      }
+    }
+    for (const stock of this.stocks) {
+      if (stock.custom) byKey.set(stockKey(stock), stock);
+    }
+    this.stocks = [...byKey.values()];
+  }
+
+  async hydrateCatalog(market) {
+    const key = market || "A";
+    if (this.catalogLoaded[key]) return this.catalogByMarket[key];
+    if (this.catalogHydration[key]) return this.catalogHydration[key];
+    this.catalogHydration[key] = fetch(`/api/catalog?market=${encodeURIComponent(key)}`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Catalog API ${response.status}`);
+        return response.json();
+      })
+      .then((payload) => {
+        const stocks = (payload.stocks || []).map((entry, index) => buildCatalogStockFromApi(entry, index));
+        this.catalogByMarket[key] = stocks;
+        this.catalogMeta[key] = {
+          count: payload.count || stocks.length,
+          indices: payload.indices || [],
+          errors: payload.errors || [],
+          updated_at: payload.updated_at,
+          note: payload.note,
+        };
+        this.catalogLoaded[key] = true;
+        return stocks;
+      })
+      .catch((error) => {
+        console.warn("成分股目录获取失败。", error);
+        this.catalogByMarket[key] = [];
+        this.catalogMeta[key] = { count: 0, indices: [], errors: [String(error.message || error)] };
+        this.catalogLoaded[key] = true;
+        return [];
+      })
+      .finally(() => {
+        this.catalogHydration[key] = null;
+      });
+    return this.catalogHydration[key];
+  }
+
+  async hydrateQuotes(market = "A") {
+    const key = market || "A";
+    await this.hydrateCatalog(key);
+    if (this.quoteLoaded[key]) {
+      this.rebuildStocks();
+      return this.stocksByMarket[key];
+    }
+    if (this.quoteHydration[key]) return this.quoteHydration[key];
+    this.status.quote = "connecting";
+    this.status.quoteLabel = `${marketLabel(key)}行情加载中`;
+    this.quoteHydration[key] = fetch(`/api/quotes?market=${encodeURIComponent(key)}`)
       .then((response) => {
         if (!response.ok) throw new Error(`Quote API ${response.status}`);
         return response.json();
       })
       .then(async (payload) => {
-        const quotes = new Map(payload.quotes.map((quote) => [`${quote.market}:${quote.symbol}`, quote]));
-        const seedStocks = this.catalog
+        const quotes = new Map((payload.quotes || []).map((quote) => [`${quote.market}:${quote.symbol}`, quote]));
+        this.stocksByMarket[key] = this.catalogByMarket[key]
           .map((entry) => buildStockFromQuote(entry, quotes.get(stockKey(entry))))
           .filter(Boolean);
 
-        const customStocks = [];
-        for (const entry of this.customCatalog) {
+        for (const entry of this.customCatalog.filter((item) => item.market === key)) {
           if (quotes.has(stockKey(entry))) {
             const stock = buildStockFromQuote(entry, quotes.get(stockKey(entry)));
-            if (stock) customStocks.push(stock);
+            if (stock && !this.stocksByMarket[key].some((item) => sameStock(item, stock))) {
+              this.stocksByMarket[key].push(stock);
+            }
             continue;
           }
           const fetched = await this.fetchCustomQuote(entry.symbol, entry.market);
-          if (fetched) customStocks.push(fetched);
+          if (fetched && !this.stocksByMarket[key].some((item) => sameStock(item, fetched))) {
+            this.stocksByMarket[key].push(fetched);
+          }
         }
 
-        this.stocks = [...seedStocks, ...customStocks];
-        this.status.quote = this.stocks.length ? "live" : "unavailable";
-        this.status.quoteLabel = this.stocks.length
-          ? `${payload.provider || "真实行情"} · ${this.stocks.length} 条`
+        this.rebuildStocks();
+        this.status.quote = this.stocksByMarket[key].length ? "live" : "unavailable";
+        const indexNames = (this.catalogMeta[key]?.indices || [])
+          .map((item) => item.name)
+          .filter(Boolean)
+          .join(" / ");
+        this.status.quoteLabel = this.stocksByMarket[key].length
+          ? `${payload.provider || "真实行情"} · ${this.stocksByMarket[key].length}/${this.catalogMeta[key]?.count || this.catalogByMarket[key].length} · ${indexNames || marketLabel(key)}`
           : payload.error
             ? `行情不可用 · ${payload.error}`
             : "暂无行情数据";
-        this.quoteHydrated = true;
+        this.quoteLoaded[key] = true;
+        return this.stocksByMarket[key];
       })
       .catch((error) => {
         console.warn("行情获取失败。", error);
-        this.stocks = [];
+        this.stocksByMarket[key] = [];
+        this.rebuildStocks();
         this.status.quote = "unavailable";
         this.status.quoteLabel = "行情不可用";
-        this.quoteHydrated = true;
+        this.quoteLoaded[key] = true;
+        return [];
+      })
+      .finally(() => {
+        this.quoteHydration[key] = null;
       });
-    return this.quoteHydration;
+    return this.quoteHydration[key];
+  }
+
+  invalidateQuotes() {
+    this.quoteLoaded = { A: false, HK: false, US: false };
+    this.quoteHydration = {};
+    this.stocksByMarket = { A: [], HK: [], US: [] };
+    this.stocks = this.stocks.filter((stock) => stock.custom);
+  }
+
+  invalidateAll() {
+    this.catalogLoaded = { A: false, HK: false, US: false };
+    this.catalogHydration = {};
+    this.catalogByMarket = { A: [], HK: [], US: [] };
+    this.catalogMeta = {};
+    this.invalidateQuotes();
   }
 
   async fetchCustomQuote(symbol, market) {
@@ -245,7 +277,7 @@ class HybridProvider {
   }
 
   async ensureStock(symbol, market) {
-    await this.hydrateQuotes();
+    await this.hydrateQuotes(market);
     let stock = this.stocks.find((item) => item.symbol === symbol && item.market === market);
     if (stock) return stock;
     const fetched = await this.fetchCustomQuote(symbol, market);
@@ -258,7 +290,7 @@ class HybridProvider {
 
   rememberCustom(stock) {
     const key = stockKey(stock);
-    if (this.catalog.some((item) => stockKey(item) === key)) return;
+    if (this.allCatalog().some((item) => stockKey(item) === key && !item.custom)) return;
     if (this.customCatalog.some((item) => stockKey(item) === key)) return;
     const entry = {
       symbol: stock.symbol,
@@ -275,12 +307,13 @@ class HybridProvider {
   }
 
   async search(filters) {
-    await this.hydrateQuotes();
-    return this.filterStocks(filters);
+    const market = filters.market && filters.market !== "all" ? filters.market : "A";
+    await this.hydrateQuotes(market);
+    return this.filterStocks(filters, market);
   }
 
   async getStock(symbol, market) {
-    await this.hydrateQuotes();
+    await this.hydrateQuotes(market);
     let stock = this.stocks.find((item) => item.symbol === symbol && item.market === market);
     if (!stock) {
       stock = await this.ensureStock(symbol, market);
@@ -307,12 +340,14 @@ class HybridProvider {
     }
   }
 
-  filterStocks({ query = "", market = "all", industry = "all", valuation = "all" }) {
+  filterStocks({ query = "", market = "all", industry = "all", valuation = "all" }, activeMarket = "A") {
     const term = query.trim().toLowerCase();
-    return this.stocks.filter((stock) => {
+    const poolMarket = market === "all" ? activeMarket : market;
+    const pool = this.stocksByMarket[poolMarket] || [];
+    return pool.filter((stock) => {
       const matchesTerm =
         !term ||
-        [stock.symbol, stock.name, stock.englishName, stock.industry]
+        [stock.symbol, stock.name, stock.englishName, stock.industry, ...(stock.indices || [])]
           .join(" ")
           .toLowerCase()
           .includes(term);
@@ -350,6 +385,11 @@ class HybridProvider {
       });
       const index = this.stocks.findIndex((item) => sameStock(item, stock));
       if (index >= 0) this.stocks[index] = { ...this.stocks[index], ...enriched, financials: payload.financials };
+      const marketPool = this.stocksByMarket[stock.market] || [];
+      const marketIndex = marketPool.findIndex((item) => sameStock(item, stock));
+      if (marketIndex >= 0) {
+        marketPool[marketIndex] = { ...marketPool[marketIndex], ...enriched, financials: payload.financials };
+      }
       return enriched;
     } catch (error) {
       console.warn("财报获取失败。", error);
@@ -357,7 +397,7 @@ class HybridProvider {
     }
   }
 
-  async withEvents(stock) {
+async withEvents(stock) {
     const events = buildEventsFromQuote(stock);
     if (stock.market === "US") {
       try {
@@ -383,10 +423,12 @@ class HybridProvider {
   }
 }
 
-const provider = new HybridProvider(STOCK_SEEDS);
+const provider = new HybridProvider();
 const state = {
   selected: null,
   filtered: [],
+  page: 1,
+  pageSize: PAGE_SIZE,
   watchlist: {},
   holdings: {},
   notes: {},
@@ -415,6 +457,7 @@ const els = {
   industryFilter: document.querySelector("#industryFilter"),
   valuationFilter: document.querySelector("#valuationFilter"),
   stockRows: document.querySelector("#stockRows"),
+  listPager: document.querySelector("#listPager"),
   stockDetail: document.querySelector("#stockDetail"),
   marketMetrics: document.querySelector("#marketMetrics"),
   upcomingPanel: document.querySelector("#upcomingPanel"),
@@ -509,7 +552,7 @@ async function loadAppConfig({ rerender = true } = {}) {
       quotes: {
         provider_name: "腾讯行情",
         note: DEFAULT_SOURCES.QUOTE[0].role,
-        batch_size: 25,
+        batch_size: 80,
       },
       sec: { enabled: true, user_agent: "StockAgent/0.1 personal-local contact@example.com" },
       sources: structuredClone(DEFAULT_SOURCES),
@@ -559,7 +602,7 @@ function renderSettings() {
         </label>
         <label>
           <span>批量大小</span>
-          <input data-config="quotes.batch_size" type="number" min="5" max="50" value="${escapeAttr(appConfig.quotes?.batch_size ?? 25)}" />
+          <input data-config="quotes.batch_size" type="number" min="5" max="120" value="${escapeAttr(appConfig.quotes?.batch_size ?? 80)}" />
         </label>
       </div>
     </section>
@@ -654,8 +697,7 @@ async function saveAppConfig() {
     const saved = await response.json();
     if (!response.ok) throw new Error(saved.error || `保存失败 ${response.status}`);
     appConfig = saved;
-    provider.quoteHydrated = false;
-    provider.quoteHydration = null;
+    provider.invalidateAll();
     await refreshStocks();
     renderSettings();
     els.settingsStatus.textContent = "已保存到 config.json";
@@ -680,7 +722,10 @@ function escapeHtml(value) {
 
 function bindEvents() {
   [els.searchInput, els.industryFilter, els.valuationFilter].forEach((el) => {
-    el?.addEventListener("input", refreshStocks);
+    el?.addEventListener("input", () => {
+      state.page = 1;
+      refreshStocks();
+    });
   });
 
   document.querySelectorAll(".nav-item").forEach((button) => {
@@ -775,6 +820,7 @@ function bindEvents() {
   els.marketShortcuts.forEach((button) => {
     button.addEventListener("click", () => {
       state.market = button.dataset.marketShortcut;
+      state.page = 1;
       syncMarketShortcuts();
       if (state.activeView === "research") refreshStocks();
     });
@@ -820,11 +866,15 @@ async function refreshStocks() {
     valuation: els.valuationFilter?.value || "all",
   });
   state.filtered.sort((a, b) => marginOfSafety(b) - marginOfSafety(a));
+  const totalPages = Math.max(1, Math.ceil(state.filtered.length / state.pageSize) || 1);
+  if (state.page > totalPages) state.page = totalPages;
+  fillIndustryFilter();
   renderSourceStatus();
   syncMarketShortcuts();
   renderMetrics();
   renderUpcoming();
   renderRows();
+  renderPager();
   renderWorkbench();
   renderWatchlist();
   renderHoldings();
@@ -837,13 +887,19 @@ async function refreshStocks() {
 
 function fillIndustryFilter() {
   if (!els.industryFilter) return;
-  const industries = [...new Set(STOCK_SEEDS.map((seed) => seed[6]))].sort((a, b) => a.localeCompare(b, "zh-CN"));
+  const current = els.industryFilter.value || "all";
+  const pool = provider.stocksByMarket[state.market] || [];
+  const industries = [...new Set(pool.map((stock) => stock.industry).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, "zh-CN"),
+  );
+  els.industryFilter.innerHTML = `<option value="all">全部行业</option>`;
   industries.forEach((industry) => {
     const option = document.createElement("option");
     option.value = industry;
     option.textContent = industry;
     els.industryFilter.append(option);
   });
+  els.industryFilter.value = industries.includes(current) ? current : "all";
 }
 
 function renderMetrics() {
@@ -852,9 +908,10 @@ function renderMetrics() {
   const avgScore = average(state.filtered.map((stock) => stock.analysis.score));
   const undervalued = state.filtered.filter((stock) => stock.valuation.state === "undervalued").length;
   const highRisk = state.filtered.filter((stock) => stock.valuation.state === "risk" || stock.analysis.risks.length >= 3).length;
+  const catalogCount = provider.catalogMeta[state.market]?.count || total;
   const metrics = [
-    ["覆盖股票", `${total} 只`],
-    ["平均评分", `${Math.round(avgScore) || 0}`],
+    ["指数成分", `${catalogCount} 只`],
+    ["当前筛选", `${total} 只`],
     ["低估区间", `${undervalued} 只`],
     ["风险提醒", `${highRisk} 条`],
   ];
@@ -918,19 +975,54 @@ function renderUpcoming() {
   });
 }
 
+function pagedStocks() {
+  const start = (state.page - 1) * state.pageSize;
+  return state.filtered.slice(start, start + state.pageSize);
+}
+
+function renderPager() {
+  if (!els.listPager) return;
+  const total = state.filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / state.pageSize) || 1);
+  if (!total) {
+    els.listPager.hidden = true;
+    els.listPager.innerHTML = "";
+    return;
+  }
+  els.listPager.hidden = false;
+  const startIdx = (state.page - 1) * state.pageSize + 1;
+  const endIdx = Math.min(total, state.page * state.pageSize);
+  els.listPager.innerHTML = `
+    <button type="button" class="ghost-button compact" data-page-action="prev" ${state.page <= 1 ? "disabled" : ""}>上一页</button>
+    <span class="pager-status">第 ${state.page}/${totalPages} 页 · 显示 ${startIdx}-${endIdx} / ${total}</span>
+    <button type="button" class="ghost-button compact" data-page-action="next" ${state.page >= totalPages ? "disabled" : ""}>下一页</button>
+  `;
+  els.listPager.querySelectorAll("[data-page-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.pageAction === "prev" && state.page > 1) state.page -= 1;
+      if (button.dataset.pageAction === "next" && state.page < totalPages) state.page += 1;
+      renderRows();
+      renderPager();
+    });
+  });
+}
+
 function renderRows() {
   if (!els.stockRows) return;
   if (!state.filtered.length) {
     els.stockRows.innerHTML = `<tr><td colspan="10"><div class="empty-state">暂无行情数据。请运行 python3 server.py 并确认网络可用。</div></td></tr>`;
+    renderPager();
     return;
   }
-  els.stockRows.innerHTML = state.filtered
+  const rows = pagedStocks();
+  els.stockRows.innerHTML = rows
     .map((stock) => {
       const selected = state.selected && sameStock(stock, state.selected) ? "active" : "";
       const mos = marginOfSafety(stock);
       const w52 = week52Stats(stock);
       const mosClass = mos >= 0 ? "up" : "down";
       const compared = state.compare.some((item) => sameStock(item, stock));
+      const indexText = (stock.indices || []).join(" / ");
       return `
         <tr class="stock-row ${selected}" data-symbol="${stock.symbol}" data-market="${stock.market}" tabindex="0" aria-selected="${selected ? "true" : "false"}">
           <td>
@@ -939,7 +1031,7 @@ function renderRows() {
           <td>
             <div class="stock-id">
               <strong>${escapeHtml(stock.name)}</strong>
-              <span>${stock.symbol} · ${escapeHtml(stock.englishName)}</span>
+              <span>${stock.symbol} · ${escapeHtml(stock.englishName)}${indexText ? ` · ${escapeHtml(indexText)}` : ""}</span>
             </div>
           </td>
           <td>${marketLabel(stock.market)}</td>
@@ -990,6 +1082,7 @@ function renderRows() {
     });
   });
 }
+
 
 function selectStock(stock, { openDetail = false, updateHash = true } = {}) {
   if (!stock) {
@@ -2213,9 +2306,22 @@ function exportSelectedMarkdown() {
   URL.revokeObjectURL(url);
 }
 
-function buildCatalogStock(seed, index) {
-  const [symbol, name, englishName, market, exchange, currency, industry] = seed;
-  return { symbol, name, englishName, market, exchange, currency, industry, listing_status: "listed", sortIndex: index };
+function buildCatalogStockFromApi(entry, index) {
+  return {
+    symbol: entry.symbol,
+    name: entry.name,
+    englishName: entry.englishName || entry.name,
+    market: entry.market,
+    exchange: entry.exchange,
+    currency: entry.currency,
+    industry: entry.industry || "未分类",
+    indices: entry.indices || [],
+    indexCodes: entry.index_codes || [],
+    yahooSymbol: entry.yahoo_symbol,
+    cik: entry.cik,
+    listing_status: "listed",
+    sortIndex: index,
+  };
 }
 
 function buildStockFromQuote(entry, liveQuote) {
@@ -3125,8 +3231,7 @@ async function importWorkspaceBackup(event) {
     const payload = JSON.parse(text);
     applyLocalWorkspace(payload, { source: "import", markDirty: false });
     await persistWorkspace({ immediate: true });
-    provider.quoteHydrated = false;
-    provider.quoteHydration = null;
+    provider.invalidateAll();
     await refreshStocks();
     renderWorkbench();
     renderWatchlist();

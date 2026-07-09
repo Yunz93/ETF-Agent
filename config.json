@@ -6,7 +6,7 @@
     "provider": "tencent",
     "provider_name": "腾讯行情",
     "note": "腾讯公开行情接口，东方财富自动兜底",
-    "batch_size": 25,
+    "batch_size": 80,
     "max_age_seconds": 1800
   },
   "sec": {
@@ -47,5 +47,9 @@
         "role": "10-K、10-Q、XBRL companyfacts 来源"
       }
     ]
+  },
+  "catalog": {
+    "cache_seconds": 21600,
+    "note": "按指数成分股动态加载：上证指数、深证综指、恒生指数、标普500"
   }
 }

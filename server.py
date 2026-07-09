@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import http.cookiejar
 import json
+import re
 import mimetypes
 import threading
 import time
@@ -34,8 +35,12 @@ DEFAULT_CONFIG = {
         "provider": "tencent",
         "provider_name": "腾讯行情",
         "note": "腾讯公开行情接口，东方财富自动兜底",
-        "batch_size": 25,
+        "batch_size": 80,
         "max_age_seconds": 1800,
+    },
+    "catalog": {
+        "cache_seconds": 21600,
+        "note": "按指数成分股动态加载：上证指数、深证综指、恒生指数、标普500",
     },
     "sec": {
         "enabled": True,
@@ -75,91 +80,44 @@ DEFAULT_CONFIG = {
 
 CONFIG = json.loads(json.dumps(DEFAULT_CONFIG))
 
-STOCKS = [
-    ("600519", "A", "600519.SS"),
-    ("300750", "A", "300750.SZ"),
-    ("601318", "A", "601318.SS"),
-    ("600036", "A", "600036.SS"),
-    ("000858", "A", "000858.SZ"),
-    ("002594", "A", "002594.SZ"),
-    ("600276", "A", "600276.SS"),
-    ("601899", "A", "601899.SS"),
-    ("000333", "A", "000333.SZ"),
-    ("601012", "A", "601012.SS"),
-    ("600900", "A", "600900.SS"),
-    ("600309", "A", "600309.SS"),
-    ("688111", "A", "688111.SS"),
-    ("300760", "A", "300760.SZ"),
-    ("601088", "A", "601088.SS"),
-    ("600887", "A", "600887.SS"),
-    ("002415", "A", "002415.SZ"),
-    ("000651", "A", "000651.SZ"),
-    ("601166", "A", "601166.SS"),
-    ("688981", "A", "688981.SS"),
-    ("0700", "HK", "0700.HK"),
-    ("9988", "HK", "9988.HK"),
-    ("3690", "HK", "3690.HK"),
-    ("1299", "HK", "1299.HK"),
-    ("0388", "HK", "0388.HK"),
-    ("0939", "HK", "0939.HK"),
-    ("1398", "HK", "1398.HK"),
-    ("2318", "HK", "2318.HK"),
-    ("1810", "HK", "1810.HK"),
-    ("1024", "HK", "1024.HK"),
-    ("9618", "HK", "9618.HK"),
-    ("9999", "HK", "9999.HK"),
-    ("1211", "HK", "1211.HK"),
-    ("0883", "HK", "0883.HK"),
-    ("0005", "HK", "0005.HK"),
-    ("2020", "HK", "2020.HK"),
-    ("2269", "HK", "2269.HK"),
-    ("9868", "HK", "9868.HK"),
-    ("2015", "HK", "2015.HK"),
-    ("1177", "HK", "1177.HK"),
-    ("AAPL", "US", "AAPL"),
-    ("MSFT", "US", "MSFT"),
-    ("NVDA", "US", "NVDA"),
-    ("AMZN", "US", "AMZN"),
-    ("GOOGL", "US", "GOOGL"),
-    ("META", "US", "META"),
-    ("TSLA", "US", "TSLA"),
-    ("BRK.B", "US", "BRK-B"),
-    ("JPM", "US", "JPM"),
-    ("V", "US", "V"),
-    ("LLY", "US", "LLY"),
-    ("UNH", "US", "UNH"),
-    ("XOM", "US", "XOM"),
-    ("COST", "US", "COST"),
-    ("HD", "US", "HD"),
-    ("NFLX", "US", "NFLX"),
-    ("AMD", "US", "AMD"),
-    ("KO", "US", "KO"),
-    ("PEP", "US", "PEP"),
-    ("ADBE", "US", "ADBE"),
-]
-
-SEC_CIK = {
-    "AAPL": "0000320193",
-    "MSFT": "0000789019",
-    "NVDA": "0001045810",
-    "AMZN": "0001018724",
-    "GOOGL": "0001652044",
-    "META": "0001326801",
-    "TSLA": "0001318605",
-    "BRK.B": "0001067983",
-    "JPM": "0000019617",
-    "V": "0001403161",
-    "LLY": "0000059478",
-    "UNH": "0000731766",
-    "XOM": "0000034088",
-    "COST": "0000909832",
-    "HD": "0000354950",
-    "NFLX": "0001065280",
-    "AMD": "0000002488",
-    "KO": "0000021344",
-    "PEP": "0000077476",
-    "ADBE": "0000796343",
+# Index universes: full constituents, refreshed periodically.
+INDEX_UNIVERSES = {
+    "A": [
+        {
+            "code": "000001",
+            "name": "上证指数",
+            "source": "csindex",
+            "csindex_code": "000001",
+        },
+        {
+            "code": "399106",
+            "name": "深证综指",
+            "source": "sina",
+            "sina_code": "399106",
+        },
+    ],
+    "HK": [
+        {
+            "code": "HSI",
+            "name": "恒生指数",
+            "source": "yfiua",
+            "yfiua_code": "hsi",
+        },
+    ],
+    "US": [
+        {
+            "code": "SPX",
+            "name": "标普500",
+            "source": "yfiua",
+            "yfiua_code": "sp500",
+        },
+    ],
 }
+
+CATALOG_CACHE = {"expires": 0, "payload": None, "by_key": {}, "stocks": []}
+CATALOG_DISK_CACHE = ROOT / ".catalog-cache.json"
+SEC_CIK_CACHE = {"expires": 0, "payload": {}}
+QUOTE_MARKET_CACHE = {}
 
 QUOTE_CACHE = {"expires": 0, "payload": None}
 HISTORY_CACHE = {}
@@ -199,11 +157,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
         if parsed.path == "/api/config":
             self.send_json(get_config())
             return
+        if parsed.path == "/api/catalog":
+            market = query.get("market", [""])[0].upper()
+            self.send_json(get_catalog(market or None))
+            return
         if parsed.path == "/api/quotes":
-            self.send_json(get_quotes())
+            market = query.get("market", [""])[0].upper()
+            self.send_json(get_quotes(market or None))
             return
         if parsed.path == "/api/health":
             self.send_json(get_data_health())
@@ -313,6 +277,8 @@ def normalize_config(payload):
         config["server"].update(payload["server"])
     if isinstance(payload.get("quotes"), dict):
         config["quotes"].update(payload["quotes"])
+    if isinstance(payload.get("catalog"), dict):
+        config["catalog"].update(payload["catalog"])
     if isinstance(payload.get("sec"), dict):
         config["sec"].update(payload["sec"])
     if isinstance(payload.get("sources"), dict):
@@ -336,6 +302,8 @@ def save_config(payload):
     CONFIG = normalize_config(payload)
     CONFIG_PATH.write_text(json.dumps(CONFIG, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     QUOTE_CACHE["expires"] = 0
+    QUOTE_MARKET_CACHE.clear()
+    CATALOG_CACHE["expires"] = 0
     return CONFIG
 
 
@@ -437,9 +405,10 @@ def sec_settings():
 def stock_tuple(symbol, market):
     symbol = normalize_symbol(symbol, market)
     market = market.upper()
-    for item in STOCKS:
-        if item[0] == symbol and item[1] == market:
-            return item
+    refresh_catalog()
+    entry = CATALOG_CACHE["by_key"].get((market, symbol))
+    if entry:
+        return (entry["symbol"], entry["market"], entry["yahoo_symbol"])
     yahoo = infer_yahoo_symbol(symbol, market)
     return (symbol, market, yahoo)
 
@@ -465,36 +434,530 @@ def infer_yahoo_symbol(symbol, market):
     return symbol.replace(".", "-")
 
 
-def get_quotes():
-    now = time.time()
-    cached = QUOTE_CACHE["payload"]
-    if cached and QUOTE_CACHE["expires"] > now and (cached.get("quotes") or not cached.get("error")):
-        return cached
+def catalog_settings():
+    return CONFIG.get("catalog", DEFAULT_CONFIG.get("catalog", {}))
 
+
+def http_get_bytes(url, headers=None, timeout=45):
+    request = urllib.request.Request(
+        url,
+        headers=headers
+        or {
+            "User-Agent": YAHOO_UA,
+            "Accept": "*/*",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def http_get_text(url, headers=None, timeout=45, encoding="utf-8"):
+    return http_get_bytes(url, headers=headers, timeout=timeout).decode(encoding, errors="replace")
+
+
+def http_get_json(url, headers=None, timeout=45):
+    return json.loads(http_get_text(url, headers=headers, timeout=timeout))
+
+
+def a_share_exchange(symbol):
+    if symbol.startswith(("5", "6", "9")):
+        return "SSE", f"{symbol}.SS"
+    return "SZSE", f"{symbol}.SZ"
+
+
+def normalize_industry(value):
+    text = str(value or "").strip()
+    if not text:
+        return "未分类"
+    # Strip leading industry code like "J66 "
+    parts = text.split(" ", 1)
+    if len(parts) == 2 and parts[0][:1].isalpha() and parts[0][1:].isdigit():
+        return parts[1]
+    return text
+
+
+def parse_csindex_xls(data):
     try:
-        by_tencent = fetch_tencent_quotes(STOCKS)
+        import xlrd
+    except ImportError as exc:
+        raise RuntimeError("解析中证成分股需要 xlrd，请先 pip install xlrd") from exc
+    book = xlrd.open_workbook(file_contents=data)
+    sheet = book.sheet_by_index(0)
+    records = []
+    for row_index in range(1, sheet.nrows):
+        code_raw = sheet.cell_value(row_index, 4)
+        if isinstance(code_raw, float):
+            code = str(int(code_raw)).zfill(6)
+        else:
+            code = "".join(ch for ch in str(code_raw) if ch.isdigit()).zfill(6)
+        if not code or code == "000000":
+            continue
+        name = str(sheet.cell_value(row_index, 5) or "").strip()
+        english = str(sheet.cell_value(row_index, 6) or "").strip()
+        exchange = str(sheet.cell_value(row_index, 7) or "").strip()
+        records.append(
+            {
+                "symbol": code,
+                "name": name or code,
+                "english_name": english or name or code,
+                "exchange_name": exchange,
+            }
+        )
+    return records
+
+
+def fetch_csindex_constituents(index_code):
+    url = (
+        "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/cons/"
+        f"{index_code}cons.xls"
+    )
+    data = http_get_bytes(
+        url,
+        headers={
+            "User-Agent": YAHOO_UA,
+            "Referer": "https://www.csindex.com.cn/",
+            "Accept": "*/*",
+        },
+        timeout=60,
+    )
+    return parse_csindex_xls(data)
+
+
+def fetch_yfiua_constituents(code):
+    url = f"https://yfiua.github.io/index-constituents/constituents-{code}.json"
+    rows = http_get_json(url, headers={"User-Agent": YAHOO_UA, "Accept": "application/json"})
+    result = []
+    for row in rows:
+        symbol = str(row.get("Symbol") or row.get("symbol") or "").strip()
+        name = str(row.get("Name") or row.get("name") or symbol).strip()
+        if not symbol:
+            continue
+        result.append({"symbol": symbol, "name": name, "english_name": name})
+    return result
+
+
+def fetch_sina_constituents(index_code):
+    result = []
+    seen = set()
+    page = 1
+    while page <= 200:
+        url = (
+            "https://vip.stock.finance.sina.com.cn/corp/view/vII_NewestComponent.php"
+            f"?page={page}&indexid={index_code}"
+        )
+        text = http_get_text(
+            url,
+            headers={
+                "User-Agent": YAHOO_UA,
+                "Referer": "https://vip.stock.finance.sina.com.cn/",
+                "Accept": "text/html,*/*",
+            },
+            timeout=45,
+            encoding="gb18030",
+        )
+        table = None
+        marker = 'id="NewStockTable"'
+        start = text.find(marker)
+        if start >= 0:
+            end = text.find("</table>", start)
+            if end >= 0:
+                table = text[start:end]
+        if not table:
+            break
+        pairs = []
+        for match in __import__("re").finditer(
+            r'<td><div align="center">(\d{6})</div></td>\s*'
+            r'<td><div align="center"><a[^>]*>([^<]+)</a></div></td>',
+            table,
+        ):
+            pairs.append((match.group(1), match.group(2).strip()))
+        for symbol, name in pairs:
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            result.append({"symbol": symbol, "name": name, "english_name": name})
+        pages = [int(value) for value in __import__("re").findall(rf"page=(\d+)&indexid={index_code}", text)]
+        max_page = max(pages) if pages else page
+        if page >= max_page:
+            break
+        page += 1
+        time.sleep(0.05)
+    return result
+
+
+def build_a_share_entry(row, index_meta, source_name):
+    symbol = str(row["symbol"]).zfill(6)
+    exchange, yahoo_symbol = a_share_exchange(symbol)
+    # Skip legacy B-shares for quote coverage quality.
+    if symbol.startswith("900") or symbol.startswith("200"):
+        return None
+    return {
+        "symbol": symbol,
+        "name": row.get("name") or symbol,
+        "englishName": row.get("english_name") or row.get("name") or symbol,
+        "market": "A",
+        "exchange": "SSE STAR" if symbol.startswith("688") else exchange,
+        "currency": "CNY",
+        "industry": normalize_industry(row.get("industry")),
+        "yahoo_symbol": yahoo_symbol,
+        "indices": [index_meta["name"]],
+        "index_codes": [index_meta["code"]],
+        "source": source_name,
+    }
+
+
+def build_hk_entry(row, index_meta, source_name):
+    raw = str(row["symbol"]).upper().replace(".HK", "")
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return None
+    symbol = digits.zfill(4)[-4:]
+    return {
+        "symbol": symbol,
+        "name": row.get("name") or symbol,
+        "englishName": row.get("english_name") or row.get("name") or symbol,
+        "market": "HK",
+        "exchange": "HKEX",
+        "currency": "HKD",
+        "industry": normalize_industry(row.get("industry")) if row.get("industry") else "恒生成分",
+        "yahoo_symbol": f"{symbol.zfill(4)}.HK",
+        "indices": [index_meta["name"]],
+        "index_codes": [index_meta["code"]],
+        "source": source_name,
+    }
+
+
+def build_us_entry(row, index_meta, source_name, cik_map):
+    symbol = str(row["symbol"]).upper().replace("-", ".")
+    if not symbol or symbol.endswith(".WS") or symbol.endswith(".U"):
+        return None
+    return {
+        "symbol": symbol,
+        "name": row.get("name") or symbol,
+        "englishName": row.get("english_name") or row.get("name") or symbol,
+        "market": "US",
+        "exchange": "US",
+        "currency": "USD",
+        "industry": "标普500",
+        "yahoo_symbol": symbol.replace(".", "-"),
+        "indices": [index_meta["name"]],
+        "index_codes": [index_meta["code"]],
+        "source": source_name,
+        "cik": cik_map.get(symbol) or cik_map.get(symbol.replace(".", "-")),
+    }
+
+
+def load_sec_cik_map(force=False):
+    now = time.time()
+    if not force and SEC_CIK_CACHE["payload"] and SEC_CIK_CACHE["expires"] > now:
+        return SEC_CIK_CACHE["payload"]
+    url = "https://www.sec.gov/files/company_tickers.json"
+    payload = http_get_json(
+        url,
+        headers={
+            "User-Agent": sec_settings().get(
+                "user_agent", "StockAgent/0.1 personal-local contact@example.com"
+            ),
+            "Accept": "application/json",
+        },
+        timeout=45,
+    )
+    mapping = {}
+    for item in payload.values():
+        ticker = str(item.get("ticker") or "").upper()
+        cik = str(item.get("cik_str") or "").zfill(10)
+        if ticker and cik:
+            mapping[ticker] = cik
+            mapping[ticker.replace("-", ".")] = cik
+            mapping[ticker.replace(".", "-")] = cik
+    SEC_CIK_CACHE["payload"] = mapping
+    SEC_CIK_CACHE["expires"] = now + 24 * 3600
+    return mapping
+
+
+def merge_catalog_entry(bucket, entry):
+    key = (entry["market"], entry["symbol"])
+    existing = bucket.get(key)
+    if not existing:
+        bucket[key] = entry
+        return
+    indices = list(dict.fromkeys(existing.get("indices", []) + entry.get("indices", [])))
+    index_codes = list(dict.fromkeys(existing.get("index_codes", []) + entry.get("index_codes", [])))
+    existing["indices"] = indices
+    existing["index_codes"] = index_codes
+    if existing.get("industry") in (None, "", "未分类") and entry.get("industry"):
+        existing["industry"] = entry["industry"]
+    if (not existing.get("englishName") or existing["englishName"] == existing["symbol"]) and entry.get(
+        "englishName"
+    ):
+        existing["englishName"] = entry["englishName"]
+    if entry.get("cik") and not existing.get("cik"):
+        existing["cik"] = entry["cik"]
+
+
+def load_market_constituents(market):
+    entries = {}
+    index_stats = []
+    errors = []
+    cik_map = load_sec_cik_map() if market == "US" else {}
+    for index_meta in INDEX_UNIVERSES.get(market, []):
+        source = index_meta["source"]
+        rows = []
+        source_name = ""
+        try:
+            if source == "csindex":
+                rows = fetch_csindex_constituents(index_meta["csindex_code"])
+                source_name = "中证指数公司"
+            elif source == "yfiua":
+                try:
+                    rows = fetch_yfiua_constituents(index_meta["yfiua_code"])
+                    source_name = "index-constituents"
+                except Exception as primary_error:
+                    if index_meta.get("sina_code"):
+                        rows = fetch_sina_constituents(index_meta["sina_code"])
+                        source_name = "新浪财经成分股"
+                    else:
+                        raise primary_error
+            elif source == "sina":
+                rows = fetch_sina_constituents(index_meta["sina_code"])
+                source_name = "新浪财经成分股"
+            else:
+                raise RuntimeError(f"未知成分股来源：{source}")
+        except Exception as exc:
+            errors.append(f"{index_meta['name']}: {exc}")
+            index_stats.append(
+                {
+                    "code": index_meta["code"],
+                    "name": index_meta["name"],
+                    "count": 0,
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        built = 0
+        for row in rows:
+            if market == "A":
+                entry = build_a_share_entry(row, index_meta, source_name)
+            elif market == "HK":
+                entry = build_hk_entry(row, index_meta, source_name)
+            else:
+                entry = build_us_entry(row, index_meta, source_name, cik_map)
+            if not entry:
+                continue
+            merge_catalog_entry(entries, entry)
+            built += 1
+        index_stats.append(
+            {
+                "code": index_meta["code"],
+                "name": index_meta["name"],
+                "count": built,
+                "source": source_name,
+            }
+        )
+    return list(entries.values()), index_stats, errors
+
+
+def _apply_catalog_payload(payload, expires):
+    by_key = {}
+    all_stocks = []
+    for market in ("A", "HK", "US"):
+        for stock in payload.get("markets", {}).get(market, {}).get("stocks", []):
+            all_stocks.append(stock)
+            by_key[(stock["market"], stock["symbol"])] = stock
+    CATALOG_CACHE["payload"] = payload
+    CATALOG_CACHE["by_key"] = by_key
+    CATALOG_CACHE["stocks"] = all_stocks
+    CATALOG_CACHE["expires"] = expires
+    return payload
+
+
+def load_catalog_disk_cache(cache_seconds):
+    if not CATALOG_DISK_CACHE.exists():
+        return None
+    try:
+        payload = json.loads(CATALOG_DISK_CACHE.read_text(encoding="utf-8"))
+        saved_at = payload.get("_saved_at")
+        if not saved_at or time.time() - float(saved_at) > cache_seconds:
+            return None
+        payload.pop("_saved_at", None)
+        return payload
+    except Exception:
+        return None
+
+
+def save_catalog_disk_cache(payload):
+    try:
+        data = json.loads(json.dumps(payload))
+        data["_saved_at"] = time.time()
+        CATALOG_DISK_CACHE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        print(f"catalog disk cache write failed: {exc}")
+
+
+def refresh_catalog(force=False):
+    now = time.time()
+    cache_seconds = int(catalog_settings().get("cache_seconds", 21600))
+    if not force and CATALOG_CACHE["payload"] and CATALOG_CACHE["expires"] > now:
+        return CATALOG_CACHE["payload"]
+
+    if not force:
+        disk_payload = load_catalog_disk_cache(cache_seconds)
+        if disk_payload and disk_payload.get("total"):
+            return _apply_catalog_payload(disk_payload, now + cache_seconds)
+
+    markets = {}
+    all_stocks = []
+    by_key = {}
+    for market in ("A", "HK", "US"):
+        stocks, index_stats, errors = load_market_constituents(market)
+        stocks.sort(key=lambda item: (item.get("symbol") or ""))
+        markets[market] = {
+            "count": len(stocks),
+            "indices": index_stats,
+            "errors": errors,
+            "stocks": stocks,
+        }
+        for stock in stocks:
+            all_stocks.append(stock)
+            by_key[(stock["market"], stock["symbol"])] = stock
+
+    payload = {
+        "markets": markets,
+        "total": len(all_stocks),
+        "updated_at": as_of(None),
+        "note": catalog_settings().get("note", ""),
+    }
+    _apply_catalog_payload(payload, now + cache_seconds)
+    save_catalog_disk_cache(payload)
+    return payload
+
+
+def get_catalog(market=None):
+    payload = refresh_catalog()
+    if not market:
+        return {
+            "total": payload["total"],
+            "updated_at": payload["updated_at"],
+            "note": payload["note"],
+            "markets": {
+                key: {
+                    "count": value["count"],
+                    "indices": value["indices"],
+                    "errors": value["errors"],
+                }
+                for key, value in payload["markets"].items()
+            },
+            "stocks": payload["markets"]["A"]["stocks"]
+            + payload["markets"]["HK"]["stocks"]
+            + payload["markets"]["US"]["stocks"],
+        }
+    market = market.upper()
+    if market not in payload["markets"]:
+        return {"market": market, "count": 0, "stocks": [], "error": "Unsupported market"}
+    section = payload["markets"][market]
+    return {
+        "market": market,
+        "count": section["count"],
+        "indices": section["indices"],
+        "errors": section["errors"],
+        "updated_at": payload["updated_at"],
+        "note": payload["note"],
+        "stocks": section["stocks"],
+    }
+
+
+def catalog_stock_tuples(market=None):
+    refresh_catalog()
+    stocks = CATALOG_CACHE["stocks"]
+    if market:
+        stocks = [row for row in stocks if row["market"] == market]
+    return [(row["symbol"], row["market"], row["yahoo_symbol"]) for row in stocks]
+
+
+def get_quotes(market=None):
+    market = market.upper() if market else None
+    if market and market not in {"A", "HK", "US"}:
+        return {"quotes": [], "error": "Unsupported market", "updated_at": as_of(None)}
+
+    now = time.time()
+    cache_key = market or "ALL"
+    cached = QUOTE_MARKET_CACHE.get(cache_key)
+    if cached and cached["expires"] > now and (cached["payload"].get("quotes") or not cached["payload"].get("error")):
+        return cached["payload"]
+
+    stocks = catalog_stock_tuples(market)
+    response = fetch_quotes_for_stocks(stocks, market)
+    ttl = 60 if response.get("quotes") and not response.get("error") else 10
+    QUOTE_MARKET_CACHE[cache_key] = {"expires": now + ttl, "payload": response}
+    QUOTE_CACHE["payload"] = response
+    QUOTE_CACHE["expires"] = now + ttl
+    return response
+
+
+def fetch_quotes_for_stocks(stocks, market=None):
+    if not stocks:
+        return {
+            "quotes": [],
+            "provider": quote_settings().get("provider_name", "腾讯行情"),
+            "source_url": "https://gu.qq.com/",
+            "updated_at": as_of(None),
+            "market": market,
+            "error": "成分股目录为空",
+        }
+    try:
+        by_tencent = fetch_tencent_quotes(stocks)
         quotes = []
-        for symbol, market, yahoo_symbol in STOCKS:
-            item = by_tencent.get((market, symbol))
+        for symbol, item_market, yahoo_symbol in stocks:
+            item = by_tencent.get((item_market, symbol))
             if not item:
                 continue
-            quotes.append(quote_from_tencent_item(symbol, market, yahoo_symbol, item))
+            quotes.append(quote_from_tencent_item(symbol, item_market, yahoo_symbol, item))
         response = {
             "quotes": quotes,
             "provider": quote_settings().get("provider_name", "腾讯行情"),
             "source_url": "https://gu.qq.com/",
             "updated_at": as_of(None),
+            "market": market,
+            "requested": len(stocks),
+            "returned": len(quotes),
         }
         if not quotes:
             raise RuntimeError("腾讯行情未返回任何有效行情")
-        QUOTE_CACHE["payload"] = response
-        QUOTE_CACHE["expires"] = now + 60
+        return response
     except Exception as exc:
-        response = get_eastmoney_fallback_quotes(exc)
-        QUOTE_CACHE["payload"] = response
-        QUOTE_CACHE["expires"] = now + 10
+        return get_eastmoney_fallback_quotes(exc, stocks, market)
 
-    return response
+
+def get_eastmoney_fallback_quotes(primary_error, stocks=None, market=None):
+    stocks = stocks or catalog_stock_tuples(market)
+    try:
+        by_eastmoney = fetch_eastmoney_quotes(stocks)
+        quotes = []
+        for symbol, item_market, yahoo_symbol in stocks:
+            item = by_eastmoney.get((item_market, symbol))
+            if item:
+                quote = quote_from_eastmoney_item(symbol, item_market, yahoo_symbol, item)
+                quote["note"] = f"腾讯行情不可用，东方财富兜底；主源错误：{primary_error}"
+                quotes.append(quote)
+        return {
+            "quotes": quotes,
+            "provider": "东方财富（兜底）",
+            "source_url": "https://quote.eastmoney.com/",
+            "warning": str(primary_error),
+            "updated_at": as_of(None),
+            "market": market,
+            "requested": len(stocks),
+            "returned": len(quotes),
+        }
+    except Exception as fallback_error:
+        return {
+            "quotes": [],
+            "provider": quote_settings().get("provider_name", "腾讯行情"),
+            "error": f"腾讯行情：{primary_error}；东方财富：{fallback_error}",
+            "updated_at": as_of(None),
+            "market": market,
+        }
 
 
 def get_single_quote(symbol, market):
@@ -669,32 +1132,6 @@ def fetch_eastmoney_history(symbol, market, yahoo_symbol, range_key="1y"):
     return points[-limit:]
 
 
-def get_eastmoney_fallback_quotes(primary_error):
-    try:
-        by_eastmoney = fetch_eastmoney_quotes(STOCKS)
-        quotes = []
-        for symbol, market, yahoo_symbol in STOCKS:
-            item = by_eastmoney.get((market, symbol))
-            if item:
-                quote = quote_from_eastmoney_item(symbol, market, yahoo_symbol, item)
-                quote["note"] = f"腾讯行情不可用，东方财富兜底；主源错误：{primary_error}"
-                quotes.append(quote)
-        return {
-            "quotes": quotes,
-            "provider": "东方财富（兜底）",
-            "source_url": "https://quote.eastmoney.com/",
-            "warning": str(primary_error),
-            "updated_at": as_of(None),
-        }
-    except Exception as fallback_error:
-        return {
-            "quotes": [],
-            "provider": quote_settings().get("provider_name", "腾讯行情"),
-            "error": f"腾讯行情：{primary_error}；东方财富：{fallback_error}",
-            "updated_at": as_of(None),
-        }
-
-
 def tencent_code(symbol, market, yahoo_symbol):
     if market == "A":
         return f"{'sh' if yahoo_symbol.endswith('.SS') else 'sz'}{symbol}"
@@ -705,8 +1142,9 @@ def tencent_code(symbol, market, yahoo_symbol):
 
 def fetch_tencent_quotes(stocks):
     result = {}
-    for index in range(0, len(stocks), 20):
-        batch = stocks[index : index + 20]
+    batch_size = int(quote_settings().get("batch_size", 80))
+    for index in range(0, len(stocks), batch_size):
+        batch = stocks[index : index + batch_size]
         codes = [tencent_code(symbol, market, yahoo) for symbol, market, yahoo in batch]
         url = "https://qt.gtimg.cn/q=" + ",".join(codes)
         request = urllib.request.Request(
@@ -717,13 +1155,15 @@ def fetch_tencent_quotes(stocks):
                 "Referer": "https://gu.qq.com/",
             },
         )
-        with urllib.request.urlopen(request, timeout=12) as response:
+        with urllib.request.urlopen(request, timeout=20) as response:
             text = response.read().decode("gb18030", errors="replace")
         parsed = parse_tencent_response(text)
         for symbol, market, yahoo in batch:
             item = parsed.get(tencent_code(symbol, market, yahoo).lower())
             if item:
                 result[(market, symbol)] = item
+        if index + batch_size < len(stocks):
+            time.sleep(0.05)
     return result
 
 
@@ -924,19 +1364,28 @@ def scaled_market_value(value, divisor):
 
 
 def get_data_health():
-    payload = get_quotes()
-    quotes = payload.get("quotes", [])
+    catalog = refresh_catalog()
     now = time.time()
     max_age = int(quote_settings().get("max_age_seconds", 1800))
     markets = {}
+    quote_provider = None
+    quote_error = None
     for market in ("A", "HK", "US"):
-        rows = [row for row in quotes if row.get("market") == market]
+        sample = catalog_stock_tuples(market)[:120]
+        payload = fetch_quotes_for_stocks(sample, market)
+        quote_provider = payload.get("provider") or quote_provider
+        if payload.get("error"):
+            quote_error = payload.get("error")
+        rows = payload.get("quotes", [])
         timestamps = [row.get("market_timestamp") for row in rows if row.get("market_timestamp")]
         newest = max(timestamps) if timestamps else None
         age = max(0, int(now - newest)) if newest else None
         freshness = market_freshness(market, newest, now=now, max_age=max_age)
         markets[market] = {
             "count": len(rows),
+            "catalog_count": catalog["markets"][market]["count"],
+            "sample_requested": len(sample),
+            "indices": catalog["markets"][market]["indices"],
             "latest_market_time": format_market_time(newest, market),
             "age_seconds": age,
             **freshness,
@@ -946,28 +1395,28 @@ def get_data_health():
         "HK": get_financials("0700", "HK"),
         "US": get_financials("AAPL", "US"),
     }
-    financial_health = {
+    financials = {
         market: {
-            "ok": financial_result_is_usable(result),
-            "rows": len(result.get("financials", [])),
+            "ok": bool(result.get("financials")),
+            "rows": len(result.get("financials") or []),
             "provider": result.get("provider"),
             "source_url": result.get("source_url"),
             "error": result.get("error"),
         }
         for market, result in financial_probes.items()
     }
-    healthy = all(item["count"] > 0 and item["fresh"] for item in markets.values()) and bool(
-        all(item["ok"] for item in financial_health.values())
-    )
+    healthy = all(
+        item["catalog_count"] > 0 and item["count"] > 0 and item["fresh"] for item in markets.values()
+    ) and bool(financials["A"]["ok"] and financials["HK"]["ok"] and financials["US"]["ok"])
     return {
         "status": "ok" if healthy else "degraded",
-        "quote_provider": payload.get("provider"),
-        "quote_error": payload.get("error"),
+        "quote_provider": quote_provider,
+        "quote_error": quote_error,
+        "catalog_total": catalog["total"],
         "markets": markets,
-        "financials": financial_health,
+        "financials": financials,
         "checked_at": as_of(None),
     }
-
 
 def financial_result_is_usable(result):
     rows = result.get("financials") or []
@@ -1171,14 +1620,14 @@ def yahoo_fetch_json(url, retry=True):
 def get_sec_financials(symbol):
     if not sec_settings().get("enabled", True):
         return {"symbol": symbol, "financials": [], "error": "SEC 数据源已在配置中关闭"}
-    if symbol not in SEC_CIK:
+    if symbol not in load_sec_cik_map():
         return {"symbol": symbol, "financials": [], "error": "No CIK mapping"}
     cached = SEC_CACHE.get(symbol)
     now = time.time()
     if cached and cached["expires"] > now:
         return cached["payload"]
 
-    url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{SEC_CIK[symbol]}.json"
+    url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{load_sec_cik_map()[symbol]}.json"
     try:
         facts = fetch_json(url)
         financials = parse_sec_financials(facts)
@@ -1222,8 +1671,9 @@ def get_financials(symbol, market):
 
 def get_eastmoney_financials(symbol, market):
     if market == "A":
-        stock = next((row for row in STOCKS if row[0] == symbol and row[1] == "A"), None)
-        suffix = "SH" if stock and stock[2].endswith(".SS") else "SZ"
+        refresh_catalog()
+        stock = CATALOG_CACHE["by_key"].get(("A", symbol))
+        suffix = "SH" if stock and str(stock.get("yahoo_symbol", "")).endswith(".SS") else "SZ"
         secucode = f"{symbol}.{suffix}"
         report_name = "RPT_F10_FINANCE_MAINFINADATA"
     else:
@@ -1326,14 +1776,14 @@ def parse_eastmoney_financials(data):
 def get_sec_filings(symbol):
     if not sec_settings().get("enabled", True):
         return {"symbol": symbol, "filings": [], "error": "SEC 数据源已在配置中关闭"}
-    if symbol not in SEC_CIK:
+    if symbol not in load_sec_cik_map():
         return {"symbol": symbol, "filings": [], "error": "No CIK mapping"}
     cached = FILINGS_CACHE.get(symbol)
     now = time.time()
     if cached and cached["expires"] > now:
         return cached["payload"]
 
-    cik = SEC_CIK[symbol]
+    cik = load_sec_cik_map()[symbol]
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     try:
         data = fetch_json(url)
