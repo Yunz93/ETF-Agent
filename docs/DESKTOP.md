@@ -100,7 +100,7 @@ Jobs:
 1. **Linux smoke** — `python -m desktop.smoke_test` + icon generation
 2. **macOS build** — `./packaging/build_mac.sh` on `macos-14`, uploads zip/dmg artifacts
 
-Tagged releases (`v0.1.0` etc.) also publish the artifacts to a GitHub Release.
+Tagged releases (`v0.0.1` etc.) also publish the artifacts to a GitHub Release.
 
 Download artifacts from the Actions run summary, or from the Release page for tags.
 
