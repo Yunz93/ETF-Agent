@@ -15,6 +15,7 @@ import urllib.request
 from pathlib import Path
 
 from desktop.paths import configure_env, data_dir, maybe_migrate_repo_workspace, repo_root
+from desktop.version import __version__ as APP_VERSION
 
 
 def _wait_for_health(url: str, timeout: float = 20.0) -> dict:
@@ -94,8 +95,8 @@ def run(width: int = 1280, height: int = 860, debug: bool = False) -> int:
     def on_about():
         window = window_holder["window"]
         detail = (
-            f"StockAgent Desktop\\n"
-            f"数据目录：{runtime.get('data_dir') or data_path}\\n"
+            f"StockAgent Desktop {APP_VERSION}\n"
+            f"数据目录：{runtime.get('data_dir') or data_path}\n"
             f"行情：{health.get('quote_provider') or '本地代理'}"
         )
         if window:

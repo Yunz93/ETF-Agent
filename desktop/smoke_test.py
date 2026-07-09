@@ -41,6 +41,7 @@ def main() -> int:
                     time.sleep(0.1)
             assert runtime, "runtime endpoint unavailable"
             assert runtime["mode"] == "desktop"
+            assert runtime.get("version"), "runtime version missing"
             assert Path(runtime["data_dir"]) == data.resolve()
             with urllib.request.urlopen(f"{base}/index.html", timeout=3) as response:
                 html = response.read().decode("utf-8", errors="replace")

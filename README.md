@@ -46,7 +46,15 @@ pip install -r requirements-desktop.txt
 python3 -m desktop
 ```
 
-数据目录：`~/Library/Application Support/StockAgent/`。打包与菜单说明见 [docs/DESKTOP.md](docs/DESKTOP.md)。
+数据目录：`~/Library/Application Support/StockAgent/`。
+
+打包：
+
+```bash
+./packaging/build_mac.sh
+```
+
+GitHub Actions 会在改动桌面相关文件或打 `v*` tag 时自动编译 `.app` / zip / dmg，详见 [docs/DESKTOP.md](docs/DESKTOP.md)。
 
 ## 数据源替换点
 

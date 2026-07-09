@@ -20,14 +20,14 @@ StockAgent.app
 
 ```bash
 pip install -r requirements-desktop.txt
-python3 -m desktop.bootstrap
+python3 -m desktop
 ```
 
 Optional:
 
 ```bash
-python3 -m desktop.bootstrap --debug
-python3 -m desktop.bootstrap --data-dir /tmp/stockagent-data
+python3 -m desktop --debug
+python3 -m desktop --data-dir /tmp/stockagent-data
 ```
 
 Headless smoke (no GUI; works on Linux CI):
@@ -55,9 +55,7 @@ export STOCKAGENT_RESOURCE_DIR=...
 export STOCKAGENT_DESKTOP=1
 ```
 
-## Packaging
-
-On a Mac with Python 3.10+:
+## Packaging (local Mac)
 
 ```bash
 chmod +x packaging/build_mac.sh
@@ -65,9 +63,46 @@ chmod +x packaging/build_mac.sh
 open dist/StockAgent.app
 ```
 
-Phase 1 ships **ad-hoc / unsigned** builds for local use. Gatekeeper may require right-click → Open.
+Outputs:
 
-Phase 2 (not in this PR): Developer ID signing + notarization + Sparkle/auto-update.
+- `dist/StockAgent.app`
+- `dist/artifacts/StockAgent-<version>+<build>-macos-<arch>.zip`
+- `dist/artifacts/StockAgent-<version>+<build>-macos-<arch>.dmg`
+- `dist/artifacts/build-info.json`
+
+Supporting files:
+
+| File | Role |
+|------|------|
+| `desktop/version.py` | App version / bundle id |
+| `packaging/stockagent.spec` | PyInstaller bundle definition |
+| `packaging/runtime_hook.py` | Sets desktop env inside frozen app |
+| `packaging/entitlements.plist` | Network + user-selected file access |
+| `packaging/generate_icons.py` | Builds iconset / `.icns` |
+| `packaging/build_mac.sh` | Install → icons → PyInstaller → sign → zip/dmg |
+
+Phase 1 ships **ad-hoc signed** builds. Gatekeeper may still require right-click → Open on other Macs.
+
+Phase 2 (later): Developer ID signing + Apple notarization + Sparkle/auto-update.
+
+## GitHub Actions
+
+Workflow: [`.github/workflows/build-macos.yml`](../.github/workflows/build-macos.yml)
+
+Triggers:
+
+- Push / PR touching desktop, packaging, server, UI, or requirements
+- Tags `v*`
+- Manual `workflow_dispatch`
+
+Jobs:
+
+1. **Linux smoke** — `python -m desktop.smoke_test` + icon generation
+2. **macOS build** — `./packaging/build_mac.sh` on `macos-14`, uploads zip/dmg artifacts
+
+Tagged releases (`v0.1.0` etc.) also publish the artifacts to a GitHub Release.
+
+Download artifacts from the Actions run summary, or from the Release page for tags.
 
 ## Menus
 
@@ -76,10 +111,11 @@ Phase 2 (not in this PR): Developer ID signing + notarization + Sparkle/auto-upd
 | 文件 → 刷新行情 | Reload the web UI |
 | 文件 → 导出/导入工作区 | Native save/open dialogs around `/api/workspace` |
 | 文件 → 打开数据目录 | Reveal Application Support folder |
-| 帮助 → 关于 | Runtime / data-dir summary |
+| 帮助 → 关于 | Version / data-dir summary |
 
 ## Security
 
 - HTTP server listens on loopback only
 - No LAN bind in desktop mode
 - Network egress is limited to existing quote / catalog / SEC providers
+- Entitlements request only client/server network + user-selected files

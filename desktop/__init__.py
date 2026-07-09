@@ -1,3 +1,5 @@
 """StockAgent desktop shell (pywebview + local server)."""
 
-__version__ = "0.1.0"
+from desktop.version import APP_NAME, BUNDLE_ID, __version__
+
+__all__ = ["APP_NAME", "BUNDLE_ID", "__version__"]

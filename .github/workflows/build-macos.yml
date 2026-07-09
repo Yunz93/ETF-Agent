@@ -1,0 +1,119 @@
+name: Build macOS Desktop
+
+on:
+  push:
+    branches: [main, "cursor/**"]
+    tags: ["v*"]
+    paths:
+      - "desktop/**"
+      - "packaging/**"
+      - "server.py"
+      - "index.html"
+      - "app.js"
+      - "styles.css"
+      - "config.json"
+      - "requirements*.txt"
+      - ".github/workflows/build-macos.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "packaging/**"
+      - "server.py"
+      - "index.html"
+      - "app.js"
+      - "styles.css"
+      - "config.json"
+      - "requirements*.txt"
+      - ".github/workflows/build-macos.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: build-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  smoke-linux:
+    name: Desktop smoke (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-desktop.txt
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-desktop.txt
+
+      - name: Headless desktop smoke
+        run: python -m desktop.smoke_test
+
+      - name: Generate icons (PNG iconset)
+        run: python packaging/generate_icons.py
+
+  build-macos:
+    name: Build StockAgent.app
+    needs: smoke-linux
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-desktop.txt
+
+      - name: Resolve version
+        id: meta
+        run: |
+          VERSION=$(python -c 'from desktop.version import __version__; print(__version__)')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "StockAgent $VERSION build ${{ github.run_number }}"
+
+      - name: Build app + artifacts
+        env:
+          STOCKAGENT_BUILD_NUMBER: ${{ github.run_number }}
+          SKIP_INSTALL: "0"
+          ADHOC_SIGN: "1"
+          MAKE_DMG: "1"
+          MAKE_ZIP: "1"
+        run: |
+          chmod +x packaging/build_mac.sh
+          ./packaging/build_mac.sh
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: StockAgent-macos-${{ steps.meta.outputs.version }}-${{ github.run_number }}
+          path: dist/artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

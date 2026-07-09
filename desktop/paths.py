@@ -6,8 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-
-APP_NAME = "StockAgent"
+from desktop.version import APP_NAME
 
 
 def repo_root() -> Path:

@@ -2091,8 +2091,16 @@ def ratio(numerator, denominator):
 
 
 def get_runtime_info():
+    version = "0.0.0"
+    try:
+        from desktop.version import __version__ as desktop_version
+
+        version = desktop_version
+    except Exception:
+        pass
     return {
         "app": "StockAgent",
+        "version": version,
         "mode": "desktop" if os.environ.get("STOCKAGENT_DESKTOP") == "1" else "server",
         "resource_root": str(RESOURCE_ROOT),
         "data_dir": str(DATA_DIR),
