@@ -1513,7 +1513,8 @@ load_config()
 
 if __name__ == "__main__":
     port = int(CONFIG.get("server", {}).get("port", 5174))
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    # Bind all interfaces so Cursor preview / port-forward can reach the server.
+    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     server.allow_reuse_address = True
-    print(f"StockAgent running at http://localhost:{port}")
+    print(f"StockAgent running at http://localhost:{port}", flush=True)
     server.serve_forever()
