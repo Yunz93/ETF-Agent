@@ -365,13 +365,13 @@
           <div class="settings-layout">
             <section class="settings-card">
               <div class="panel-heading settings-heading">
-                <h2 class="section-title">数据源配置</h2>
+                <h2 class="section-title">数据源与模型配置</h2>
                 <div class="settings-actions">
                   <button id="resetConfig" class="ghost-button" type="button">重新加载</button>
                   <button id="saveConfig" class="primary-button" type="button">保存配置</button>
                 </div>
               </div>
-              <p class="muted settings-note">修改后保存至项目根目录 config.json；行情缓存会自动刷新。需通过 python3 server.py 启动本地代理。</p>
+              <p class="muted settings-note">修改后保存至项目根目录 config.json。可在下方配置 DeepSeek 等主流模型 Token 服务；行情缓存会自动刷新。需通过 python3 server.py 启动本地代理。</p>
               <div id="settingsForm" class="settings-form"></div>
               <p id="settingsStatus" class="settings-status muted" role="status"></p>
             </section>
@@ -529,6 +529,33 @@
             <button class="primary-button compact js-save-note" type="button">保存判断卡</button>
             <span class="muted js-note-status"></span>
           </div>
+        </section>
+
+        <section id="detail-ai" class="ai-section">
+          <div class="panel-heading">
+            <div>
+              <h3 class="section-title">AI 深度分析</h3>
+              <p class="muted ai-lede">调用外部大模型（DeepSeek / OpenAI 兼容）结合历史走势、估值与财报，输出可回看的研究建议。</p>
+            </div>
+            <div class="ai-controls">
+              <select class="js-ai-range" aria-label="分析历史区间">
+                <option value="3m">近 3 月</option>
+                <option value="6m">近 6 月</option>
+                <option value="1y" selected>近 1 年</option>
+                <option value="5y">近 5 年</option>
+              </select>
+              <button class="primary-button compact js-ai-analyze" type="button">开始分析</button>
+            </div>
+          </div>
+          <label class="ai-focus-label">
+            <span>额外关注点（可选）</span>
+            <textarea class="js-ai-focus" rows="2" placeholder="例如：关注分红与分红、是否适合分批建仓、和同业估值对比…"></textarea>
+          </label>
+          <div class="inline-actions ai-status-row">
+            <span class="muted js-ai-status">在设置中配置 API Key 后即可使用。</span>
+            <button class="ghost-button compact js-ai-to-thesis" type="button" hidden>写入判断卡论点</button>
+          </div>
+          <article class="ai-result js-ai-result" hidden></article>
         </section>
 
 

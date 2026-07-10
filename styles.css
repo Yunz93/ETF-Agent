@@ -1201,13 +1201,86 @@ td {
 
 .config-group input[type="text"],
 .config-group input[type="url"],
-.config-group input[type="number"] {
+.config-group input[type="number"],
+.config-group input[type="password"],
+.config-group select {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
+  font: inherit;
+}
+
+.ai-console-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ai-console-heading h3 {
+  margin: 0 0 6px;
+}
+
+.ai-console-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ai-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ai-provider-chip {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+  cursor: pointer;
+  font: inherit;
+}
+
+.ai-provider-chip strong {
+  font-size: 0.9rem;
+}
+
+.ai-provider-chip span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.ai-provider-chip.active {
+  box-shadow: 0 0 0 2px var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.ai-provider-chip:hover {
+  box-shadow: 0 0 0 1px var(--accent-strong);
+}
+
+.ai-endpoint-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.js-ai-test-status:not(:empty) {
+  margin-top: 8px;
 }
 
 .source-editor + .source-editor {
@@ -1507,7 +1580,8 @@ canvas {
 }
 
 .price-section,
-.notes-section {
+.notes-section,
+.ai-section {
   display: grid;
   gap: 10px;
   padding: 14px;
@@ -1516,10 +1590,103 @@ canvas {
   box-shadow: 0 0 0 1px var(--line);
 }
 
-.judgment-lede {
+.judgment-lede,
+.ai-lede {
   margin: -2px 0 2px;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.ai-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ai-controls select {
+  min-height: 36px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+  padding: 0 10px;
+  font: inherit;
+}
+
+.ai-focus-label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ai-focus-label textarea,
+.ai-section textarea {
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+  padding: 10px 12px;
+  font: inherit;
+  resize: vertical;
+}
+
+.ai-status-row {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ai-result {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.ai-result h3,
+.ai-result h4,
+.ai-result h5 {
+  margin: 4px 0 0;
+}
+
+.ai-result p,
+.ai-result li {
+  color: var(--ink);
+}
+
+.ai-result ul,
+.ai-result ol {
+  margin: 0;
+  padding-left: 1.2em;
+  display: grid;
+  gap: 4px;
+}
+
+.ai-result code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.ai-error {
+  color: var(--danger);
+  margin: 0;
+}
+
+.settings-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .judgment-grid {
@@ -1943,6 +2110,16 @@ button:active {
   .judgment-grid,
   .add-symbol-strip {
     grid-template-columns: 1fr;
+  }
+
+  .ai-console-heading,
+  .ai-console-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ai-provider-grid {
+    grid-template-columns: 1fr 1fr;
   }
 
   .workbench-metrics {
