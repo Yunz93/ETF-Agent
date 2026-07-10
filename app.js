@@ -527,6 +527,8 @@ const state = {
   market: "A",
   index: RESEARCH_INDICES[0].code,
   priceRange: "1y",
+  aiRange: "1y",
+  aiReports: {},
   watchGroupFilter: "all",
   watchAlertFilter: "all",
   workspaceSync: {
@@ -649,6 +651,19 @@ async function loadAppConfig({ rerender = true } = {}) {
         batch_size: 80,
       },
       sec: { enabled: true, user_agent: "StockAgent/0.1 personal-local contact@example.com" },
+      ai: {
+        enabled: true,
+        provider: "deepseek",
+        provider_name: "DeepSeek",
+        base_url: "https://api.deepseek.com",
+        model: "deepseek-chat",
+        api_key: "",
+        has_api_key: false,
+        temperature: 0.3,
+        max_tokens: 2800,
+        timeout_seconds: 90,
+        note: "支持 DeepSeek / OpenAI 兼容接口；API Key 仅保存在本地 config.json",
+      },
       sources: structuredClone(DEFAULT_SOURCES),
     };
   }
@@ -682,6 +697,8 @@ function renderSettings() {
     { key: "US", label: "美股财报" },
   ];
 
+  const ai = appConfig.ai || {};
+  const aiProvider = ai.provider || "deepseek";
   els.settingsForm.innerHTML = `
     <section class="config-group">
       <h3>行情接口</h3>
@@ -710,6 +727,48 @@ function renderSettings() {
         <label class="config-wide">
           <span>User-Agent</span>
           <input data-config="sec.user_agent" type="text" value="${escapeAttr(appConfig.sec?.user_agent || "")}" />
+        </label>
+      </div>
+    </section>
+    <section class="config-group">
+      <h3>AI 深度分析</h3>
+      <p class="muted settings-hint">股票详情页可调用外部大模型分析历史走势并给出研究建议。API Key 只保存在本地 config.json，不会回传到页面明文。</p>
+      <div class="config-grid">
+        <label class="config-check">
+          <input data-config="ai.enabled" type="checkbox" ${ai.enabled !== false ? "checked" : ""} />
+          <span>启用 AI 分析</span>
+        </label>
+        <label>
+          <span>提供方</span>
+          <select data-config="ai.provider" class="js-ai-provider">
+            <option value="deepseek" ${aiProvider === "deepseek" ? "selected" : ""}>DeepSeek</option>
+            <option value="openai" ${aiProvider === "openai" ? "selected" : ""}>OpenAI</option>
+            <option value="custom" ${aiProvider === "custom" ? "selected" : ""}>自定义 OpenAI 兼容</option>
+          </select>
+        </label>
+        <label>
+          <span>显示名称</span>
+          <input data-config="ai.provider_name" type="text" value="${escapeAttr(ai.provider_name || "")}" />
+        </label>
+        <label class="config-wide">
+          <span>Base URL</span>
+          <input data-config="ai.base_url" type="url" value="${escapeAttr(ai.base_url || "")}" placeholder="https://api.deepseek.com" />
+        </label>
+        <label>
+          <span>模型</span>
+          <input data-config="ai.model" type="text" value="${escapeAttr(ai.model || "")}" placeholder="deepseek-chat" />
+        </label>
+        <label>
+          <span>API Key ${ai.has_api_key ? "（已配置）" : ""}</span>
+          <input data-config="ai.api_key" type="password" value="${escapeAttr(ai.api_key || "")}" placeholder="${ai.has_api_key ? "留空则保持已保存密钥" : "sk-..."}" autocomplete="off" />
+        </label>
+        <label>
+          <span>温度</span>
+          <input data-config="ai.temperature" type="number" min="0" max="2" step="0.1" value="${escapeAttr(ai.temperature ?? 0.3)}" />
+        </label>
+        <label>
+          <span>最大 tokens</span>
+          <input data-config="ai.max_tokens" type="number" min="256" max="8192" step="1" value="${escapeAttr(ai.max_tokens ?? 2800)}" />
         </label>
       </div>
     </section>
@@ -743,6 +802,22 @@ function renderSettings() {
       )
       .join("")}
   `;
+
+  const providerSelect = els.settingsForm.querySelector(".js-ai-provider");
+  const baseUrlInput = els.settingsForm.querySelector('[data-config="ai.base_url"]');
+  const modelInput = els.settingsForm.querySelector('[data-config="ai.model"]');
+  const nameInput = els.settingsForm.querySelector('[data-config="ai.provider_name"]');
+  const presets = {
+    deepseek: { provider_name: "DeepSeek", base_url: "https://api.deepseek.com", model: "deepseek-chat" },
+    openai: { provider_name: "OpenAI", base_url: "https://api.openai.com", model: "gpt-4o-mini" },
+  };
+  providerSelect?.addEventListener("change", () => {
+    const preset = presets[providerSelect.value];
+    if (!preset) return;
+    if (nameInput) nameInput.value = preset.provider_name;
+    if (baseUrlInput) baseUrlInput.value = preset.base_url;
+    if (modelInput) modelInput.value = preset.model;
+  });
 }
 
 function readSettingsForm() {
@@ -1419,6 +1494,12 @@ function paintDetail(stock) {
     noteStatus.textContent = "已保存";
     pushDecisionLog(stock, decision.value);
     renderWorkbench();
+  });
+
+  bindAiAnalysisSection(root, stock, {
+    thesis,
+    noteStatus,
+    watchKey,
   });
 
   const watchButton = root.querySelector(".js-watch");
@@ -2763,6 +2844,18 @@ function exportSelectedMarkdown() {
   if (holding) {
     lines.push("", "## 持仓", `- 数量：${holding.shares}`, `- 成本：${money(holding.cost, stock.currency)}`);
   }
+  const aiReport = state.aiReports[stockKey(stock)];
+  if (aiReport?.content) {
+    lines.push(
+      "",
+      "## AI 深度分析",
+      `- 模型：${aiReport.provider_name || aiReport.provider || "—"} / ${aiReport.model || "—"}`,
+      `- 历史区间：${aiReport.history_range || "—"}`,
+      `- 生成时间：${aiReport.generated_at ? new Date(aiReport.generated_at).toLocaleString("zh-CN") : "—"}`,
+      "",
+      aiReport.content,
+    );
+  }
   lines.push("", "> 仅供研究参考，不构成投资建议。");
   const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -2771,6 +2864,232 @@ function exportSelectedMarkdown() {
   anchor.download = `${stock.market}-${stock.symbol}.md`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function bindAiAnalysisSection(root, stock, { thesis, noteStatus, watchKey }) {
+  const section = root.querySelector("#detail-ai");
+  if (!section) return;
+  const rangeSelect = root.querySelector(".js-ai-range");
+  const focusInput = root.querySelector(".js-ai-focus");
+  const analyzeButton = root.querySelector(".js-ai-analyze");
+  const statusEl = root.querySelector(".js-ai-status");
+  const resultEl = root.querySelector(".js-ai-result");
+  const toThesisButton = root.querySelector(".js-ai-to-thesis");
+  const cached = state.aiReports[watchKey];
+
+  if (rangeSelect) {
+    rangeSelect.value = state.aiRange || "1y";
+    rangeSelect.addEventListener("change", () => {
+      state.aiRange = rangeSelect.value;
+    });
+  }
+  if (cached?.focus && focusInput) focusInput.value = cached.focus;
+  renderAiReport(resultEl, statusEl, toThesisButton, cached);
+
+  const ai = appConfig?.ai || {};
+  if (ai.enabled === false) {
+    if (statusEl) statusEl.textContent = "AI 分析已在设置中关闭。";
+    if (analyzeButton) analyzeButton.disabled = true;
+  } else if (!ai.has_api_key) {
+    if (statusEl) statusEl.textContent = "请先到设置页配置 DeepSeek / OpenAI 兼容 API Key。";
+  } else if (statusEl && !cached) {
+    statusEl.textContent = `将使用 ${ai.provider_name || ai.provider || "外部模型"} · ${ai.model || ""}`.trim();
+  }
+
+  analyzeButton?.addEventListener("click", async () => {
+    if (!analyzeButton || analyzeButton.disabled) return;
+    analyzeButton.disabled = true;
+    if (statusEl) statusEl.textContent = "正在汇总行情、历史走势与财报，请求大模型…";
+    if (resultEl) {
+      resultEl.hidden = false;
+      resultEl.innerHTML = `<p class="muted">分析中，通常需要数秒到数十秒…</p>`;
+    }
+    if (toThesisButton) toThesisButton.hidden = true;
+    try {
+      const report = await requestAiAnalysis(stock, {
+        historyRange: rangeSelect?.value || state.aiRange || "1y",
+        focus: focusInput?.value.trim() || "",
+      });
+      state.aiReports[watchKey] = report;
+      renderAiReport(resultEl, statusEl, toThesisButton, report);
+    } catch (error) {
+      if (resultEl) {
+        resultEl.hidden = false;
+        resultEl.innerHTML = `<p class="ai-error">${escapeHtml(error.message || "分析失败")}</p>`;
+      }
+      if (statusEl) statusEl.textContent = "分析失败";
+    } finally {
+      analyzeButton.disabled = false;
+    }
+  });
+
+  toThesisButton?.addEventListener("click", () => {
+    const report = state.aiReports[watchKey];
+    if (!report?.content || !thesis) return;
+    const snippet = extractAiThesisSnippet(report.content);
+    thesis.value = thesis.value.trim() ? `${thesis.value.trim()}\n\n${snippet}` : snippet;
+    if (noteStatus) noteStatus.textContent = "已填入论点，记得保存判断卡";
+  });
+}
+
+async function requestAiAnalysis(stock, { historyRange = "1y", focus = "" } = {}) {
+  const key = stockKey(stock);
+  const payload = {
+    history_range: historyRange,
+    focus,
+    note: state.notes[key] || {},
+    holding: state.holdings[key] || null,
+    stock: {
+      symbol: stock.symbol,
+      name: stock.name,
+      englishName: stock.englishName,
+      market: stock.market,
+      exchange: stock.exchange,
+      currency: stock.currency,
+      industry: stock.industry,
+      quote: stock.quote,
+      valuation: stock.valuation,
+      analysis: stock.analysis,
+      financials: stock.financials || [],
+      events: stock.events || null,
+    },
+  };
+  const response = await fetch("/api/ai/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const err = new Error(data.error || `AI 分析失败 ${response.status}`);
+    err.code = data.code;
+    throw err;
+  }
+  return {
+    ...data,
+    focus,
+    content: data.content || "",
+  };
+}
+
+function renderAiReport(resultEl, statusEl, toThesisButton, report) {
+  if (!resultEl) return;
+  if (!report?.content) {
+    resultEl.hidden = true;
+    resultEl.innerHTML = "";
+    if (toThesisButton) toThesisButton.hidden = true;
+    return;
+  }
+  resultEl.hidden = false;
+  resultEl.innerHTML = renderMarkdownLite(report.content);
+  if (toThesisButton) toThesisButton.hidden = false;
+  if (statusEl) {
+    const when = report.generated_at ? new Date(report.generated_at).toLocaleString("zh-CN") : "";
+    statusEl.textContent = [
+      report.provider_name || report.provider,
+      report.model,
+      report.history_range ? `历史 ${report.history_range}` : "",
+      when,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+}
+
+function extractAiThesisSnippet(content) {
+  const text = String(content || "").trim();
+  if (!text) return "";
+  const sections = text.split(/\n(?=##\s+)/);
+  const preferred = sections.find((block) => /操作建议|投资建议|结论|综合判断/.test(block)) || sections[0] || text;
+  const cleaned = preferred
+    .replace(/^#+\s*/gm, "")
+    .replace(/\*\*/g, "")
+    .trim();
+  return cleaned.length > 600 ? `${cleaned.slice(0, 600)}…` : cleaned;
+}
+
+function renderMarkdownLite(markdown) {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  let inUl = false;
+  let inOl = false;
+  let paragraph = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const text = paragraph.join(" ").trim();
+    if (text) html.push(`<p>${formatInlineMarkdown(text)}</p>`);
+    paragraph = [];
+  };
+  const closeLists = () => {
+    if (inUl) {
+      html.push("</ul>");
+      inUl = false;
+    }
+    if (inOl) {
+      html.push("</ol>");
+      inOl = false;
+    }
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      closeLists();
+      continue;
+    }
+    const heading = trimmed.match(/^(#{1,4})\s+(.*)$/);
+    if (heading) {
+      flushParagraph();
+      closeLists();
+      const level = Math.min(heading[1].length + 2, 5);
+      html.push(`<h${level}>${formatInlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+    const ul = trimmed.match(/^[-*]\s+(.*)$/);
+    if (ul) {
+      flushParagraph();
+      if (inOl) {
+        html.push("</ol>");
+        inOl = false;
+      }
+      if (!inUl) {
+        html.push("<ul>");
+        inUl = true;
+      }
+      html.push(`<li>${formatInlineMarkdown(ul[1])}</li>`);
+      continue;
+    }
+    const ol = trimmed.match(/^\d+\.\s+(.*)$/);
+    if (ol) {
+      flushParagraph();
+      if (inUl) {
+        html.push("</ul>");
+        inUl = false;
+      }
+      if (!inOl) {
+        html.push("<ol>");
+        inOl = true;
+      }
+      html.push(`<li>${formatInlineMarkdown(ol[1])}</li>`);
+      continue;
+    }
+    closeLists();
+    paragraph.push(trimmed);
+  }
+  flushParagraph();
+  closeLists();
+  return html.join("") || `<p class="muted">（空）</p>`;
+}
+
+function formatInlineMarkdown(text) {
+  let value = escapeHtml(text);
+  value = value.replace(/`([^`]+)`/g, "<code>$1</code>");
+  value = value.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  value = value.replace(/(^|[^\*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
+  return value;
 }
 
 function buildCatalogStockFromApi(entry, index) {

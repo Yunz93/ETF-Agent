@@ -531,6 +531,33 @@
           </div>
         </section>
 
+        <section id="detail-ai" class="ai-section">
+          <div class="panel-heading">
+            <div>
+              <h3 class="section-title">AI 深度分析</h3>
+              <p class="muted ai-lede">调用外部大模型（DeepSeek / OpenAI 兼容）结合历史走势、估值与财报，输出可回看的研究建议。</p>
+            </div>
+            <div class="ai-controls">
+              <select class="js-ai-range" aria-label="分析历史区间">
+                <option value="3m">近 3 月</option>
+                <option value="6m">近 6 月</option>
+                <option value="1y" selected>近 1 年</option>
+                <option value="5y">近 5 年</option>
+              </select>
+              <button class="primary-button compact js-ai-analyze" type="button">开始分析</button>
+            </div>
+          </div>
+          <label class="ai-focus-label">
+            <span>额外关注点（可选）</span>
+            <textarea class="js-ai-focus" rows="2" placeholder="例如：关注分红与分红、是否适合分批建仓、和同业估值对比…"></textarea>
+          </label>
+          <div class="inline-actions ai-status-row">
+            <span class="muted js-ai-status">在设置中配置 API Key 后即可使用。</span>
+            <button class="ghost-button compact js-ai-to-thesis" type="button" hidden>写入判断卡论点</button>
+          </div>
+          <article class="ai-result js-ai-result" hidden></article>
+        </section>
+
 
         <details id="detail-more" class="detail-more">
           <summary class="detail-more-summary">更多分析 · 估值 / 财报 / 事件 / 来源</summary>
