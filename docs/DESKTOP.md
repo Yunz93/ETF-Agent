@@ -4,7 +4,7 @@ Local-first desktop shell around the existing Python API + static UI.
 
 ## Architecture
 
-- **UI**: existing `index.html` / `app.js` / `styles.css`
+- **UI**: existing `index.html` / `js/main.js` ES modules / `styles.css`
 - **Backend**: `server.py` bound to `127.0.0.1` on an ephemeral port
 - **Shell**: [pywebview](https://pywebview.flowrl.com/) (WKWebView on macOS)
 - **Data**: `~/Library/Application Support/StockAgent/`
