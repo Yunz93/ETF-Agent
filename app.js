@@ -662,7 +662,7 @@ async function loadAppConfig({ rerender = true } = {}) {
         temperature: 0.3,
         max_tokens: 2800,
         timeout_seconds: 90,
-        note: "支持 DeepSeek / OpenAI 兼容接口；API Key 仅保存在本地 config.json",
+        note: "支持 DeepSeek / OpenAI / Moonshot / 通义 / 智谱 / SiliconFlow / OpenRouter / Groq / Ollama 等 Token 服务；API Key 仅保存在本地 config.json",
       },
       sources: structuredClone(DEFAULT_SOURCES),
     };
