@@ -79,7 +79,7 @@ DEFAULT_CONFIG = {
     "quotes": {
         "provider": "tencent",
         "provider_name": "腾讯行情",
-        "note": "腾讯公开行情接口，东方财富自动兜底",
+        "note": "腾讯公开行情（按市场映射 PE/PB/市值）；缺失补齐与整批失败时东方财富兜底",
         "batch_size": 80,
         "max_age_seconds": 1800,
     },
@@ -626,7 +626,10 @@ def fetch_eastmoney_industry_map(stocks):
             continue
         symbol = stock.get("symbol")
         yahoo = stock.get("yahoo_symbol") or symbol
-        secids.append(eastmoney_secid(symbol, market, yahoo))
+        secid = eastmoney_secid(symbol, market, yahoo)
+        if not secid:
+            continue
+        secids.append(secid)
         meta.append((market, symbol))
     if not secids:
         return mapping
@@ -1246,11 +1249,27 @@ def fetch_quotes_for_stocks(stocks, market=None):
     try:
         by_tencent = fetch_tencent_quotes(stocks)
         quotes = []
+        missing = []
         for symbol, item_market, yahoo_symbol in stocks:
             item = by_tencent.get((item_market, symbol))
             if not item:
+                missing.append((symbol, item_market, yahoo_symbol))
                 continue
             quotes.append(quote_from_tencent_item(symbol, item_market, yahoo_symbol, item))
+        filled = 0
+        if missing:
+            try:
+                by_eastmoney = fetch_eastmoney_quotes(missing)
+                for symbol, item_market, yahoo_symbol in missing:
+                    item = by_eastmoney.get((item_market, symbol))
+                    if not item:
+                        continue
+                    quote = quote_from_eastmoney_item(symbol, item_market, yahoo_symbol, item)
+                    quote["note"] = "腾讯未返回该标的，东方财富补齐"
+                    quotes.append(quote)
+                    filled += 1
+            except Exception:
+                pass
         response = {
             "quotes": quotes,
             "provider": quote_settings().get("provider_name", "腾讯行情"),
@@ -1260,6 +1279,9 @@ def fetch_quotes_for_stocks(stocks, market=None):
             "requested": len(stocks),
             "returned": len(quotes),
         }
+        if filled:
+            response["provider"] = "腾讯行情 + 东方财富补齐"
+            response["fallback_filled"] = filled
         if not quotes:
             raise RuntimeError("腾讯行情未返回任何有效行情")
         return response
@@ -1519,9 +1541,54 @@ def parse_tencent_response(text):
     return parsed
 
 
+def tencent_numeric(fields, *indexes):
+    """Return the first parseable numeric field; skip blanks and non-numeric labels."""
+    for index in indexes:
+        value = clean_market_value(field_at(fields, index))
+        if value is not None:
+            return value
+    return None
+
+
+def tencent_valuation_fields(market, fields):
+    """
+    Tencent qt.gtimg.cn field layout differs by market after the shared price block.
+
+    Shared: [3]=price, [32]=change%, [36]/[6]=volume, [39]=PE, [44]/[45]=mkt cap (亿元)
+    A:      [46]=PB, [67]/[68]≈52w high/low
+    HK:     [46]=ticker text, [57]=PE(alt), [58]=PB, [48]/[49]=52w high/low
+    US:     [46]=company name, [51]=PB, [48]/[49]=52w high/low
+    """
+    market_cap_yi = tencent_numeric(fields, 45, 44)
+    market_cap = market_cap_yi * 100_000_000 if market_cap_yi is not None else None
+    if market == "A":
+        return {
+            "market_cap": market_cap,
+            "pe": tencent_numeric(fields, 39),
+            "pb": tencent_numeric(fields, 46),
+            "week_52_high": tencent_numeric(fields, 67),
+            "week_52_low": tencent_numeric(fields, 68),
+        }
+    if market == "HK":
+        return {
+            "market_cap": market_cap,
+            "pe": tencent_numeric(fields, 57, 39),
+            "pb": tencent_numeric(fields, 58),
+            "week_52_high": tencent_numeric(fields, 48),
+            "week_52_low": tencent_numeric(fields, 49),
+        }
+    return {
+        "market_cap": market_cap,
+        "pe": tencent_numeric(fields, 39),
+        "pb": tencent_numeric(fields, 51),
+        "week_52_high": tencent_numeric(fields, 48),
+        "week_52_low": tencent_numeric(fields, 49),
+    }
+
+
 def quote_from_tencent_item(symbol, market, yahoo_symbol, fields):
     market_time = parse_market_timestamp(field_at(fields, 30), market)
-    market_cap = clean_market_value(field_at(fields, 45))
+    valuation = tencent_valuation_fields(market, fields)
     return {
         "symbol": symbol,
         "market": market,
@@ -1529,13 +1596,13 @@ def quote_from_tencent_item(symbol, market, yahoo_symbol, fields):
         "price": clean_market_value(field_at(fields, 3)),
         "change_pct": clean_market_value(field_at(fields, 32)),
         "volume": clean_market_value(field_at(fields, 36) or field_at(fields, 6)),
-        "market_cap": market_cap * 100_000_000 if market_cap is not None else None,
-        "pe": clean_market_value(field_at(fields, 39) or field_at(fields, 45)),
-        "pb": clean_market_value(field_at(fields, 46)),
+        "market_cap": valuation["market_cap"],
+        "pe": valuation["pe"],
+        "pb": valuation["pb"],
         "ps": None,
         "dividend_yield": None,
-        "week_52_low": None,
-        "week_52_high": None,
+        "week_52_low": valuation["week_52_low"],
+        "week_52_high": valuation["week_52_high"],
         "earnings_date": None,
         "ex_dividend_date": None,
         "as_of": format_market_time(market_time, market),
@@ -1584,31 +1651,54 @@ def format_market_time(timestamp, market):
     return f"{value:%Y-%m-%d %H:%M} {labels.get(market, '')}".strip()
 
 
+def market_session_windows(market):
+    """Regular continuous trading windows in the exchange local timezone."""
+    if market == "A":
+        # Ignore lunch break 11:30–13:00 so mid-day quotes are not marked stale.
+        return ((datetime_time(9, 30), datetime_time(11, 30)), (datetime_time(13, 0), datetime_time(15, 0)))
+    if market == "HK":
+        return ((datetime_time(9, 30), datetime_time(12, 0)), (datetime_time(13, 0), datetime_time(16, 0)))
+    return ((datetime_time(9, 30), datetime_time(16, 0)),)
+
+
+def in_market_session(market, local_now):
+    if local_now.weekday() >= 5:
+        return False
+    clock = local_now.time()
+    return any(start <= clock <= end for start, end in market_session_windows(market))
+
+
 def market_freshness(market, timestamp, now=None, max_age=1800):
     if not timestamp:
-        return {"fresh": False, "status": "missing", "delay_seconds": None}
+        return {"fresh": False, "status": "missing", "delay_seconds": None, "in_session": False}
     now = now or time.time()
     age = max(0, int(now - timestamp))
     local_now = datetime.fromtimestamp(now, market_timezone(market))
-    sessions = {
-        "A": (datetime_time(9, 30), datetime_time(15, 0)),
-        "HK": (datetime_time(9, 30), datetime_time(16, 0)),
-        "US": (datetime_time(9, 30), datetime_time(16, 0)),
-    }
-    start, end = sessions[market]
-    in_session = local_now.weekday() < 5 and start <= local_now.time() <= end
+    in_session = in_market_session(market, local_now)
+    # Free quote feeds are delayed (especially HK/US). Treat ≤15m as live in-session;
+    # configured max_age still gates overall freshness policy elsewhere.
+    live_max_age = min(int(max_age), 900)
     if in_session:
         return {
-            "fresh": age <= max_age,
-            "status": "live" if age <= max_age else "stale",
+            "fresh": age <= live_max_age,
+            "status": "live" if age <= live_max_age else "stale",
             "delay_seconds": age,
+            "in_session": True,
         }
     recent_close = age <= 72 * 3600
     return {
         "fresh": recent_close,
         "status": "recent_close" if recent_close else "stale",
-        "delay_seconds": None,
+        "delay_seconds": age,
+        "in_session": False,
     }
+
+
+# Common NYSE tickers for Eastmoney market id 106; others default to NASDAQ 105.
+EASTMONEY_NYSE = {
+    "JPM", "V", "UNH", "XOM", "HD", "KO", "WMT", "PG", "JNJ", "MA", "DIS", "BA",
+    "CAT", "IBM", "GS", "AXP", "MMM", "CVX", "MRK", "NKE", "TRV", "DOW", "CRM",
+}
 
 
 def eastmoney_secid(symbol, market, yahoo_symbol):
@@ -1616,21 +1706,34 @@ def eastmoney_secid(symbol, market, yahoo_symbol):
         return f"{'1' if yahoo_symbol.endswith('.SS') else '0'}.{symbol}"
     if market == "HK":
         return f"116.{symbol.zfill(5)}"
-    nyse = {"BRK.B", "JPM", "V", "UNH", "XOM", "HD", "KO"}
-    return f"{'106' if symbol in nyse else '105'}.{symbol}"
+    # Eastmoney US ulist rejects dotted class shares (e.g. BRK.B); Tencent remains primary.
+    if "." in symbol:
+        return None
+    return f"{'106' if symbol.upper() in EASTMONEY_NYSE else '105'}.{symbol}"
 
 
 def fetch_eastmoney_quotes(stocks):
-    fields = ",".join(
-        ["f43", "f47", "f57", "f58", "f59", "f116", "f162", "f167", "f170", "f124"]
-    )
-    secids = [eastmoney_secid(symbol, market, yahoo) for symbol, market, yahoo in stocks]
-    rows = fetch_eastmoney_ulist_rows(secids, fields, batch_size=20)
-    by_code = {str(item.get("f57", "")).upper().lstrip("0"): item for item in rows}
+    # ulist.np uses clist-style fields (f2/f3/...), not stock/get fields (f43/f170/...).
+    fields = ",".join(["f2", "f3", "f5", "f9", "f12", "f14", "f20", "f23", "f124"])
+    prepared = []
+    for symbol, market, yahoo in stocks:
+        secid = eastmoney_secid(symbol, market, yahoo)
+        if secid:
+            prepared.append((symbol, market, yahoo, secid))
+    if not prepared:
+        return {}
+    rows = fetch_eastmoney_ulist_rows([item[3] for item in prepared], fields, batch_size=20)
+    by_code = {}
+    for item in rows:
+        code = str(item.get("f12", "")).upper()
+        if not code:
+            continue
+        by_code[code] = item
+        by_code[code.lstrip("0") or "0"] = item
     result = {}
-    for symbol, market, _ in stocks:
-        key = symbol.upper().lstrip("0") or "0"
-        item = by_code.get(key)
+    for symbol, market, _, _ in prepared:
+        key = symbol.upper()
+        item = by_code.get(key) or by_code.get(key.lstrip("0") or "0")
         if item:
             result[(market, symbol)] = item
     return result
@@ -1642,21 +1745,21 @@ def quote_from_eastmoney_item(symbol, market, yahoo_symbol, item):
         "symbol": symbol,
         "market": market,
         "yahoo_symbol": yahoo_symbol,
-        "price": clean_market_value(item.get("f43")),
-        "change_pct": clean_market_value(item.get("f170")),
-        "volume": clean_market_value(item.get("f47")),
-        "market_cap": clean_market_value(item.get("f116")),
-        "pe": clean_market_value(item.get("f162")),
-        "pb": clean_market_value(item.get("f167")),
+        "price": clean_market_value(item.get("f2")),
+        "change_pct": clean_market_value(item.get("f3")),
+        "volume": clean_market_value(item.get("f5")),
+        "market_cap": clean_market_value(item.get("f20")),
+        "pe": clean_market_value(item.get("f9")),
+        "pb": clean_market_value(item.get("f23")),
         "ps": None,
         "dividend_yield": None,
         "week_52_low": None,
         "week_52_high": None,
         "earnings_date": None,
         "ex_dividend_date": None,
-        "as_of": as_of(timestamp),
+        "as_of": format_market_time(timestamp, market) if timestamp else as_of(timestamp),
         "market_timestamp": timestamp,
-        "provider": quote_settings().get("provider_name", "东方财富"),
+        "provider": "东方财富（兜底）",
         "source_url": "https://quote.eastmoney.com/",
         "note": quote_settings().get("note", ""),
     }
@@ -1674,6 +1777,88 @@ def clean_market_value(value):
 def scaled_market_value(value, divisor):
     value = clean_market_value(value)
     return round(value / divisor, 4) if value is not None else None
+
+
+def probe_quote_accuracy():
+    """Cross-check Tencent vs Eastmoney on liquid names; catch field-mapping regressions."""
+    samples = [
+        ("600519", "A", "600519.SS"),
+        ("000001", "A", "000001.SZ"),
+        ("0700", "HK", "0700.HK"),
+        ("AAPL", "US", "AAPL"),
+    ]
+    checks = []
+    for symbol, market, yahoo in samples:
+        row = {"symbol": symbol, "market": market, "ok": False}
+        try:
+            by_tencent = fetch_tencent_quotes([(symbol, market, yahoo)])
+            tencent_item = by_tencent.get((market, symbol))
+            if not tencent_item:
+                row["error"] = "腾讯无数据"
+                checks.append(row)
+                continue
+            tencent_quote = quote_from_tencent_item(symbol, market, yahoo, tencent_item)
+            row.update(
+                {
+                    "tencent_price": tencent_quote.get("price"),
+                    "tencent_pe": tencent_quote.get("pe"),
+                    "tencent_pb": tencent_quote.get("pb"),
+                    "tencent_as_of": tencent_quote.get("as_of"),
+                }
+            )
+            if tencent_quote.get("pb") is None or tencent_quote.get("pe") is None:
+                row["error"] = "腾讯估值字段缺失（可能字段映射错误）"
+                checks.append(row)
+                continue
+            if market == "US" and "." in symbol:
+                row["ok"] = True
+                row["note"] = "美股点号代码仅校验腾讯"
+                checks.append(row)
+                continue
+            by_eastmoney = fetch_eastmoney_quotes([(symbol, market, yahoo)])
+            east_item = by_eastmoney.get((market, symbol))
+            if not east_item:
+                row["ok"] = True
+                row["note"] = "东方财富无对照样本，仅校验腾讯估值字段"
+                checks.append(row)
+                continue
+            east_quote = quote_from_eastmoney_item(symbol, market, yahoo, east_item)
+            row["eastmoney_price"] = east_quote.get("price")
+            row["eastmoney_pe"] = east_quote.get("pe")
+            row["eastmoney_pb"] = east_quote.get("pb")
+            price_ok = prices_agree(tencent_quote.get("price"), east_quote.get("price"), rel=0.02, abs_tol=0.5)
+            pe_ok = prices_agree(tencent_quote.get("pe"), east_quote.get("pe"), rel=0.35, abs_tol=5.0)
+            pb_ok = prices_agree(tencent_quote.get("pb"), east_quote.get("pb"), rel=0.25, abs_tol=0.5)
+            row["price_match"] = price_ok
+            row["pe_match"] = pe_ok
+            row["pb_match"] = pb_ok
+            # PE definitions differ by vendor (TTM / static / diluted); require price + PB.
+            row["ok"] = bool(price_ok and pb_ok)
+            if not pe_ok:
+                row["note"] = "PE 口径可能不同（腾讯 vs 东方财富），已记录但不作为硬失败"
+            if not row["ok"]:
+                row["error"] = "腾讯与东方财富交叉校验偏差过大"
+        except Exception as exc:
+            row["error"] = str(exc)
+        checks.append(row)
+    return {
+        "ok": all(item.get("ok") for item in checks),
+        "checks": checks,
+    }
+
+
+def prices_agree(left, right, rel=0.02, abs_tol=0.5):
+    if left is None or right is None:
+        return False
+    try:
+        left = float(left)
+        right = float(right)
+    except (TypeError, ValueError):
+        return False
+    if left == 0 and right == 0:
+        return True
+    scale = max(abs(left), abs(right), 1e-9)
+    return abs(left - right) <= max(abs_tol, rel * scale)
 
 
 def get_data_health():
@@ -1695,6 +1880,7 @@ def get_data_health():
         newest = max(timestamps) if timestamps else None
         age = max(0, int(now - newest)) if newest else None
         freshness = market_freshness(market, newest, now=now, max_age=max_age)
+        valuation_ok = sum(1 for row in rows if row.get("pe") is not None and row.get("pb") is not None)
         markets[market] = {
             "count": len(rows),
             "catalog_count": catalog["markets"][market]["count"],
@@ -1702,6 +1888,8 @@ def get_data_health():
             "indices": catalog["markets"][market]["indices"],
             "latest_market_time": format_market_time(newest, market),
             "age_seconds": age,
+            "valuation_fields_ok": valuation_ok,
+            "valuation_coverage": round(valuation_ok / len(rows), 3) if rows else 0,
             **freshness,
         }
     financial_probes = {
@@ -1719,9 +1907,10 @@ def get_data_health():
         }
         for market, result in financial_probes.items()
     }
+    accuracy = probe_quote_accuracy()
     healthy = all(
         item["catalog_count"] > 0 and item["count"] > 0 and item["fresh"] for item in markets.values()
-    ) and bool(financials["A"]["ok"] and financials["HK"]["ok"] and financials["US"]["ok"])
+    ) and bool(financials["A"]["ok"] and financials["HK"]["ok"] and financials["US"]["ok"]) and accuracy["ok"]
     return {
         "status": "ok" if healthy else "degraded",
         "quote_provider": quote_provider,
@@ -1729,6 +1918,14 @@ def get_data_health():
         "catalog_total": catalog["total"],
         "markets": markets,
         "financials": financials,
+        "accuracy": accuracy,
+        "timing_notes": {
+            "live_max_age_seconds": min(max_age, 900),
+            "configured_max_age_seconds": max_age,
+            "session_model": "A/HK split around lunch; US continuous 09:30–16:00 ET",
+            "quote_cache_ttl_seconds": 60,
+            "pe_note": "腾讯与东方财富 PE 口径可能不同；交叉校验以价格和 PB 为准",
+        },
         "checked_at": as_of(None),
     }
 

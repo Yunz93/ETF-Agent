@@ -5,7 +5,7 @@
   "quotes": {
     "provider": "tencent",
     "provider_name": "腾讯行情",
-    "note": "腾讯公开行情接口，东方财富自动兜底",
+    "note": "腾讯公开行情（按市场映射 PE/PB/市值）；缺失补齐与整批失败时东方财富兜底",
     "batch_size": 80,
     "max_age_seconds": 1800
   },
