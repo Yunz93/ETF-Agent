@@ -29,6 +29,12 @@ python3 server.py
 
 依赖：解析上证指数官方成分股文件需要 `xlrd`（`pip install xlrd`）。
 
+行情字段映射与时效相关的单元测试（不依赖外网）：
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
 不要直接打开 `index.html`。页面需要通过 `server.py` 调用真实数据接口，后端不可用时会明确显示“行情不可用”，不会用样例价格冒充真实行情。
 
 也可以只跑静态页面：
