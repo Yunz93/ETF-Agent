@@ -117,11 +117,16 @@ def get_runtime_info():
         version = desktop_version
     except Exception:
         pass
+    from .paths import resource_root, resolve_static_path
+
+    root = resource_root()
+    index = resolve_static_path("/index.html")
     return {
         "app": "StockAgent",
         "version": version,
         "mode": "desktop" if os.environ.get("STOCKAGENT_DESKTOP") == "1" else "server",
-        "resource_root": str(RESOURCE_ROOT),
+        "resource_root": str(root),
+        "index_html": bool(index),
         "data_dir": str(DATA_DIR),
         "config_path": str(CONFIG_PATH),
         "workspace_path": str(WORKSPACE_PATH),

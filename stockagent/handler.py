@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .paths import RESOURCE_ROOT
+from .paths import RESOURCE_ROOT, resolve_static_path
 from .config_store import public_config, save_config
 from .workspace_store import get_workspace, save_workspace
 from .ai import analyze_stock_with_ai, list_ai_providers, test_ai_connection
@@ -29,6 +29,8 @@ from .financials import get_financials, get_sec_filings, get_sec_financials
 from .health import get_data_health, get_runtime_info
 
 mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("text/html", ".html")
 
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
@@ -38,12 +40,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
             return
-        if parsed.path == "/":
-            path = "/index.html"
-        else:
-            path = parsed.path
-        target = (RESOURCE_ROOT / path.lstrip("/")).resolve()
-        if not str(target).startswith(str(RESOURCE_ROOT)) or not target.exists() or target.is_dir():
+        target = resolve_static_path(parsed.path)
+        if target is None:
             self.send_error(404)
             return
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
@@ -80,12 +78,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/ready":
             # Lightweight liveness for desktop launch — must not touch markets.
+            index = resolve_static_path("/index.html")
             self.send_json(
                 {
                     "ready": True,
                     "app": "StockAgent",
                     "mode": "desktop" if os.environ.get("STOCKAGENT_DESKTOP") == "1" else "server",
                     "frozen": bool(getattr(sys, "frozen", False)),
+                    "index_html": bool(index),
+                    "resource_root": str(RESOURCE_ROOT),
                 }
             )
             return
@@ -175,10 +176,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": str(exc)}, status=500)
 
     def serve_static(self, path):
-        if path == "/":
-            path = "/index.html"
-        target = (RESOURCE_ROOT / path.lstrip("/")).resolve()
-        if not str(target).startswith(str(RESOURCE_ROOT)) or not target.exists() or target.is_dir():
+        target = resolve_static_path(path)
+        if target is None:
             self.send_error(404)
             return
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"

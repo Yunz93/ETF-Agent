@@ -20,9 +20,21 @@ def is_frozen() -> bool:
 def resource_root() -> Path:
     raw = os.environ.get("STOCKAGENT_RESOURCE_DIR")
     if raw:
-        return Path(raw).expanduser().resolve()
-    if is_frozen() and hasattr(sys, "_MEIPASS"):
-        return Path(sys._MEIPASS).resolve()
+        path = Path(raw).expanduser().resolve()
+        if (path / "index.html").is_file():
+            return path
+    if is_frozen():
+        meipass = Path(getattr(sys, "_MEIPASS", sys.executable)).resolve()
+        exe_parent = Path(sys.executable).resolve().parent
+        contents = exe_parent.parent
+        for candidate in (meipass, exe_parent, contents / "Frameworks", contents / "Resources"):
+            try:
+                path = candidate.resolve()
+            except OSError:
+                continue
+            if (path / "index.html").is_file():
+                return path
+        return meipass
     return repo_root()
 
 
