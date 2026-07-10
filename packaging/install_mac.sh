@@ -482,11 +482,6 @@ clear_quarantine() {
   fi
 }
 
-script_dir() {
-  local src="${BASH_SOURCE[0]}"
-  (cd "$(dirname "$src")" && pwd)
-}
-
 adhoc_sign() {
   local target="$1"
   [[ "$ADHOC_SIGN" == "1" ]] || return 0
@@ -496,14 +491,22 @@ adhoc_sign() {
   fi
   log "==> Ad-hoc codesign"
   # Prefer shipping entitlements so re-sign keeps network client/server rights.
+  # When run via `curl | bash`, BASH_SOURCE is unbound under `set -u` — only
+  # look inside the .app bundle in that case.
   local ents=""
   local candidate
-  local here
-  here="$(script_dir)"
-  for candidate in \
-    "$here/entitlements.plist" \
-    "$target/Contents/Resources/packaging/entitlements.plist" \
-    "$target/Contents/Frameworks/packaging/entitlements.plist"; do
+  local candidates=()
+  local src="${BASH_SOURCE[0]:-}"
+  if [[ -n "$src" && -f "$src" ]]; then
+    local here
+    here="$(cd "$(dirname "$src")" && pwd)" || here=""
+    [[ -n "$here" ]] && candidates+=("$here/entitlements.plist")
+  fi
+  candidates+=(
+    "$target/Contents/Resources/packaging/entitlements.plist"
+    "$target/Contents/Frameworks/packaging/entitlements.plist"
+  )
+  for candidate in "${candidates[@]}"; do
     if [[ -f "$candidate" ]]; then
       ents="$candidate"
       break
