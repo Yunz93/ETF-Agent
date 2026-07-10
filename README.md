@@ -70,9 +70,9 @@ GitHub Actions 会在改动桌面相关文件或打 `v*` tag 时自动编译 `.a
 当前使用 `app.js` 中的 `HybridProvider`：
 
 - 成分股目录：`GET /api/catalog?market=A|HK|US&index=`（上证指数官方成分、深证综指、恒生指数、标普 500）
-- A 股、港股、美股行情：`GET /api/quotes?market=&index=&limit=&offset=`，腾讯公开行情按指数分批代理；东方财富仅作自动兜底
+- A 股、港股、美股行情：`GET /api/quotes?market=&index=&limit=&offset=`，腾讯公开行情按指数分批代理；单票缺失时东方财富补齐，整批失败时东方财富兜底
 - 单票行情 / 自定义标的：`GET /api/quote?market=&symbol=`
-- 历史价格走势：`GET /api/history?market=&symbol=&range=`（Yahoo chart，1m / 3m / 1y / 5y）
+- 历史价格走势：`GET /api/history?market=&symbol=&range=`（Yahoo chart，1m / 3m / 1y / 5y；失败时东方财富 K 线兜底）
 - AI 深度分析：`POST /api/ai/analyze`（服务端代理 DeepSeek / OpenAI 兼容 Chat Completions；需在设置页或 `STOCKAGENT_AI_API_KEY` 配置密钥）
 - 模型接口配置：设置页「模型 API 接口配置」支持 DeepSeek、OpenAI、Moonshot、通义千问、智谱、SiliconFlow、OpenRouter、Groq、Ollama 与自定义兼容端点；`GET /api/ai/providers` 列出预设，`POST /api/ai/test` 可测试连通性
 - A 股与港股财务指标：东方财富财务数据中心
@@ -80,8 +80,16 @@ GitHub Actions 会在改动桌面相关文件或打 `v*` tag 时自动编译 `.a
 - A 股公告入口：巨潮资讯网、交易所公告入口
 - 港股公告入口：HKEXnews
 
+### 行情准确性与时效
+
+- 腾讯字段按市场分别映射：A 股 PB=`[46]`；港股 PE/PB=`[57]/[58]`；美股 PB=`[51]`。港美 `[46]` 是名称/代码文本，不能当 PB。
+- 市值按腾讯「亿元」换算为元；不再把总市值误当作 PE 回退值。
+- 东方财富兜底使用 `ulist` 的 `f2/f3/f9/f20/f23`（价格/涨跌幅/PE/总市值/PB），不是 `stock/get` 的 `f43/f170` 字段。
+- 交易时段判定会跳过 A/HK 午休；盘中 `live` 要求延迟 ≤ 15 分钟（免费源常见延迟；`max_age_seconds` 仍用于配置与休市判定）。
+- `/api/health` 额外返回 `accuracy`（腾讯 vs 东方财富交叉校验，价格/PB 硬校验，PE 因口径差异仅告警）与 `valuation_coverage`。
+
 核心字段已经包含 `source`, `source_url`, `as_of_date`, `currency`, `market`, `provider`, `updated_at`。
 
 本地工作区（自选、持仓、笔记、提醒历史、自定义标的、偏好）通过 `GET/PUT /api/workspace` 持久化到项目根目录 `workspace.json`；浏览器 `localStorage` 仅作缓存与离线兜底。设置页支持导出 / 导入 JSON 备份。
 
-可通过 `GET /api/health` 核验三市场返回数量、交易所本地时间、数据年龄，以及 A/HK/US 财报连通状态。`status=live` 表示交易时段内数据延迟不超过阈值，`recent_close` 表示休市期间的最近收盘数据，`stale` 表示数据可能已经过期。
+可通过 `GET /api/health` 核验三市场返回数量、交易所本地时间、数据年龄、估值字段覆盖，以及 A/HK/US 财报连通状态。`status=live` 表示交易时段内数据延迟不超过 15 分钟，`recent_close` 表示休市期间的最近收盘数据，`stale` 表示数据可能已经过期。
