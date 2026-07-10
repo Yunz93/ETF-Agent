@@ -103,12 +103,13 @@ Or from a local checkout / artifact:
 
 What it does:
 
-1. Fetches the latest GitHub Release zip/dmg for the current arch (or uses a local/URL argument)
-2. Unpacks zip or mounts dmg
-3. Removes Gatekeeper quarantine (`xattr -cr`)
-4. Re-applies ad-hoc `codesign --force --deep --sign -`
-5. Copies to `/Applications/StockAgent.app` (override with `INSTALL_DIR=...`)
-6. Opens the app (`OPEN_AFTER=0` to skip)
+1. Resolves the latest Release tag via GitHub HTML / atom (avoids `api.github.com` 403)
+2. Parses the release asset list from the expanded-assets page
+3. Downloads the zip/dmg for the current arch
+4. Removes Gatekeeper quarantine (`xattr -cr`)
+5. Re-applies ad-hoc `codesign --force --deep --sign -` (with entitlements when available)
+6. Copies to `/Applications/StockAgent.app` (override with `INSTALL_DIR=...`)
+7. Opens the app (`OPEN_AFTER=0` to skip)
 
 Optional env:
 
@@ -118,6 +119,15 @@ Optional env:
 | `PREFER` | `zip` | Prefer `zip` or `dmg` |
 | `INSTALL_DIR` | `/Applications` | Install destination |
 | `OPEN_AFTER` | `1` | Launch after install |
+| `GITHUB_TOKEN` | _(empty)_ | Optional; only used if HTML discovery fails and API fallback is needed |
+| `ALLOW_LOCAL_FALLBACK` | `0` | If `1`, allow nearby local packages when download fails (does **not** scan `~/Downloads`) |
+
+If download still fails, install a manually downloaded package (use the newest build, not an old `+9`):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/install_mac.sh) \
+  ~/Downloads/StockAgent-0.0.1+23-macos-arm64.zip
+```
 
 Manual fallback: drag `.app` into Applications, then right-click → Open, or System Settings → Privacy & Security → Open Anyway.
 

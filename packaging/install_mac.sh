@@ -20,6 +20,8 @@
 #   OPEN_AFTER=1  Launch after install (default: 1)
 #   ADHOC_SIGN=1  Re-apply ad-hoc codesign (default: 1)
 #   PREFER=zip    Asset preference: zip | dmg (default: zip)
+#   GITHUB_TOKEN  Optional; used only if API fallback is needed
+#   ALLOW_LOCAL_FALLBACK=0  If 1, allow nearby local zip/dmg when download fails
 set -euo pipefail
 
 APP_NAME="StockAgent.app"
@@ -30,6 +32,10 @@ OPEN_AFTER="${OPEN_AFTER:-1}"
 ADHOC_SIGN="${ADHOC_SIGN:-1}"
 PREFER="${PREFER:-zip}"
 GITHUB_API="${GITHUB_API:-https://api.github.com}"
+GITHUB_WEB="${GITHUB_WEB:-https://github.com}"
+ALLOW_LOCAL_FALLBACK="${ALLOW_LOCAL_FALLBACK:-0}"
+# Browser-like UA: api.github.com often 403s anonymous clients / some regions.
+HTTP_UA="${HTTP_UA:-Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) StockAgent-install_mac/1.0}"
 
 # Progress to stderr so command substitutions only capture paths.
 log() { echo "$*" >&2; }
@@ -54,62 +60,125 @@ arch_label() {
   esac
 }
 
+urldecode_name() {
+  local name="$1"
+  if have python3; then
+    python3 -c 'import sys,urllib.parse; print(urllib.parse.unquote(sys.argv[1]))' "$name"
+  else
+    name="${name//%2B/+}"
+    name="${name//%2b/+}"
+    printf '%s\n' "$name"
+  fi
+}
+
+http_get() {
+  # GET url → stdout. Retries briefly. Prefer curl.
+  local url="$1"
+  if have curl; then
+    curl -fsSL --retry 3 --retry-delay 1 \
+      -A "$HTTP_UA" \
+      -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" \
+      "$url"
+  elif have wget; then
+    wget -qO- --user-agent="$HTTP_UA" "$url"
+  else
+    die "需要 curl 或 wget"
+  fi
+}
+
 download() {
   local url="$1" out="$2"
   if have curl; then
-    curl -fL --retry 3 --retry-delay 1 -o "$out" "$url"
+    curl -fL --retry 3 --retry-delay 1 -A "$HTTP_UA" -o "$out" "$url"
   elif have wget; then
-    wget -O "$out" "$url"
+    wget --user-agent="$HTTP_UA" -O "$out" "$url"
   else
     die "需要 curl 或 wget 才能下载安装包"
   fi
 }
 
-fetch_release_json() {
-  local url
-  if [[ "$TAG" == "latest" ]]; then
-    url="$GITHUB_API/repos/$REPO/releases/latest"
-  else
-    url="$GITHUB_API/repos/$REPO/releases/tags/$TAG"
+resolve_release_tag() {
+  # Print concrete tag (e.g. v0.0.1). Prefer HTML/atom — avoids api.github.com 403.
+  local wanted="$1"
+  if [[ "$wanted" != "latest" ]]; then
+    printf '%s\n' "$wanted"
+    return 0
   fi
-  # GitHub API rejects anonymous requests without a User-Agent (403).
+
+  local loc html atom tag
+  # 1) Follow /releases/latest redirect Location header.
   if have curl; then
-    curl -fsSL \
-      -H "Accept: application/vnd.github+json" \
-      -H "User-Agent: StockAgent-install_mac" \
-      "$url"
-  elif have wget; then
-    wget -qO- \
-      --header="Accept: application/vnd.github+json" \
-      --header="User-Agent: StockAgent-install_mac" \
-      "$url"
-  else
-    die "需要 curl 或 wget 才能查询 GitHub Release"
+    loc="$(curl -fsSI -A "$HTTP_UA" "$GITHUB_WEB/$REPO/releases/latest" 2>/dev/null \
+      | tr -d '\r' \
+      | awk 'tolower($1)=="location:"{print $2; exit}')" || true
+    if [[ "$loc" =~ /releases/tag/([^/?#]+) ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
   fi
+
+  # 2) Atom feed first entry.
+  atom="$(http_get "$GITHUB_WEB/$REPO/releases.atom" 2>/dev/null || true)"
+  if [[ -n "$atom" ]]; then
+    tag="$(printf '%s\n' "$atom" \
+      | sed -n 's|.*<link rel="alternate"[^>]*href="[^"]*/releases/tag/\([^"]*\)".*|\1|p' \
+      | head -n 1)"
+    if [[ -n "$tag" ]]; then
+      printf '%s\n' "$tag"
+      return 0
+    fi
+  fi
+
+  # 3) Latest release HTML page.
+  html="$(http_get "$GITHUB_WEB/$REPO/releases/latest" 2>/dev/null || true)"
+  if [[ -n "$html" ]]; then
+    tag="$(printf '%s\n' "$html" \
+      | sed -n 's|.*releases/tag/\(v[^"/?#]*\).*|\1|p' \
+      | head -n 1)"
+    if [[ -n "$tag" ]]; then
+      printf '%s\n' "$tag"
+      return 0
+    fi
+  fi
+
+  return 1
 }
 
-# Read release JSON from stdin; print browser_download_url on stdout.
-pick_asset_url() {
+# Pick best StockAgent-*.zip/dmg URL from a newline list of absolute or relative URLs.
+pick_asset_from_urls() {
   local arch="$1"
   local prefer="$2"
-  local json
-  json="$(cat)"
+  local urls
+  urls="$(cat)"
 
   if have python3; then
-    PREFER_EXT="$prefer" ARCH="$arch" python3 -c '
-import json, os, sys
+    PREFER_EXT="$prefer" ARCH="$arch" REPO="$REPO" GITHUB_WEB="$GITHUB_WEB" python3 -c '
+import os, re, sys
+from urllib.parse import unquote
+
 prefer = os.environ["PREFER_EXT"].lstrip(".")
 arch = os.environ["ARCH"]
-data = json.load(sys.stdin)
-assets = data.get("assets") or []
+web = os.environ["GITHUB_WEB"].rstrip("/")
+raw = sys.stdin.read().splitlines()
 
-def score(name: str):
-    name_l = (name or "").lower()
+cands = []
+for line in raw:
+    line = line.strip()
+    if not line:
+        continue
+    if line.startswith("/"):
+        line = web + line
+    if "releases/download/" not in line:
+        continue
+    name = unquote(line.rsplit("/", 1)[-1].split("?", 1)[0])
+    name_l = name.lower()
     if not name_l.startswith("stockagent"):
-        return (99, 99, name_l)
-    ext = name_l.rsplit(".", 1)[-1] if "." in name_l else ""
-    if ext not in ("zip", "dmg"):
-        return (99, 99, name_l)
+        continue
+    if not name_l.endswith((".zip", ".dmg")):
+        continue
+    if "/archive/" in line:
+        continue
+    ext = name_l.rsplit(".", 1)[-1]
     ext_rank = 0 if ext == prefer else 1
     if arch and arch in name_l:
         arch_rank = 0
@@ -117,68 +186,183 @@ def score(name: str):
         arch_rank = 1
     else:
         arch_rank = 2
-    return (ext_rank, arch_rank, name_l)
+    m = re.search(r"\+(\d+)", name)
+    build = int(m.group(1)) if m else -1
+    # Lower tuple wins: prefer matching ext/arch, then newer build.
+    cands.append((ext_rank, arch_rank, -build, name_l, line, name))
 
-ranked = sorted(assets, key=lambda a: score(a.get("name") or ""))
-best = next((a for a in ranked if score(a.get("name") or "")[0] < 99), None)
-if not best:
+if not cands:
     sys.exit(2)
-sys.stderr.write("    选中资源: %s\n" % best.get("name"))
-print(best["browser_download_url"])
-' <<<"$json"
+cands.sort()
+_, _, _, _, url, name = cands[0]
+sys.stderr.write("    选中资源: %s\n" % name)
+print(url)
+' <<<"$urls"
     return $?
   fi
 
-  # Fallback without python3 (best-effort).
-  local line name url best_url="" best_score=99
+  # Fallback without python3 (best-effort; prefer matching extension).
+  local line name url best_url="" best_score=999999 score
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    [[ "$line" == /* ]] && line="$GITHUB_WEB$line"
+    [[ "$line" == *"/releases/download/"* ]] || continue
+    name="$(basename "${line%%\?*}")"
+    name="$(urldecode_name "$name")"
+    case "$name" in
+      StockAgent*.zip|StockAgent*.dmg) ;;
+      *) continue ;;
+    esac
+    score=50
+    [[ "$name" == *."$prefer" ]] && score=$((score - 20))
+    [[ "$name" == *"$arch"* ]] && score=$((score - 10))
+    if (( score < best_score )); then
+      best_score=$score
+      best_url=$line
+      log "    选中资源: $name"
+    fi
+  done <<<"$urls"
+  [[ -n "$best_url" ]] || return 2
+  printf '%s\n' "$best_url"
+}
+
+fetch_asset_urls_html() {
+  # Parse GitHub expanded_assets HTML (no API). Prints one URL per line.
+  local tag="$1"
+  local html
+  html="$(http_get "$GITHUB_WEB/$REPO/releases/expanded_assets/$tag")" || return 1
+  printf '%s\n' "$html" \
+    | sed -n 's|.*href="\(/'"$REPO"'/releases/download/[^"]*\)".*|\1|p' \
+    | grep -E '\.(zip|dmg)($|\?)' \
+    | grep -vi '/archive/' \
+    | sort -u
+}
+
+fetch_release_json() {
+  # Optional API path (often 403 anonymously). Used only as fallback.
+  local tag="$1"
+  local url
+  if [[ "$tag" == "latest" ]]; then
+    url="$GITHUB_API/repos/$REPO/releases/latest"
+  else
+    url="$GITHUB_API/repos/$REPO/releases/tags/$tag"
+  fi
+  local args=(-fsSL -A "StockAgent-install_mac" -H "Accept: application/vnd.github+json")
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    args+=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  fi
+  if have curl; then
+    curl "${args[@]}" "$url"
+  elif have wget; then
+    local wh=(-qO- --header="Accept: application/vnd.github+json" --user-agent="StockAgent-install_mac")
+    [[ -n "${GITHUB_TOKEN:-}" ]] && wh+=(--header="Authorization: Bearer $GITHUB_TOKEN")
+    wget "${wh[@]}" "$url"
+  else
+    return 1
+  fi
+}
+
+pick_asset_url_from_json() {
+  local arch="$1"
+  local prefer="$2"
+  local json
+  json="$(cat)"
+  if have python3; then
+    PREFER_EXT="$prefer" ARCH="$arch" python3 -c '
+import json, os, re, sys
+prefer = os.environ["PREFER_EXT"].lstrip(".")
+arch = os.environ["ARCH"]
+data = json.load(sys.stdin)
+assets = data.get("assets") or []
+cands = []
+for a in assets:
+    name = a.get("name") or ""
+    url = a.get("browser_download_url") or ""
+    name_l = name.lower()
+    if not name_l.startswith("stockagent"):
+        continue
+    if not name_l.endswith((".zip", ".dmg")):
+        continue
+    ext = name_l.rsplit(".", 1)[-1]
+    ext_rank = 0 if ext == prefer else 1
+    if arch and arch in name_l:
+        arch_rank = 0
+    elif "macos" in name_l:
+        arch_rank = 1
+    else:
+        arch_rank = 2
+    m = re.search(r"\+(\d+)", name)
+    build = int(m.group(1)) if m else -1
+    cands.append((ext_rank, arch_rank, -build, name_l, url, name))
+if not cands:
+    sys.exit(2)
+cands.sort()
+_, _, _, _, url, name = cands[0]
+sys.stderr.write("    选中资源: %s\n" % name)
+print(url)
+' <<<"$json"
+    return $?
+  fi
+  # Minimal fallback: first matching zip/dmg URL in JSON text.
+  local line name url
   while IFS= read -r line; do
     name="$(echo "$line" | sed -n 's/.*"name":[[:space:]]*"\([^"]*\)".*/\1/p')"
     url="$(echo "$line" | sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p')"
     [[ -n "$name" && -n "$url" ]] || continue
     case "$name" in
-      StockAgent*.zip|StockAgent*.dmg) ;;
-      *) continue ;;
+      StockAgent*."$prefer") printf '%s\n' "$url"; log "    选中资源: $name"; return 0 ;;
     esac
-    local score=50
-    [[ "$name" == *."$prefer" ]] && score=10
-    [[ "$name" == *"$arch"* ]] && score=$((score - 5))
-    if (( score < best_score )); then
-      best_score=$score
-      best_url=$url
-      log "    选中资源: $name"
-    fi
   done < <(echo "$json" | tr '{' '\n')
-  [[ -n "$best_url" ]] || return 2
-  printf '%s\n' "$best_url"
+  return 2
+}
+
+resolve_asset_url() {
+  local arch="$1"
+  local prefer="$2"
+  local tag urls json url
+
+  log "==> 查询 GitHub Release: $REPO ($TAG), arch=$arch"
+  tag="$(resolve_release_tag "$TAG")" \
+    || die "无法解析 Release 标签。请打开 https://github.com/$REPO/releases 确认已发布，或设置 TAG=v0.0.1"
+  log "    版本: $tag"
+
+  # Primary: HTML expanded_assets (works when api.github.com returns 403).
+  if urls="$(fetch_asset_urls_html "$tag" 2>/dev/null)" && [[ -n "$urls" ]]; then
+    if url="$(printf '%s\n' "$urls" | pick_asset_from_urls "$arch" "$prefer")"; then
+      printf '%s\n' "$url"
+      return 0
+    fi
+  else
+    log "    WARN: 网页资源列表不可用，尝试 GitHub API…"
+  fi
+
+  # Fallback: API (may 403 without token / in some networks).
+  if json="$(fetch_release_json "$tag" 2>/dev/null)" && [[ -n "$json" ]]; then
+    if url="$(printf '%s\n' "$json" | pick_asset_url_from_json "$arch" "$prefer")"; then
+      printf '%s\n' "$url"
+      return 0
+    fi
+  else
+    log "    WARN: GitHub API 不可用（常见 403）"
+  fi
+
+  die "无法获取 Release 安装包。
+
+可手动下载后安装:
+  https://github.com/$REPO/releases/tag/$tag
+
+或指定本地包:
+  bash <(curl -fsSL https://raw.githubusercontent.com/$REPO/main/packaging/install_mac.sh) ~/Downloads/StockAgent-*-macos-arm64.zip"
 }
 
 download_latest_release() {
   local dest_dir="$1"
-  local arch
+  local arch url filename out
   arch="$(arch_label)"
-  log "==> 查询 GitHub Release: $REPO ($TAG), arch=$arch"
-  local json url
-  json="$(fetch_release_json)" \
-    || die "无法获取 Release 信息。请确认仓库 $REPO 已发布 macOS 产物。"
-
-  local tag_name
-  tag_name="$(echo "$json" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
-  [[ -n "$tag_name" ]] && log "    版本: $tag_name"
-
-  url="$(echo "$json" | pick_asset_url "$arch" "$PREFER")" \
-    || die "Release 中未找到 StockAgent macOS zip/dmg。
-请检查 https://github.com/$REPO/releases"
-
-  local filename
+  url="$(resolve_asset_url "$arch" "$PREFER")"
   filename="$(basename "${url%%\?*}")"
-  # GitHub may encode '+' as %2B in the URL path.
-  if have python3; then
-    filename="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.unquote(sys.argv[1]))' "$filename")"
-  else
-    filename="${filename//%2B/+}"
-    filename="${filename//%2b/+}"
-  fi
-  local out="$dest_dir/$filename"
+  filename="$(urldecode_name "$filename")"
+  out="$dest_dir/$filename"
   log "==> 下载 $filename"
   download "$url" "$out"
   printf '%s\n' "$out"
@@ -194,6 +378,8 @@ resolve_script_dir() {
 }
 
 find_local_candidate() {
+  # Only search near the script / cwd — never silently pick ~/Downloads,
+  # which often still holds an older broken build (e.g. +9 after +23 republish).
   local here="$1"
   local c
 
@@ -210,12 +396,12 @@ find_local_candidate() {
     fi
   done
 
-  local search_dirs=("$here" "$here/../dist/artifacts" "$here/dist/artifacts" "./dist/artifacts" "$HOME/Downloads" ".")
+  local search_dirs=("$here" "$here/../dist/artifacts" "$here/dist/artifacts" "./dist/artifacts" ".")
   local newest="" newest_mtime=0 mtime
   for dir in "${search_dirs[@]}"; do
     [[ -d "$dir" ]] || continue
     while IFS= read -r -d '' c; do
-      mtime=$(stat -f '%m' "$c" 2>/dev/null || echo 0)
+      mtime=$(stat -f '%m' "$c" 2>/dev/null || stat -c '%Y' "$c" 2>/dev/null || echo 0)
       if (( mtime >= newest_mtime )); then
         newest_mtime=$mtime
         newest=$c
@@ -250,11 +436,18 @@ extract_app_from_dmg() {
   local dmg_path="$1"
   local dest="$2"
   log "==> 挂载 dmg: $(basename "$dmg_path")"
+  [[ -f "$dmg_path" ]] || die "找不到 dmg: $dmg_path"
   mkdir -p "$dest"
   local attach_out mount_point
-  attach_out="$(hdiutil attach -nobrowse -readonly "$dmg_path")"
+  if ! attach_out="$(hdiutil attach -nobrowse -readonly "$dmg_path" 2>&1)"; then
+    die "无法挂载 dmg（文件可能损坏或不完整）。
+请删除旧包后重新下载 build +23 或更新版本:
+  https://github.com/$REPO/releases/latest
+hdiutil 输出:
+$attach_out"
+  fi
   mount_point="$(echo "$attach_out" | awk '/\/Volumes\//{print $NF; exit}')"
-  [[ -n "$mount_point" && -d "$mount_point" ]] || die "无法挂载 dmg"
+  [[ -n "$mount_point" && -d "$mount_point" ]] || die "无法挂载 dmg（未找到 /Volumes 挂载点）"
 
   cleanup_dmg() {
     hdiutil detach "$mount_point" >/dev/null 2>&1 || true
@@ -371,10 +564,12 @@ StockAgent 一键安装（macOS）
   $0 <StockAgent.app|*.zip|*.dmg|https://...>
 
 环境变量:
-  TAG=v0.0.1   指定版本（默认 latest）
-  INSTALL_DIR  安装目录（默认 /Applications）
-  OPEN_AFTER=0 安装后不自动启动
-  PREFER=dmg   优先下载 dmg（默认 zip）
+  TAG=v0.0.1              指定版本（默认 latest）
+  INSTALL_DIR             安装目录（默认 /Applications）
+  OPEN_AFTER=0            安装后不自动启动
+  PREFER=dmg              优先下载 dmg（默认 zip）
+  GITHUB_TOKEN=...        可选；仅在网页解析失败、回退 API 时使用
+  ALLOW_LOCAL_FALLBACK=1  下载失败时允许使用脚本旁本地包（默认关闭，避免误装旧版）
 EOF
 }
 
@@ -387,13 +582,10 @@ main() {
 
   # CI / dry-run: resolve latest asset URL without installing (works on Linux).
   if [[ "${STOCKAGENT_INSTALL_CHECK:-0}" == "1" ]]; then
-    local arch
+    local arch url
     arch="$(arch_label)"
     log "==> check: $REPO ($TAG), arch=$arch"
-    local json url
-    json="$(fetch_release_json)" || die "无法获取 Release 信息"
-    url="$(echo "$json" | pick_asset_url "$arch" "$PREFER")" \
-      || die "未找到 macOS 安装包"
+    url="$(resolve_asset_url "$arch" "$PREFER")" || die "无法获取 Release 信息"
     log "OK: $url"
     printf '%s\n' "$url"
     exit 0
@@ -411,24 +603,32 @@ main() {
 
   if [[ -z "$input" ]]; then
     # One-click: download latest GitHub Release.
-    # If network fails, fall back to a local package if one exists nearby.
+    # Local fallback is opt-in — ~/Downloads often still has an older broken build.
     set +e
     input="$(download_latest_release "$work")"
     local dl_status=$?
     set -e
     if [[ $dl_status -ne 0 || -z "$input" ]]; then
-      local script_dir
-      script_dir="$(resolve_script_dir)"
-      if input="$(find_local_candidate "$script_dir")"; then
-        log "==> 下载失败，改用本地包: $input"
-      else
-        die "无法下载最新 Release，且未找到本地 StockAgent.zip/dmg/app。
+      if [[ "$ALLOW_LOCAL_FALLBACK" == "1" ]]; then
+        local script_dir
+        script_dir="$(resolve_script_dir)"
+        if input="$(find_local_candidate "$script_dir")"; then
+          log "==> 下载失败，改用本地包: $input"
+        else
+          die "无法下载最新 Release，且未找到本地 StockAgent.zip/dmg/app。
 
 一键安装:
   curl -fsSL https://raw.githubusercontent.com/$REPO/main/packaging/install_mac.sh | bash
 
-或手动指定:
-  $0 /path/to/StockAgent-*.zip"
+或手动指定（请用最新 build，不要用旧的 +9）:
+  $0 ~/Downloads/StockAgent-0.0.1+23-macos-arm64.zip"
+        fi
+      else
+        die "无法下载最新 Release。
+
+请重试一键安装，或手动下载后指定路径（请用最新 build，不要用旧的 +9）:
+  https://github.com/$REPO/releases/latest
+  bash <(curl -fsSL https://raw.githubusercontent.com/$REPO/main/packaging/install_mac.sh) ~/Downloads/StockAgent-*-macos-arm64.zip"
       fi
     fi
   fi
@@ -436,18 +636,20 @@ main() {
   if [[ "$input" == http://* || "$input" == https://* ]]; then
     local remote_name
     remote_name="$(basename "${input%%\?*}")"
-    if have python3; then
-      remote_name="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.unquote(sys.argv[1]))' "$remote_name")"
-    else
-      remote_name="${remote_name//%2B/+}"
-      remote_name="${remote_name//%2b/+}"
-    fi
+    remote_name="$(urldecode_name "$remote_name")"
     log "==> 下载 $remote_name"
     download "$input" "$work/$remote_name"
     input="$work/$remote_name"
   fi
 
   [[ -e "$input" ]] || die "找不到文件: $input"
+
+  # Warn if the user still points at the known-broken first release build.
+  case "$(basename "$input")" in
+    *'+9-'*|*'%2B9-'*|*'%2b9-'*)
+      log "WARN: 检测到旧构建 +9（存在启动闪退）。建议改用 Release 中的 +23 或更新版本。"
+      ;;
+  esac
 
   case "$input" in
     *.app)
