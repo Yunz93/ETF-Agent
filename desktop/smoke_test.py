@@ -61,9 +61,22 @@ def main() -> int:
             assert payload.get("ready") is True or payload.get("app") == "StockAgent"
             assert elapsed < 2.0, f"ready probe too slow for launch: {elapsed:.2f}s"
 
+            with urllib.request.urlopen(f"{base}/", timeout=3) as response:
+                html = response.read().decode("utf-8", errors="replace")
+            assert "StockAgent" in html
             with urllib.request.urlopen(f"{base}/index.html", timeout=3) as response:
                 html = response.read().decode("utf-8", errors="replace")
             assert "StockAgent" in html
+            with urllib.request.urlopen(f"{base}/js/main.js", timeout=3) as response:
+                js = response.read().decode("utf-8", errors="replace")
+            assert "StockAgent" in js or "stockagent" in js.lower() or "import" in js
+            # Simulate the macOS /var vs /private/var startswith false-negative.
+            from stockagent.paths import resolve_static_path
+
+            assert resolve_static_path("/").name == "index.html"
+            assert resolve_static_path("/index.html").name == "index.html"
+            assert resolve_static_path("/js/main.js").name == "main.js"
+            assert resolve_static_path("/../etc/passwd") is None
             print(
                 "desktop smoke ok",
                 json.dumps({"port": port, "data_dir": runtime["data_dir"], "ready_ms": int(elapsed * 1000)}),

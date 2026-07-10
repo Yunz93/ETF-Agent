@@ -126,7 +126,7 @@ If download still fails, install a manually downloaded package (use the newest b
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/install_mac.sh) \
-  ~/Downloads/StockAgent-0.0.2-macos-arm64.zip
+  ~/Downloads/StockAgent-0.0.3-macos-arm64.zip
 ```
 
 Manual fallback: drag `.app` into Applications, then right-click → Open, or System Settings → Privacy & Security → Open Anyway.
