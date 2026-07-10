@@ -223,6 +223,17 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/health":
             self.send_json(get_data_health())
             return
+        if parsed.path == "/api/ready":
+            # Lightweight liveness for desktop launch — must not touch markets.
+            self.send_json(
+                {
+                    "ready": True,
+                    "app": "StockAgent",
+                    "mode": "desktop" if os.environ.get("STOCKAGENT_DESKTOP") == "1" else "server",
+                    "frozen": bool(getattr(sys, "frozen", False)),
+                }
+            )
+            return
         if parsed.path == "/api/sec-financials":
             query = urllib.parse.parse_qs(parsed.query)
             symbol = query.get("symbol", [""])[0].upper()

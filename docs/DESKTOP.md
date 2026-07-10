@@ -43,7 +43,7 @@ python3 -m desktop.smoke_test
 | `~/Library/Application Support/StockAgent/workspace.json` | Watchlist, holdings, notes, prefs |
 | `~/Library/Application Support/StockAgent/config.json` | Data-source config |
 | `~/Library/Application Support/StockAgent/.catalog-cache.json` | Index constituent cache |
-| `~/Library/Application Support/StockAgent/logs/` | Reserved for app logs |
+| `~/Library/Application Support/StockAgent/logs/launch.log` | Desktop launch / crash diagnostics |
 
 On first desktop launch, if those files are missing, bootstrap copies matching files from the repo root when present.
 
@@ -120,6 +120,17 @@ Optional env:
 | `OPEN_AFTER` | `1` | Launch after install |
 
 Manual fallback: drag `.app` into Applications, then right-click → Open, or System Settings → Privacy & Security → Open Anyway.
+
+If the app icon bounces then disappears (闪退), check:
+
+```bash
+open -a Console
+# or
+cat ~/Library/Application\ Support/StockAgent/logs/launch.log
+/Applications/StockAgent.app/Contents/MacOS/StockAgent
+```
+
+Desktop bootstrap waits only on the lightweight `/api/ready` (or `/api/runtime`) endpoint — never the heavy `/api/health` market probe — so a slow network cannot make the windowed `.app` quit on launch.
 
 Phase 2 (later): Developer ID signing + Apple notarization + Sparkle/auto-update.
 

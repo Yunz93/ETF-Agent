@@ -23,6 +23,7 @@ datas = [
     (str(ROOT / "config.json"), "."),
     (str(ROOT / "requirements.txt"), "."),
     (str(ROOT / "desktop"), "desktop"),
+    (str(ROOT / "packaging" / "entitlements.plist"), "packaging"),
 ]
 
 icons_dir = ROOT / "packaging" / "icons"
@@ -72,9 +73,13 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
+    # Windowed: no Terminal console. Startup errors are written to
+    # ~/Library/Application Support/StockAgent/logs/launch.log instead.
     console=False,
     disable_windowed_traceback=False,
-    argv_emulation=True,
+    # Avoid AppleEvent argv emulation — it is only needed for dropped-file
+    # argv injection and can hang/crash GUI apps launched via Finder/`open`.
+    argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=str(ROOT / "packaging" / "entitlements.plist"),
