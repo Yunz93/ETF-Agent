@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import struct
 import subprocess
 import sys
@@ -50,90 +51,150 @@ def _blend(dst: list[int], src: tuple[int, int, int, int]) -> None:
     dst[3] = min(255, dst[3] + sa)
 
 
+def _fill_rounded_rect(
+    buf: list[list[int]],
+    size: int,
+    left: int,
+    top: int,
+    right: int,
+    bottom: int,
+    radius: int,
+    color_fn,
+) -> None:
+    for y in range(max(0, top), min(size, bottom + 1)):
+        for x in range(max(0, left), min(size, right + 1)):
+            inside = True
+            if x < left + radius and y < top + radius:
+                inside = (x - (left + radius)) ** 2 + (y - (top + radius)) ** 2 <= radius**2
+            elif x > right - radius and y < top + radius:
+                inside = (x - (right - radius)) ** 2 + (y - (top + radius)) ** 2 <= radius**2
+            elif x < left + radius and y > bottom - radius:
+                inside = (x - (left + radius)) ** 2 + (y - (bottom - radius)) ** 2 <= radius**2
+            elif x > right - radius and y > bottom - radius:
+                inside = (x - (right - radius)) ** 2 + (y - (bottom - radius)) ** 2 <= radius**2
+            if inside:
+                _blend(buf[y * size + x], color_fn(x, y))
+
+
+def _fill_circle(buf: list[list[int]], size: int, cx: float, cy: float, radius: float, color) -> None:
+    r2 = radius * radius
+    y0 = max(0, int(cy - radius) - 1)
+    y1 = min(size, int(cy + radius) + 2)
+    x0 = max(0, int(cx - radius) - 1)
+    x1 = min(size, int(cx + radius) + 2)
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            if (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= r2:
+                _blend(buf[y * size + x], color)
+
+
+def _draw_candle(
+    buf: list[list[int]],
+    size: int,
+    cx: int,
+    body_top: int,
+    body_bottom: int,
+    wick_top: int,
+    wick_bottom: int,
+    body_w: int,
+    wick_w: int,
+    color: tuple[int, int, int, int],
+) -> None:
+    hx0 = max(0, cx - wick_w // 2)
+    hx1 = min(size, cx + (wick_w + 1) // 2)
+    for y in range(max(0, wick_top), min(size, wick_bottom + 1)):
+        for x in range(hx0, hx1):
+            _blend(buf[y * size + x], color)
+    bx0 = max(0, cx - body_w // 2)
+    bx1 = min(size, cx + (body_w + 1) // 2)
+    for y in range(max(0, body_top), min(size, body_bottom + 1)):
+        for x in range(bx0, bx1):
+            _blend(buf[y * size + x], color)
+
+
 def render_icon(size: int) -> bytes:
-    """Draw a simple teal rounded mark with SA letters as block shapes."""
+    """Deep slate tile with rising emerald candles — stock workbench mark."""
     buf = [[0, 0, 0, 0] for _ in range(size * size)]
-    margin = max(1, size // 16)
-    radius = max(2, size // 5)
-    # Background rounded rect
+    margin = max(1, size // 18)
+    radius = max(3, size * 22 // 100)
+
+    # Outer rounded tile — deep slate with cool vertical wash (not flat, not purple).
+    def bg_color(x: int, y: int) -> tuple[int, int, int, int]:
+        t = y / max(1, size - 1)
+        s = x / max(1, size - 1)
+        r = int(18 + 8 * t + 6 * s)
+        g = int(28 + 18 * (1 - t) + 4 * s)
+        b = int(42 + 22 * t)
+        return (r, g, b, 255)
+
+    _fill_rounded_rect(buf, size, margin, margin, size - 1 - margin, size - 1 - margin, radius, bg_color)
+
+    # Soft inner glow near top-left for depth.
+    glow_r = size * 0.42
     for y in range(size):
         for x in range(size):
-            inside = True
-            # corner distance checks
-            corners = [
-                (margin + radius, margin + radius),
-                (size - 1 - margin - radius, margin + radius),
-                (margin + radius, size - 1 - margin - radius),
-                (size - 1 - margin - radius, size - 1 - margin - radius),
-            ]
-            if x < margin or x >= size - margin or y < margin or y >= size - margin:
-                inside = False
-            else:
-                for cx, cy in corners:
-                    if (x < cx and y < cy) or (x > cx and y < cy and x > size // 2) or False:
-                        pass
-                # Simplified rounded-rect: reject pixels outside circle at corners
-                left, right = margin, size - 1 - margin
-                top, bottom = margin, size - 1 - margin
-                if x < left + radius and y < top + radius:
-                    inside = (x - (left + radius)) ** 2 + (y - (top + radius)) ** 2 <= radius**2
-                elif x > right - radius and y < top + radius:
-                    inside = (x - (right - radius)) ** 2 + (y - (top + radius)) ** 2 <= radius**2
-                elif x < left + radius and y > bottom - radius:
-                    inside = (x - (left + radius)) ** 2 + (y - (bottom - radius)) ** 2 <= radius**2
-                elif x > right - radius and y > bottom - radius:
-                    inside = (x - (right - radius)) ** 2 + (y - (bottom - radius)) ** 2 <= radius**2
-            if inside:
-                # teal-ish fill with slight vertical gradient
-                t = y / max(1, size - 1)
-                r = int(20 + 10 * t)
-                g = int(110 + 40 * (1 - t))
-                b = int(130 + 20 * t)
-                buf[y * size + x] = [r, g, b, 255]
+            d = math.hypot(x - size * 0.28, y - size * 0.22) / glow_r
+            if d < 1:
+                alpha = int(55 * (1 - d) * (1 - d))
+                if alpha > 0:
+                    _blend(buf[y * size + x], (70, 120, 140, alpha))
 
-    # Inner lighter panel
-    inset = max(2, size // 6)
-    for y in range(inset, size - inset):
-        for x in range(inset, size - inset):
-            _blend(buf[y * size + x], (245, 250, 252, 230))
+    # Rising candlesticks (left → right, low → high).
+    candle_color = (52, 211, 153, 255)  # emerald
+    wick_color = (167, 243, 208, 230)
+    chart_left = size * 18 // 100
+    chart_right = size * 82 // 100
+    chart_top = size * 28 // 100
+    chart_bottom = size * 72 // 100
+    count = 5
+    span = max(1, chart_right - chart_left)
+    body_w = max(2, size * 7 // 100)
+    wick_w = max(1, size * 2 // 100)
 
-    # Block letter "S" and "A" approximations
-    stroke = max(2, size // 12)
-    mid = size // 2
-    # S
-    sx0, sx1 = size // 5, mid - size // 16
-    for y in range(size // 4, size // 4 + stroke):
-        for x in range(sx0, sx1):
-            _blend(buf[y * size + x], (18, 70, 90, 255))
-    for y in range(mid - stroke // 2, mid + stroke // 2 + 1):
-        for x in range(sx0, sx1):
-            _blend(buf[y * size + x], (18, 70, 90, 255))
-    for y in range(size * 3 // 4 - stroke, size * 3 // 4):
-        for x in range(sx0, sx1):
-            _blend(buf[y * size + x], (18, 70, 90, 255))
-    for y in range(size // 4, mid):
-        for x in range(sx0, sx0 + stroke):
-            _blend(buf[y * size + x], (18, 70, 90, 255))
-    for y in range(mid, size * 3 // 4):
-        for x in range(sx1 - stroke, sx1):
-            _blend(buf[y * size + x], (18, 70, 90, 255))
+    # Relative open/close/high/low as fractions of chart height (rising sequence).
+    specs = [
+        (0.62, 0.48, 0.40, 0.70),
+        (0.55, 0.40, 0.34, 0.60),
+        (0.48, 0.32, 0.26, 0.52),
+        (0.40, 0.22, 0.16, 0.44),
+        (0.30, 0.12, 0.06, 0.34),
+    ]
+    for i, (o, c, h, l) in enumerate(specs[:count]):
+        cx = chart_left + int((i + 0.5) * span / count)
+        body_top = chart_top + int(min(o, c) * (chart_bottom - chart_top))
+        body_bottom = chart_top + int(max(o, c) * (chart_bottom - chart_top))
+        wick_top = chart_top + int(h * (chart_bottom - chart_top))
+        wick_bottom = chart_top + int(l * (chart_bottom - chart_top))
+        _draw_candle(buf, size, cx, body_top, body_bottom, wick_top, wick_bottom, body_w, wick_w, candle_color)
+        # bright wick tips
+        _draw_candle(
+            buf,
+            size,
+            cx,
+            wick_top,
+            wick_top + max(1, size // 80),
+            wick_top,
+            wick_top + max(1, size // 80),
+            wick_w,
+            wick_w,
+            wick_color,
+        )
 
-    # A
-    ax0, ax1 = mid + size // 16, size * 4 // 5
-    for y in range(size // 4, size * 3 // 4):
-        t = (y - size // 4) / max(1, size // 2)
-        left = int(ax0 + (ax1 - ax0) * 0.35 * (1 - t))
-        right = int(ax1 - (ax1 - ax0) * 0.35 * (1 - t))
-        for x in range(left, left + stroke):
-            if 0 <= x < size:
-                _blend(buf[y * size + x], (18, 70, 90, 255))
-        for x in range(right - stroke, right):
-            if 0 <= x < size:
-                _blend(buf[y * size + x], (18, 70, 90, 255))
-    bar_y = mid + size // 16
-    for y in range(bar_y, bar_y + stroke):
-        for x in range(ax0 + stroke, ax1 - stroke):
-            _blend(buf[y * size + x], (18, 70, 90, 255))
+    # Subtle baseline under the chart.
+    base_y = chart_bottom + max(1, size // 40)
+    for x in range(chart_left, chart_right):
+        for y in range(base_y, min(size, base_y + max(1, size // 120))):
+            _blend(buf[y * size + x], (148, 163, 184, 90))
+
+    # Small accent disc (agent / pulse) at upper-right.
+    _fill_circle(
+        buf,
+        size,
+        size * 0.78,
+        size * 0.22,
+        max(2.0, size * 0.055),
+        (251, 191, 36, 255),  # amber pulse
+    )
 
     out = bytearray()
     for pixel in buf:

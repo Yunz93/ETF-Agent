@@ -323,7 +323,7 @@ resolve_asset_url() {
 
   log "==> 查询 GitHub Release: $REPO ($TAG), arch=$arch"
   tag="$(resolve_release_tag "$TAG")" \
-    || die "无法解析 Release 标签。请打开 https://github.com/$REPO/releases 确认已发布，或设置 TAG=v0.0.1"
+    || die "无法解析 Release 标签。请打开 https://github.com/$REPO/releases 确认已发布，或设置 TAG=v0.0.2"
   log "    版本: $tag"
 
   # Primary: HTML expanded_assets (works when api.github.com returns 403).
@@ -567,7 +567,7 @@ StockAgent 一键安装（macOS）
   $0 <StockAgent.app|*.zip|*.dmg|https://...>
 
 环境变量:
-  TAG=v0.0.1              指定版本（默认 latest）
+  TAG=v0.0.2              指定版本（默认 latest）
   INSTALL_DIR             安装目录（默认 /Applications）
   OPEN_AFTER=0            安装后不自动启动
   PREFER=dmg              优先下载 dmg（默认 zip）
@@ -623,13 +623,13 @@ main() {
 一键安装:
   curl -fsSL https://raw.githubusercontent.com/$REPO/main/packaging/install_mac.sh | bash
 
-或手动指定（请用最新 build，不要用旧的 +9）:
-  $0 ~/Downloads/StockAgent-0.0.1+23-macos-arm64.zip"
+或手动指定（请用最新 Release 包）:
+  $0 ~/Downloads/StockAgent-0.0.2-macos-arm64.zip"
         fi
       else
         die "无法下载最新 Release。
 
-请重试一键安装，或手动下载后指定路径（请用最新 build，不要用旧的 +9）:
+请重试一键安装，或手动下载后指定路径（请用最新 Release 包）:
   https://github.com/$REPO/releases/latest
   bash <(curl -fsSL https://raw.githubusercontent.com/$REPO/main/packaging/install_mac.sh) ~/Downloads/StockAgent-*-macos-arm64.zip"
       fi
@@ -650,7 +650,7 @@ main() {
   # Warn if the user still points at the known-broken first release build.
   case "$(basename "$input")" in
     *'+9-'*|*'%2B9-'*|*'%2b9-'*)
-      log "WARN: 检测到旧构建 +9（存在启动闪退）。建议改用 Release 中的 +23 或更新版本。"
+      log "WARN: 检测到旧构建 +9（存在启动闪退）。建议改用最新 Release（当前 0.0.2+）。"
       ;;
   esac
 

@@ -115,7 +115,7 @@ Optional env:
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `TAG` | `latest` | Pin a release tag, e.g. `TAG=v0.0.1` |
+| `TAG` | `latest` | Pin a release tag, e.g. `TAG=v0.0.2` |
 | `PREFER` | `zip` | Prefer `zip` or `dmg` |
 | `INSTALL_DIR` | `/Applications` | Install destination |
 | `OPEN_AFTER` | `1` | Launch after install |
@@ -126,7 +126,7 @@ If download still fails, install a manually downloaded package (use the newest b
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/install_mac.sh) \
-  ~/Downloads/StockAgent-0.0.1+23-macos-arm64.zip
+  ~/Downloads/StockAgent-0.0.2-macos-arm64.zip
 ```
 
 Manual fallback: drag `.app` into Applications, then right-click → Open, or System Settings → Privacy & Security → Open Anyway.
@@ -159,7 +159,7 @@ Jobs:
 1. **Linux smoke** — `python -m desktop.smoke_test` + icon generation
 2. **macOS build** — `./packaging/build_mac.sh` on `macos-14`, uploads zip/dmg artifacts
 
-Tagged releases (`v0.0.1` etc.) also publish the artifacts to a GitHub Release.
+Tagged releases (`v0.0.2` etc.) also publish the artifacts to a GitHub Release.
 
 Download artifacts from the Actions run summary, or from the Release page for tags.
 
