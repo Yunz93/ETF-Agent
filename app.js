@@ -687,6 +687,99 @@ function quoteSourceMeta() {
   };
 }
 
+const AI_PROVIDER_PRESETS = {
+  deepseek: {
+    provider_name: "DeepSeek",
+    base_url: "https://api.deepseek.com",
+    model: "deepseek-chat",
+    models: ["deepseek-chat", "deepseek-reasoner"],
+    docs_url: "https://platform.deepseek.com/api_keys",
+    note: "官方 OpenAI 兼容接口，推荐默认",
+    needs_api_key: true,
+  },
+  openai: {
+    provider_name: "OpenAI",
+    base_url: "https://api.openai.com",
+    model: "gpt-4o-mini",
+    models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "o4-mini"],
+    docs_url: "https://platform.openai.com/api-keys",
+    note: "官方 Chat Completions",
+    needs_api_key: true,
+  },
+  moonshot: {
+    provider_name: "Moonshot / Kimi",
+    base_url: "https://api.moonshot.cn",
+    model: "moonshot-v1-auto",
+    models: ["moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi-latest"],
+    docs_url: "https://platform.moonshot.cn/console/api-keys",
+    note: "月之暗面 Kimi，OpenAI 兼容",
+    needs_api_key: true,
+  },
+  qwen: {
+    provider_name: "通义千问 / DashScope",
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode",
+    model: "qwen-plus",
+    models: ["qwen-plus", "qwen-turbo", "qwen-max", "qwen-long"],
+    docs_url: "https://bailian.console.aliyun.com/",
+    note: "阿里云百炼兼容模式",
+    needs_api_key: true,
+  },
+  zhipu: {
+    provider_name: "智谱 GLM",
+    base_url: "https://open.bigmodel.cn/api/paas",
+    model: "glm-4-flash",
+    models: ["glm-4-flash", "glm-4-air", "glm-4-plus", "glm-4.5-flash"],
+    docs_url: "https://open.bigmodel.cn/usercenter/apikeys",
+    note: "BigModel OpenAI 兼容（/v4）",
+    needs_api_key: true,
+  },
+  siliconflow: {
+    provider_name: "SiliconFlow 硅基流动",
+    base_url: "https://api.siliconflow.cn",
+    model: "deepseek-ai/DeepSeek-V3",
+    models: ["deepseek-ai/DeepSeek-V3", "deepseek-ai/DeepSeek-R1", "Qwen/Qwen2.5-72B-Instruct", "THUDM/glm-4-9b-chat"],
+    docs_url: "https://cloud.siliconflow.cn/account/ak",
+    note: "聚合多家开源模型的 Token 服务",
+    needs_api_key: true,
+  },
+  openrouter: {
+    provider_name: "OpenRouter",
+    base_url: "https://openrouter.ai/api",
+    model: "deepseek/deepseek-chat",
+    models: ["deepseek/deepseek-chat", "deepseek/deepseek-r1", "openai/gpt-4o-mini", "google/gemini-2.0-flash-001", "anthropic/claude-3.5-sonnet"],
+    docs_url: "https://openrouter.ai/keys",
+    note: "统一路由多家模型",
+    needs_api_key: true,
+  },
+  groq: {
+    provider_name: "Groq",
+    base_url: "https://api.groq.com/openai",
+    model: "llama-3.3-70b-versatile",
+    models: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b"],
+    docs_url: "https://console.groq.com/keys",
+    note: "高速推理，OpenAI 兼容",
+    needs_api_key: true,
+  },
+  ollama: {
+    provider_name: "Ollama 本地",
+    base_url: "http://127.0.0.1:11434",
+    model: "llama3.1",
+    models: ["llama3.1", "qwen2.5", "deepseek-r1", "mistral"],
+    docs_url: "https://ollama.com/",
+    note: "本机 Ollama，通常无需 API Key",
+    needs_api_key: false,
+  },
+  custom: {
+    provider_name: "自定义 OpenAI 兼容",
+    base_url: "",
+    model: "",
+    models: [],
+    docs_url: "",
+    note: "任意兼容 /v1/chat/completions 的 Token 服务",
+    needs_api_key: true,
+  },
+};
+
 function renderSettings() {
   if (!els.settingsForm || !appConfig) return;
 
@@ -699,7 +792,83 @@ function renderSettings() {
 
   const ai = appConfig.ai || {};
   const aiProvider = ai.provider || "deepseek";
+  const preset = AI_PROVIDER_PRESETS[aiProvider] || AI_PROVIDER_PRESETS.custom;
+  const modelOptions = uniqueStrings([...(preset.models || []), ai.model].filter(Boolean));
   els.settingsForm.innerHTML = `
+    <section class="config-group ai-console">
+      <div class="ai-console-heading">
+        <div>
+          <h3>模型 API 接口配置</h3>
+          <p class="muted settings-hint">支持 DeepSeek 等主流 Token 服务（OpenAI 兼容）。密钥仅保存在本地 config.json，页面只显示掩码。</p>
+        </div>
+        <div class="ai-console-actions">
+          <button class="ghost-button compact js-ai-test" type="button">测试连接</button>
+          ${preset.docs_url ? `<a class="ghost-button compact" href="${escapeAttr(preset.docs_url)}" target="_blank" rel="noreferrer">获取 Key</a>` : ""}
+        </div>
+      </div>
+      <div class="ai-provider-grid" role="radiogroup" aria-label="Token 服务">
+        ${Object.entries(AI_PROVIDER_PRESETS)
+          .map(
+            ([id, item]) => `
+              <button type="button" class="ai-provider-chip ${aiProvider === id ? "active" : ""}" data-ai-provider="${id}">
+                <strong>${escapeHtml(item.provider_name)}</strong>
+                <span>${escapeHtml(item.note || "")}</span>
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
+      <div class="config-grid">
+        <label class="config-check">
+          <input data-config="ai.enabled" type="checkbox" ${ai.enabled !== false ? "checked" : ""} />
+          <span>启用 AI 分析</span>
+        </label>
+        <label>
+          <span>提供方</span>
+          <select data-config="ai.provider" class="js-ai-provider">
+            ${Object.entries(AI_PROVIDER_PRESETS)
+              .map(
+                ([id, item]) =>
+                  `<option value="${id}" ${aiProvider === id ? "selected" : ""}>${escapeHtml(item.provider_name)}</option>`,
+              )
+              .join("")}
+          </select>
+        </label>
+        <label>
+          <span>显示名称</span>
+          <input data-config="ai.provider_name" type="text" value="${escapeAttr(ai.provider_name || preset.provider_name || "")}" />
+        </label>
+        <label class="config-wide">
+          <span>API Base URL</span>
+          <input data-config="ai.base_url" type="url" value="${escapeAttr(ai.base_url || "")}" placeholder="${escapeAttr(preset.base_url || "https://api.deepseek.com")}" />
+        </label>
+        <label>
+          <span>模型</span>
+          <input data-config="ai.model" class="js-ai-model" list="ai-model-options" type="text" value="${escapeAttr(ai.model || "")}" placeholder="${escapeAttr(preset.model || "deepseek-chat")}" />
+          <datalist id="ai-model-options">
+            ${modelOptions.map((model) => `<option value="${escapeAttr(model)}"></option>`).join("")}
+          </datalist>
+        </label>
+        <label>
+          <span>API Key / Token ${ai.has_api_key ? "（已配置）" : preset.needs_api_key === false ? "（可选）" : ""}</span>
+          <input data-config="ai.api_key" type="password" value="${escapeAttr(ai.api_key || "")}" placeholder="${ai.has_api_key ? "留空则保持已保存密钥" : "sk-..."}" autocomplete="off" />
+        </label>
+        <label>
+          <span>温度</span>
+          <input data-config="ai.temperature" type="number" min="0" max="2" step="0.1" value="${escapeAttr(ai.temperature ?? 0.3)}" />
+        </label>
+        <label>
+          <span>最大 tokens</span>
+          <input data-config="ai.max_tokens" type="number" min="256" max="8192" step="1" value="${escapeAttr(ai.max_tokens ?? 2800)}" />
+        </label>
+        <label>
+          <span>超时（秒）</span>
+          <input data-config="ai.timeout_seconds" type="number" min="15" max="180" step="1" value="${escapeAttr(ai.timeout_seconds ?? 90)}" />
+        </label>
+        <p class="muted ai-endpoint-hint js-ai-endpoint-hint config-wide"></p>
+      </div>
+      <p class="settings-status muted js-ai-test-status" role="status"></p>
+    </section>
     <section class="config-group">
       <h3>行情接口</h3>
       <div class="config-grid">
@@ -727,48 +896,6 @@ function renderSettings() {
         <label class="config-wide">
           <span>User-Agent</span>
           <input data-config="sec.user_agent" type="text" value="${escapeAttr(appConfig.sec?.user_agent || "")}" />
-        </label>
-      </div>
-    </section>
-    <section class="config-group">
-      <h3>AI 深度分析</h3>
-      <p class="muted settings-hint">股票详情页可调用外部大模型分析历史走势并给出研究建议。API Key 只保存在本地 config.json，不会回传到页面明文。</p>
-      <div class="config-grid">
-        <label class="config-check">
-          <input data-config="ai.enabled" type="checkbox" ${ai.enabled !== false ? "checked" : ""} />
-          <span>启用 AI 分析</span>
-        </label>
-        <label>
-          <span>提供方</span>
-          <select data-config="ai.provider" class="js-ai-provider">
-            <option value="deepseek" ${aiProvider === "deepseek" ? "selected" : ""}>DeepSeek</option>
-            <option value="openai" ${aiProvider === "openai" ? "selected" : ""}>OpenAI</option>
-            <option value="custom" ${aiProvider === "custom" ? "selected" : ""}>自定义 OpenAI 兼容</option>
-          </select>
-        </label>
-        <label>
-          <span>显示名称</span>
-          <input data-config="ai.provider_name" type="text" value="${escapeAttr(ai.provider_name || "")}" />
-        </label>
-        <label class="config-wide">
-          <span>Base URL</span>
-          <input data-config="ai.base_url" type="url" value="${escapeAttr(ai.base_url || "")}" placeholder="https://api.deepseek.com" />
-        </label>
-        <label>
-          <span>模型</span>
-          <input data-config="ai.model" type="text" value="${escapeAttr(ai.model || "")}" placeholder="deepseek-chat" />
-        </label>
-        <label>
-          <span>API Key ${ai.has_api_key ? "（已配置）" : ""}</span>
-          <input data-config="ai.api_key" type="password" value="${escapeAttr(ai.api_key || "")}" placeholder="${ai.has_api_key ? "留空则保持已保存密钥" : "sk-..."}" autocomplete="off" />
-        </label>
-        <label>
-          <span>温度</span>
-          <input data-config="ai.temperature" type="number" min="0" max="2" step="0.1" value="${escapeAttr(ai.temperature ?? 0.3)}" />
-        </label>
-        <label>
-          <span>最大 tokens</span>
-          <input data-config="ai.max_tokens" type="number" min="256" max="8192" step="1" value="${escapeAttr(ai.max_tokens ?? 2800)}" />
         </label>
       </div>
     </section>
@@ -803,21 +930,110 @@ function renderSettings() {
       .join("")}
   `;
 
+  bindAiConsoleControls();
+}
+
+function uniqueStrings(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    result.push(text);
+  }
+  return result;
+}
+
+function chatCompletionsEndpoint(baseUrl, provider) {
+  const root = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (!root) return "";
+  if (root.endsWith("/chat/completions")) return root;
+  if (provider === "zhipu") return `${root}/v4/chat/completions`;
+  if (root.endsWith("/v1")) return `${root}/chat/completions`;
+  return `${root}/v1/chat/completions`;
+}
+
+function bindAiConsoleControls() {
+  if (!els.settingsForm) return;
   const providerSelect = els.settingsForm.querySelector(".js-ai-provider");
   const baseUrlInput = els.settingsForm.querySelector('[data-config="ai.base_url"]');
-  const modelInput = els.settingsForm.querySelector('[data-config="ai.model"]');
+  const modelInput = els.settingsForm.querySelector(".js-ai-model");
   const nameInput = els.settingsForm.querySelector('[data-config="ai.provider_name"]');
-  const presets = {
-    deepseek: { provider_name: "DeepSeek", base_url: "https://api.deepseek.com", model: "deepseek-chat" },
-    openai: { provider_name: "OpenAI", base_url: "https://api.openai.com", model: "gpt-4o-mini" },
+  const modelList = els.settingsForm.querySelector("#ai-model-options");
+  const hint = els.settingsForm.querySelector(".js-ai-endpoint-hint");
+  const testStatus = els.settingsForm.querySelector(".js-ai-test-status");
+  const docsLink = els.settingsForm.querySelector(".ai-console-actions a");
+
+  const applyProvider = (providerId, { fillFields = true } = {}) => {
+    const preset = AI_PROVIDER_PRESETS[providerId] || AI_PROVIDER_PRESETS.custom;
+    if (providerSelect) providerSelect.value = providerId;
+    els.settingsForm.querySelectorAll("[data-ai-provider]").forEach((chip) => {
+      chip.classList.toggle("active", chip.dataset.aiProvider === providerId);
+    });
+    if (fillFields) {
+      if (nameInput) nameInput.value = preset.provider_name || "";
+      if (baseUrlInput && preset.base_url) baseUrlInput.value = preset.base_url;
+      if (modelInput && preset.model) modelInput.value = preset.model;
+    }
+    if (modelList) {
+      const models = uniqueStrings([...(preset.models || []), modelInput?.value].filter(Boolean));
+      modelList.innerHTML = models.map((model) => `<option value="${escapeAttr(model)}"></option>`).join("");
+    }
+    if (docsLink) {
+      if (preset.docs_url) {
+        docsLink.hidden = false;
+        docsLink.href = preset.docs_url;
+      } else {
+        docsLink.hidden = true;
+      }
+    }
+    updateEndpointHint();
   };
-  providerSelect?.addEventListener("change", () => {
-    const preset = presets[providerSelect.value];
-    if (!preset) return;
-    if (nameInput) nameInput.value = preset.provider_name;
-    if (baseUrlInput) baseUrlInput.value = preset.base_url;
-    if (modelInput) modelInput.value = preset.model;
+
+  const updateEndpointHint = () => {
+    if (!hint) return;
+    const provider = providerSelect?.value || "deepseek";
+    const endpoint = chatCompletionsEndpoint(baseUrlInput?.value || "", provider);
+    const preset = AI_PROVIDER_PRESETS[provider] || AI_PROVIDER_PRESETS.custom;
+    hint.textContent = endpoint
+      ? `实际请求：POST ${endpoint}${preset.needs_api_key === false ? " · API Key 可选" : ""}`
+      : "请填写 API Base URL（例如 https://api.deepseek.com）";
+  };
+
+  providerSelect?.addEventListener("change", () => applyProvider(providerSelect.value, { fillFields: true }));
+  baseUrlInput?.addEventListener("input", updateEndpointHint);
+  els.settingsForm.querySelectorAll("[data-ai-provider]").forEach((chip) => {
+    chip.addEventListener("click", () => applyProvider(chip.dataset.aiProvider, { fillFields: true }));
   });
+  els.settingsForm.querySelector(".js-ai-test")?.addEventListener("click", () => testAiConnection(testStatus));
+  applyProvider(providerSelect?.value || "deepseek", { fillFields: false });
+}
+
+async function testAiConnection(statusEl) {
+  if (!els.settingsForm) return;
+  const payload = readSettingsForm().ai || {};
+  if (statusEl) statusEl.textContent = "正在测试模型接口…";
+  try {
+    const response = await fetch("/api/ai/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `测试失败 ${response.status}`);
+    }
+    if (statusEl) {
+      statusEl.textContent = `${data.message || "连接成功"} · ${data.provider_name || data.provider || ""} / ${data.model || ""}`;
+    }
+    if (els.settingsStatus) {
+      els.settingsStatus.textContent = "模型接口测试通过（记得保存配置）";
+    }
+  } catch (error) {
+    if (statusEl) statusEl.textContent = error.message || "测试失败";
+    if (els.settingsStatus) els.settingsStatus.textContent = error.message || "测试失败";
+  }
 }
 
 function readSettingsForm() {

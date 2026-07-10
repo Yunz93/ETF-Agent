@@ -9,6 +9,7 @@
 - **持仓**：数量与成本、浮盈亏、仓位占比、相对合理价、本位币折算（CNY / HKD / USD）
 - **研究池**：按指数切换、行业筛选、同行业一键对比、分批加载行情；空态引导「指数 → 行业 → 自选 → 判断卡」
 - **股票详情**：首屏聚焦现价、安全边际、走势与判断卡（论点 / 失效条件 / 关注价 / 复盘日 / 证据）；可一键调用 DeepSeek 等外部大模型做历史走势与买卖研究建议；估值 / 财报 / 事件 / 来源折叠在“更多”
+- **模型 API 配置**：设置页支持主流 Token 服务（DeepSeek / OpenAI / Moonshot / 通义千问 / 智谱 / SiliconFlow / OpenRouter / Groq / Ollama / 自定义），可填 Base URL、模型、API Key，并一键测试连接
 - **导出**：Markdown 下载（含完整判断卡）、浏览器打印 / 保存 PDF
 - **提醒**：页面待办 + 可选浏览器 Notification；提醒历史本地保存；判断卡关注价接近现价时也会进入待办
 - **指数成分股研究池**：A 股上证指数 + 深证综指，港股恒生指数，美股标普 500；目录加载时用东方财富 / GICS 补全行业
@@ -73,6 +74,7 @@ GitHub Actions 会在改动桌面相关文件或打 `v*` tag 时自动编译 `.a
 - 单票行情 / 自定义标的：`GET /api/quote?market=&symbol=`
 - 历史价格走势：`GET /api/history?market=&symbol=&range=`（Yahoo chart，1m / 3m / 1y / 5y）
 - AI 深度分析：`POST /api/ai/analyze`（服务端代理 DeepSeek / OpenAI 兼容 Chat Completions；需在设置页或 `STOCKAGENT_AI_API_KEY` 配置密钥）
+- 模型接口配置：设置页「模型 API 接口配置」支持 DeepSeek、OpenAI、Moonshot、通义千问、智谱、SiliconFlow、OpenRouter、Groq、Ollama 与自定义兼容端点；`GET /api/ai/providers` 列出预设，`POST /api/ai/test` 可测试连通性
 - A 股与港股财务指标：东方财富财务数据中心
 - 美股财报：SEC EDGAR companyfacts，通过本地 `server.py` 代理
 - A 股公告入口：巨潮资讯网、交易所公告入口

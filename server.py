@@ -101,7 +101,7 @@ DEFAULT_CONFIG = {
         "temperature": 0.3,
         "max_tokens": 2800,
         "timeout_seconds": 90,
-        "note": "支持 DeepSeek / OpenAI 兼容接口；API Key 仅保存在本地 config.json",
+        "note": "支持 DeepSeek / OpenAI / Moonshot / 通义 / 智谱 / SiliconFlow / OpenRouter / Groq / Ollama 等 Token 服务；API Key 仅保存在本地 config.json",
     },
     "sources": {
         "QUOTE": [
@@ -140,16 +140,103 @@ AI_PROVIDER_PRESETS = {
         "provider_name": "DeepSeek",
         "base_url": "https://api.deepseek.com",
         "model": "deepseek-chat",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
+        "docs_url": "https://platform.deepseek.com/api_keys",
+        "note": "官方 OpenAI 兼容接口，推荐默认",
+        "needs_api_key": True,
     },
     "openai": {
         "provider_name": "OpenAI",
         "base_url": "https://api.openai.com",
         "model": "gpt-4o-mini",
+        "models": ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "o4-mini"],
+        "docs_url": "https://platform.openai.com/api-keys",
+        "note": "官方 Chat Completions",
+        "needs_api_key": True,
+    },
+    "moonshot": {
+        "provider_name": "Moonshot / Kimi",
+        "base_url": "https://api.moonshot.cn",
+        "model": "moonshot-v1-auto",
+        "models": ["moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi-latest"],
+        "docs_url": "https://platform.moonshot.cn/console/api-keys",
+        "note": "月之暗面 Kimi，OpenAI 兼容",
+        "needs_api_key": True,
+    },
+    "qwen": {
+        "provider_name": "通义千问 / DashScope",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode",
+        "model": "qwen-plus",
+        "models": ["qwen-plus", "qwen-turbo", "qwen-max", "qwen-long"],
+        "docs_url": "https://bailian.console.aliyun.com/",
+        "note": "阿里云百炼兼容模式",
+        "needs_api_key": True,
+    },
+    "zhipu": {
+        "provider_name": "智谱 GLM",
+        "base_url": "https://open.bigmodel.cn/api/paas",
+        "model": "glm-4-flash",
+        "models": ["glm-4-flash", "glm-4-air", "glm-4-plus", "glm-4.5-flash"],
+        "docs_url": "https://open.bigmodel.cn/usercenter/apikeys",
+        "note": "BigModel OpenAI 兼容（/v4）",
+        "needs_api_key": True,
+        "api_path": "/v4/chat/completions",
+    },
+    "siliconflow": {
+        "provider_name": "SiliconFlow 硅基流动",
+        "base_url": "https://api.siliconflow.cn",
+        "model": "deepseek-ai/DeepSeek-V3",
+        "models": [
+            "deepseek-ai/DeepSeek-V3",
+            "deepseek-ai/DeepSeek-R1",
+            "Qwen/Qwen2.5-72B-Instruct",
+            "THUDM/glm-4-9b-chat",
+        ],
+        "docs_url": "https://cloud.siliconflow.cn/account/ak",
+        "note": "聚合多家开源模型的 Token 服务",
+        "needs_api_key": True,
+    },
+    "openrouter": {
+        "provider_name": "OpenRouter",
+        "base_url": "https://openrouter.ai/api",
+        "model": "deepseek/deepseek-chat",
+        "models": [
+            "deepseek/deepseek-chat",
+            "deepseek/deepseek-r1",
+            "openai/gpt-4o-mini",
+            "google/gemini-2.0-flash-001",
+            "anthropic/claude-3.5-sonnet",
+        ],
+        "docs_url": "https://openrouter.ai/keys",
+        "note": "统一路由多家模型",
+        "needs_api_key": True,
+    },
+    "groq": {
+        "provider_name": "Groq",
+        "base_url": "https://api.groq.com/openai",
+        "model": "llama-3.3-70b-versatile",
+        "models": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b"],
+        "docs_url": "https://console.groq.com/keys",
+        "note": "高速推理，OpenAI 兼容",
+        "needs_api_key": True,
+    },
+    "ollama": {
+        "provider_name": "Ollama 本地",
+        "base_url": "http://127.0.0.1:11434",
+        "model": "llama3.1",
+        "models": ["llama3.1", "qwen2.5", "deepseek-r1", "mistral"],
+        "docs_url": "https://ollama.com/",
+        "note": "本机 Ollama，通常无需 API Key",
+        "needs_api_key": False,
     },
     "custom": {
         "provider_name": "自定义 OpenAI 兼容",
         "base_url": "",
         "model": "",
+        "models": [],
+        "docs_url": "",
+        "note": "任意兼容 /v1/chat/completions 的 Token 服务",
+        "needs_api_key": True,
     },
 }
 
@@ -255,6 +342,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/config":
             self.send_json(public_config())
             return
+        if parsed.path == "/api/ai/providers":
+            self.send_json(list_ai_providers())
+            return
         if parsed.path == "/api/catalog":
             market = query.get("market", [""])[0].upper()
             index = query.get("index", [""])[0].strip().upper()
@@ -354,6 +444,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/api/ai/analyze":
                 self.send_json(*analyze_stock_with_ai(payload))
+                return
+            if parsed.path == "/api/ai/test":
+                self.send_json(*test_ai_connection(payload))
                 return
             if parsed.path == "/api/config":
                 self.send_json(public_config(save_config(payload)))
@@ -685,15 +778,158 @@ def http_post_json(url, payload, headers=None, timeout=90):
         return exc.code, detail
 
 
-def chat_completions_url(base_url):
+def chat_completions_url(base_url, provider=None, api_path=None):
     root = (base_url or "").strip().rstrip("/")
     if not root:
         return ""
     if root.endswith("/chat/completions"):
         return root
+    preset = AI_PROVIDER_PRESETS.get(str(provider or "").strip().lower()) or {}
+    path = (api_path or preset.get("api_path") or "").strip()
+    if path:
+        if not path.startswith("/"):
+            path = f"/{path}"
+        return f"{root}{path}"
     if root.endswith("/v1"):
         return f"{root}/chat/completions"
     return f"{root}/v1/chat/completions"
+
+
+def list_ai_providers():
+    items = []
+    for key, preset in AI_PROVIDER_PRESETS.items():
+        items.append(
+            {
+                "id": key,
+                "provider_name": preset.get("provider_name") or key,
+                "base_url": preset.get("base_url") or "",
+                "model": preset.get("model") or "",
+                "models": list(preset.get("models") or ([] if not preset.get("model") else [preset.get("model")])),
+                "docs_url": preset.get("docs_url") or "",
+                "note": preset.get("note") or "",
+                "needs_api_key": bool(preset.get("needs_api_key", True)),
+                "api_path": preset.get("api_path") or "",
+            }
+        )
+    current = ai_settings()
+    return {
+        "providers": items,
+        "current": {
+            "provider": current.get("provider"),
+            "provider_name": current.get("provider_name"),
+            "base_url": current.get("base_url"),
+            "model": current.get("model"),
+            "has_api_key": bool(str(current.get("api_key") or "").strip() or os.environ.get("STOCKAGENT_AI_API_KEY")),
+            "enabled": bool(current.get("enabled", True)),
+        },
+    }
+
+
+def resolve_ai_runtime(overrides=None):
+    settings = dict(ai_settings())
+    overrides = overrides if isinstance(overrides, dict) else {}
+    provider = str(overrides.get("provider") or settings.get("provider") or "deepseek").strip().lower() or "deepseek"
+    if provider not in AI_PROVIDER_PRESETS:
+        provider = "custom"
+    preset = AI_PROVIDER_PRESETS[provider]
+    base_url = str(overrides.get("base_url") or settings.get("base_url") or preset.get("base_url") or "").strip().rstrip("/")
+    model = str(overrides.get("model") or settings.get("model") or preset.get("model") or "").strip()
+    provider_name = str(
+        overrides.get("provider_name") or settings.get("provider_name") or preset.get("provider_name") or provider
+    ).strip()
+    incoming_key = overrides.get("api_key")
+    if incoming_key is None or str(incoming_key).strip() in ("", "********"):
+        api_key = str(settings.get("api_key") or "").strip() or str(os.environ.get("STOCKAGENT_AI_API_KEY") or "").strip()
+    else:
+        api_key = str(incoming_key).strip()
+    endpoint = chat_completions_url(base_url, provider=provider, api_path=preset.get("api_path"))
+    return {
+        "provider": provider,
+        "provider_name": provider_name,
+        "base_url": base_url,
+        "model": model,
+        "api_key": api_key,
+        "endpoint": endpoint,
+        "needs_api_key": bool(preset.get("needs_api_key", True)),
+        "temperature": settings.get("temperature", 0.3),
+        "max_tokens": settings.get("max_tokens", 2800),
+        "timeout_seconds": int(settings.get("timeout_seconds") or 90),
+        "enabled": bool(settings.get("enabled", True)),
+    }
+
+
+def test_ai_connection(payload=None):
+    runtime = resolve_ai_runtime(payload if isinstance(payload, dict) else {})
+    if not runtime["endpoint"] or not runtime["model"]:
+        return {"error": "请先填写 Base URL 与模型名称"}, 400
+    if runtime["needs_api_key"] and not runtime["api_key"]:
+        return {
+            "error": "尚未配置 API Key。请填写 Token 服务密钥，或设置环境变量 STOCKAGENT_AI_API_KEY。",
+            "code": "missing_api_key",
+            "provider": runtime["provider"],
+        }, 400
+
+    body = {
+        "model": runtime["model"],
+        "temperature": 0,
+        "max_tokens": 32,
+        "messages": [
+            {
+                "role": "user",
+                "content": "Reply with exactly: STOCKAGENT_OK",
+            }
+        ],
+    }
+    headers = {}
+    if runtime["api_key"]:
+        headers["Authorization"] = f"Bearer {runtime['api_key']}"
+    # OpenRouter recommends these optional headers.
+    if runtime["provider"] == "openrouter":
+        headers["HTTP-Referer"] = "https://github.com/Yunz93/StockAgent"
+        headers["X-Title"] = "StockAgent"
+
+    status, response = http_post_json(
+        runtime["endpoint"],
+        body,
+        headers=headers or None,
+        timeout=min(45, runtime["timeout_seconds"]),
+    )
+    if status >= 400:
+        message = None
+        if isinstance(response, dict):
+            err = response.get("error")
+            if isinstance(err, dict):
+                message = err.get("message") or err.get("code")
+            elif err:
+                message = str(err)
+            else:
+                message = response.get("message")
+        return {
+            "ok": False,
+            "error": message or f"模型接口返回 HTTP {status}",
+            "provider_status": status,
+            "provider": runtime["provider"],
+            "provider_name": runtime["provider_name"],
+            "model": runtime["model"],
+            "endpoint": runtime["endpoint"],
+        }, 502
+
+    content = ""
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+        if choices and isinstance(choices[0], dict):
+            message = choices[0].get("message") or {}
+            content = str(message.get("content") or choices[0].get("text") or "").strip()
+    return {
+        "ok": True,
+        "message": "连接成功，模型接口可用",
+        "provider": runtime["provider"],
+        "provider_name": runtime["provider_name"],
+        "model": runtime["model"],
+        "endpoint": runtime["endpoint"],
+        "sample": content[:120],
+        "usage": response.get("usage") if isinstance(response, dict) else None,
+    }, 200
 
 
 def _fmt_num(value, digits=2, suffix=""):
@@ -845,22 +1081,16 @@ def analyze_stock_with_ai(payload):
     if not isinstance(payload, dict):
         return {"error": "请求体必须是 JSON 对象"}, 400
 
-    settings = ai_settings()
-    if not settings.get("enabled", True):
+    runtime = resolve_ai_runtime()
+    if not runtime.get("enabled", True):
         return {"error": "AI 分析已在设置中关闭"}, 400
-
-    api_key = str(settings.get("api_key") or "").strip() or str(os.environ.get("STOCKAGENT_AI_API_KEY") or "").strip()
-    if not api_key:
+    if not runtime["endpoint"] or not runtime["model"]:
+        return {"error": "AI base_url 或 model 未配置完整"}, 400
+    if runtime["needs_api_key"] and not runtime["api_key"]:
         return {
             "error": "尚未配置 AI API Key。请到设置页填写 DeepSeek / OpenAI 兼容密钥，或设置环境变量 STOCKAGENT_AI_API_KEY。",
             "code": "missing_api_key",
         }, 400
-
-    base_url = str(settings.get("base_url") or "").strip()
-    model = str(settings.get("model") or "").strip()
-    endpoint = chat_completions_url(base_url)
-    if not endpoint or not model:
-        return {"error": "AI base_url 或 model 未配置完整"}, 400
 
     stock = payload.get("stock") if isinstance(payload.get("stock"), dict) else {}
     if not stock.get("symbol") or not stock.get("market"):
@@ -885,19 +1115,25 @@ def analyze_stock_with_ai(payload):
     }
     user_prompt = build_ai_user_prompt(request_payload)
     body = {
-        "model": model,
-        "temperature": settings.get("temperature", 0.3),
-        "max_tokens": settings.get("max_tokens", 2800),
+        "model": runtime["model"],
+        "temperature": runtime.get("temperature", 0.3),
+        "max_tokens": runtime.get("max_tokens", 2800),
         "messages": [
             {"role": "system", "content": AI_STRATEGY_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
     }
+    headers = {}
+    if runtime["api_key"]:
+        headers["Authorization"] = f"Bearer {runtime['api_key']}"
+    if runtime["provider"] == "openrouter":
+        headers["HTTP-Referer"] = "https://github.com/Yunz93/StockAgent"
+        headers["X-Title"] = "StockAgent"
     status, response = http_post_json(
-        endpoint,
+        runtime["endpoint"],
         body,
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=int(settings.get("timeout_seconds") or 90),
+        headers=headers or None,
+        timeout=int(runtime.get("timeout_seconds") or 90),
     )
     if status >= 400:
         message = None
@@ -912,8 +1148,8 @@ def analyze_stock_with_ai(payload):
         return {
             "error": message or f"模型接口返回 HTTP {status}",
             "provider_status": status,
-            "provider": settings.get("provider"),
-            "model": model,
+            "provider": runtime["provider"],
+            "model": runtime["model"],
         }, 502
 
     content = ""
@@ -932,9 +1168,9 @@ def analyze_stock_with_ai(payload):
     return {
         "ok": True,
         "content": content,
-        "provider": settings.get("provider"),
-        "provider_name": settings.get("provider_name"),
-        "model": model,
+        "provider": runtime["provider"],
+        "provider_name": runtime["provider_name"],
+        "model": runtime["model"],
         "history_range": history_range,
         "history_points": len(history_points or []),
         "generated_at": datetime.now().isoformat(timespec="seconds"),

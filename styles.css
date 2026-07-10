@@ -1201,13 +1201,86 @@ td {
 
 .config-group input[type="text"],
 .config-group input[type="url"],
-.config-group input[type="number"] {
+.config-group input[type="number"],
+.config-group input[type="password"],
+.config-group select {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
+  font: inherit;
+}
+
+.ai-console-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ai-console-heading h3 {
+  margin: 0 0 6px;
+}
+
+.ai-console-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ai-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ai-provider-chip {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line);
+  cursor: pointer;
+  font: inherit;
+}
+
+.ai-provider-chip strong {
+  font-size: 0.9rem;
+}
+
+.ai-provider-chip span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.ai-provider-chip.active {
+  box-shadow: 0 0 0 2px var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.ai-provider-chip:hover {
+  box-shadow: 0 0 0 1px var(--accent-strong);
+}
+
+.ai-endpoint-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.js-ai-test-status:not(:empty) {
+  margin-top: 8px;
 }
 
 .source-editor + .source-editor {
@@ -2039,13 +2112,14 @@ button:active {
     grid-template-columns: 1fr;
   }
 
-  .ai-controls {
-    width: 100%;
+  .ai-console-heading,
+  .ai-console-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .ai-controls select,
-  .ai-controls .primary-button {
-    flex: 1 1 auto;
+  .ai-provider-grid {
+    grid-template-columns: 1fr 1fr;
   }
 
   .workbench-metrics {
