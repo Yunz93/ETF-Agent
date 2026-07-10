@@ -114,7 +114,7 @@ Optional env:
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `TAG` | `latest` | Pin a release tag, e.g. `TAG=v0.0.2` |
+| `TAG` | `latest` | Pin a release tag, e.g. `TAG=v0.0.1` |
 | `PREFER` | `zip` | Prefer `zip` or `dmg` |
 | `INSTALL_DIR` | `/Applications` | Install destination |
 | `OPEN_AFTER` | `1` | Launch after install |
