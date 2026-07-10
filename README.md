@@ -71,9 +71,25 @@ curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/in
 
 GitHub Actions 会在改动桌面相关文件或打 `v*` tag 时自动编译 `.app` / zip / dmg。
 
+## 项目结构
+
+```text
+server.py                 # 兼容入口（import server / python3 server.py）
+stockagent/               # 后端包
+  paths.py / defaults.py / state.py
+  config_store.py / workspace_store.py / http_client.py
+  catalog.py / quotes.py / financials.py / ai.py / health.py
+  handler.py / serve.py
+js/                       # 前端 ES modules（index.html → js/main.js）
+  main.js / provider.js / state.js / constants.js
+  views/                  # workbench / watchlist / holdings / research / detail
+  settings.js / workspace.js / chart.js / analysis.js ...
+desktop/ packaging/ tests/
+```
+
 ## 数据源替换点
 
-当前使用 `app.js` 中的 `HybridProvider`：
+当前使用 `js/provider.js` 中的 `HybridProvider`：
 
 - 成分股目录：`GET /api/catalog?market=A|HK|US&index=`（上证指数官方成分、深证综指、恒生指数、标普 500）
 - A 股、港股、美股行情：`GET /api/quotes?market=&index=&limit=&offset=`，腾讯公开行情按指数分批代理；单票缺失时东方财富补齐，整批失败时东方财富兜底
