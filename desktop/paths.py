@@ -74,7 +74,6 @@ def maybe_migrate_repo_workspace(data_path: Path) -> None:
     mapping = {
         "workspace.json": data_path / "workspace.json",
         "config.json": data_path / "config.json",
-        ".catalog-cache.json": data_path / ".catalog-cache.json",
     }
     for name, dest in mapping.items():
         src = root / name

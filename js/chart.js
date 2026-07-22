@@ -1,27 +1,7 @@
 import { CURRENCY } from "./constants.js";
-import { provider, state } from "./state.js";
-import { average, clamp, money, round, sameStock, signed } from "./utils.js";
+import { state } from "./state.js";
+import { average, clamp, money, round, signed } from "./utils.js";
 import { themeChartColors } from "./navigation.js";
-
-export async function loadAndDrawPriceChart(canvas, tooltip, summary, stock, markers) {
-  if (!canvas) return;
-  const payload = await provider.getHistory(stock.symbol, stock.market, state.priceRange);
-  if (state.selected && !sameStock(state.selected, stock)) return;
-  const points = payload.points || [];
-  if (summary) {
-    if (!points.length) {
-      summary.textContent = payload.error ? `走势暂不可用：${payload.error}` : "暂无历史价格";
-    } else {
-      const first = points[0].close;
-      const last = points[points.length - 1].close;
-      const changePct = first ? ((last - first) / first) * 100 : 0;
-      const high = Math.max(...points.map((point) => point.close));
-      const low = Math.min(...points.map((point) => point.close));
-      summary.textContent = `${points[0].date} → ${points[points.length - 1].date} · 区间 ${signed(changePct)}% · 高 ${money(high, stock.currency)} · 低 ${money(low, stock.currency)}${payload.provider ? ` · ${payload.provider}` : ""}`;
-    }
-  }
-  drawPriceChart(canvas, tooltip, points, markers, stock.currency, payload.error);
-}
 
 export function resolveCssColor(token, fallback) {
   if (!token) return fallback;
@@ -372,54 +352,5 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
     drawPriceChart(canvas, tooltip, points, markers, currency, error);
   };
   window.addEventListener("resize", canvas._priceChartResize);
-}
-export function drawMetricChart(canvas, financials, metric) {
-  const ctx = canvas.getContext("2d");
-  const width = canvas.width;
-  const height = canvas.height;
-  const colors = themeChartColors();
-  const values = financials.map((item) => item[metric]);
-  const isPercent = metric === "gross_margin" || metric === "debt_ratio";
-  ctx.clearRect(0, 0, width, height);
-  const pad = 24;
-  const min = Math.min(...values) * (isPercent ? 0.92 : 0.94);
-  const max = Math.max(...values) * (isPercent ? 1.08 : 1.06);
-  const range = max - min || 1;
-
-  ctx.strokeStyle = colors.grid;
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 4; i += 1) {
-    const y = pad + ((height - pad * 2) / 3) * i;
-    ctx.beginPath();
-    ctx.moveTo(pad, y);
-    ctx.lineTo(width - pad, y);
-    ctx.stroke();
-  }
-
-  const points = values.map((value, index) => {
-    const x = pad + ((width - pad * 2) / Math.max(values.length - 1, 1)) * index;
-    const y = height - pad - ((value - min) / range) * (height - pad * 2);
-    return [x, y];
-  });
-
-  ctx.strokeStyle = colors.line;
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  points.forEach(([x, y], index) => {
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  ctx.fillStyle = colors.line;
-  ctx.font = "11px system-ui";
-  points.forEach(([x, y], index) => {
-    ctx.beginPath();
-    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = colors.label;
-    ctx.fillText(String(financials[index].period).replace("202", "'2"), x - 16, height - 6);
-    ctx.fillStyle = colors.line;
-  });
 }
 

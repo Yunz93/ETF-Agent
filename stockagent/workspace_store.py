@@ -1,29 +1,38 @@
 #!/usr/bin/env python3
-"""Workspace persistence and normalization."""
+"""Workspace persistence and normalization (ETF pool + prefs)."""
 
-import csv
-import http.cookiejar
 import json
-import mimetypes
-import os
-import re
-import socket
-import sys
-import threading
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
-from datetime import datetime, time as datetime_time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from .defaults import DEFAULT_WORKSPACE
 from .paths import WORKSPACE_LOCK, WORKSPACE_PATH
+from .symbols import as_of
 
 def empty_workspace():
     return json.loads(json.dumps(DEFAULT_WORKSPACE))
+
+
+def normalize_etf_entry(item):
+    if not isinstance(item, dict):
+        return None
+    digits = "".join(ch for ch in str(item.get("symbol") or "") if ch.isdigit())
+    symbol = digits.zfill(6)
+    if len(symbol) != 6 or not digits:
+        return None
+
+    def positive_number(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0
+        return number if number > 0 else 0
+
+    return {
+        "symbol": symbol,
+        "name": str(item.get("name") or "").strip(),
+        "shares": positive_number(item.get("shares")),
+        "cost": positive_number(item.get("cost")),
+        "note": str(item.get("note") or "").strip(),
+    }
 
 
 def normalize_workspace(payload):
@@ -31,41 +40,19 @@ def normalize_workspace(payload):
     if not isinstance(payload, dict):
         return workspace
 
-    if isinstance(payload.get("watchlist"), dict):
-        workspace["watchlist"] = payload["watchlist"]
-    if isinstance(payload.get("holdings"), dict):
-        workspace["holdings"] = payload["holdings"]
-    if isinstance(payload.get("notes"), dict):
-        workspace["notes"] = payload["notes"]
-    if isinstance(payload.get("alertHistory"), list):
-        workspace["alertHistory"] = payload["alertHistory"][:100]
-    if isinstance(payload.get("prefs"), dict):
-        prefs = payload["prefs"]
-        workspace["prefs"] = {
-            "notify": bool(prefs.get("notify", False)),
-            "baseCurrency": str(prefs.get("baseCurrency") or "CNY").upper()
-            if str(prefs.get("baseCurrency") or "CNY").upper() in {"CNY", "HKD", "USD"}
-            else "CNY",
-        }
-    if isinstance(payload.get("customSymbols"), list):
-        custom = []
-        for item in payload["customSymbols"]:
-            if not isinstance(item, dict) or not item.get("symbol") or not item.get("market"):
-                continue
-            custom.append(
-                {
-                    "symbol": str(item.get("symbol", "")).strip().upper(),
-                    "name": str(item.get("name") or item.get("symbol") or "").strip(),
-                    "englishName": str(item.get("englishName") or item.get("name") or "").strip(),
-                    "market": str(item.get("market", "")).strip().upper(),
-                    "exchange": str(item.get("exchange") or item.get("market") or "").strip(),
-                    "currency": str(item.get("currency") or "CNY").strip().upper(),
-                    "industry": str(item.get("industry") or "自定义").strip() or "自定义",
-                }
-            )
-        workspace["customSymbols"] = custom
+    seen = set()
+    etfs = []
+    for item in payload.get("etfs") or []:
+        entry = normalize_etf_entry(item)
+        if entry and entry["symbol"] not in seen:
+            seen.add(entry["symbol"])
+            etfs.append(entry)
+    workspace["etfs"] = etfs
 
-    workspace["version"] = int(payload.get("version") or 1)
+    if isinstance(payload.get("prefs"), dict):
+        workspace["prefs"] = payload["prefs"]
+
+    workspace["version"] = 2
     workspace["updated_at"] = payload.get("updated_at") or as_of(None)
     return workspace
 
@@ -73,13 +60,7 @@ def normalize_workspace(payload):
 def workspace_has_user_data(workspace):
     if not isinstance(workspace, dict):
         return False
-    return bool(
-        workspace.get("watchlist")
-        or workspace.get("holdings")
-        or workspace.get("notes")
-        or workspace.get("alertHistory")
-        or workspace.get("customSymbols")
-    )
+    return bool(workspace.get("etfs"))
 
 
 def get_workspace():
@@ -98,7 +79,6 @@ def save_workspace(payload):
     with WORKSPACE_LOCK:
         workspace = normalize_workspace(payload)
         workspace["updated_at"] = as_of(None)
-        workspace["version"] = int(workspace.get("version") or 1)
         temp_path = WORKSPACE_PATH.with_suffix(".json.tmp")
         temp_path.write_text(json.dumps(workspace, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         temp_path.replace(WORKSPACE_PATH)

@@ -18,7 +18,6 @@ ICON = str(ICON_ICNS) if ICON_ICNS.exists() else (str(ICON_PNG) if ICON_PNG.exis
 
 datas = [
     (str(ROOT / "index.html"), "."),
-    (str(ROOT / "app.js"), "."),
     (str(ROOT / "js"), "js"),
     (str(ROOT / "styles.css"), "."),
     (str(ROOT / "config.json"), "."),
@@ -50,10 +49,9 @@ hiddenimports = [
     "stockagent.market_time",
     "stockagent.config_store",
     "stockagent.workspace_store",
-    "stockagent.ai",
-    "stockagent.catalog",
+    "stockagent.indicators",
     "stockagent.quotes",
-    "stockagent.financials",
+    "stockagent.dividend",
     "stockagent.health",
     "stockagent.handler",
     "stockagent.serve",
@@ -63,7 +61,6 @@ hiddenimports = [
     "AppKit",
     "Foundation",
     "WebKit",
-    "xlrd",
 ]
 
 a = Analysis(

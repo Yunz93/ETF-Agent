@@ -1,33 +1,13 @@
 #!/usr/bin/env python3
 """Symbol normalization and numeric field helpers."""
 
-import csv
-import http.cookiejar
-import json
-import mimetypes
-import os
-import re
-import socket
-import sys
-import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
-from datetime import datetime, time as datetime_time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from zoneinfo import ZoneInfo
 
-from .defaults import EASTMONEY_NYSE, GICS_SECTOR_ZH
+from .defaults import EASTMONEY_NYSE
 
 def stock_tuple(symbol, market):
     symbol = normalize_symbol(symbol, market)
     market = market.upper()
-    refresh_catalog()
-    entry = CATALOG_CACHE["by_key"].get((market, symbol))
-    if entry:
-        return (entry["symbol"], entry["market"], entry["yahoo_symbol"])
     yahoo = infer_yahoo_symbol(symbol, market)
     return (symbol, market, yahoo)
 
@@ -57,20 +37,6 @@ def a_share_exchange(symbol):
     return "SZSE", f"{symbol}.SZ"
 
 
-def normalize_industry(value):
-    text = str(value or "").strip()
-    if not text or text in {"-", "None", "null", "未分类"}:
-        return "未分类"
-    # Strip trailing sector level markers like "白酒Ⅱ"
-    text = re.sub(r"[ⅠⅡⅢIV]+$", "", text).strip() or text
-    # Strip leading industry code like "J66 "
-    parts = text.split(" ", 1)
-    if len(parts) == 2 and parts[0][:1].isalpha() and parts[0][1:].isdigit():
-        return parts[1]
-    return text
-def industry_needs_enrichment(value):
-    text = normalize_industry(value)
-    return text in {"未分类", "恒生成分", "标普500", "自定义"}
 def tencent_code(symbol, market, yahoo_symbol):
     if market == "A":
         return f"{'sh' if yahoo_symbol.endswith('.SS') else 'sz'}{symbol}"
@@ -126,21 +92,3 @@ def as_of(timestamp):
     if timestamp:
         return time.strftime("%Y-%m-%d %H:%M", time.localtime(timestamp))
     return time.strftime("%Y-%m-%d %H:%M")
-
-
-def scale_millions(value):
-    if value is None:
-        return 0
-    return round(value / 1_000_000)
-
-
-def growth(value, previous):
-    if not value or not previous:
-        return 0
-    return round((value - previous) / abs(previous) * 100, 1)
-
-
-def ratio(numerator, denominator):
-    if not numerator or not denominator:
-        return 0
-    return round(numerator / denominator * 100, 1)

@@ -5,13 +5,20 @@
   "quotes": {
     "provider": "tencent",
     "provider_name": "腾讯行情",
-    "note": "腾讯公开行情（按市场映射 PE/PB/市值）；缺失补齐与整批失败时东方财富兜底",
+    "note": "腾讯公开行情；缺失补齐与整批失败时东方财富兜底",
     "batch_size": 80,
     "max_age_seconds": 1800
   },
-  "sec": {
-    "enabled": true,
-    "user_agent": "StockAgent/0.1 personal-local contact@example.com"
+  "etf": {
+    "pool": [
+      { "symbol": "512890", "name": "红利低波ETF" },
+      { "symbol": "510300", "name": "沪深300ETF" },
+      { "symbol": "510500", "name": "中证500ETF" },
+      { "symbol": "159915", "name": "创业板ETF" },
+      { "symbol": "513100", "name": "纳指ETF" },
+      { "symbol": "518880", "name": "黄金ETF" }
+    ],
+    "note": "ETF 池默认种子；实际自选与持仓保存在 workspace.json"
   },
   "dividend": {
     "index_code": "H30269",
@@ -23,55 +30,13 @@
     "cache_seconds": 1800,
     "note": "红利低波日度决策：中证指数官网 + 蛋卷估值 + 东方财富国债收益率"
   },
-  "ai": {
-    "enabled": true,
-    "provider": "deepseek",
-    "provider_name": "DeepSeek",
-    "base_url": "https://api.deepseek.com",
-    "model": "deepseek-chat",
-    "api_key": "",
-    "temperature": 0.3,
-    "max_tokens": 2800,
-    "timeout_seconds": 90,
-    "note": "支持 DeepSeek / OpenAI / Moonshot / 通义 / 智谱 / SiliconFlow / OpenRouter / Groq / Ollama 等 Token 服务；API Key 仅保存在本地 config.json"
-  },
   "sources": {
     "QUOTE": [
       {
         "name": "腾讯行情",
         "url": "https://gu.qq.com/",
-        "role": "实时/延迟行情和基础估值"
-      }
-    ],
-    "A": [
-      {
-        "name": "巨潮资讯网",
-        "url": "https://www.cninfo.com.cn/new/index",
-        "role": "公告、财报与监管问询来源"
-      },
-      {
-        "name": "上交所",
-        "url": "https://www.sse.com.cn/",
-        "role": "沪市公告补充校验"
-      }
-    ],
-    "HK": [
-      {
-        "name": "HKEXnews",
-        "url": "https://www.hkexnews.hk/index.htm",
-        "role": "港股上市公司公告来源"
-      }
-    ],
-    "US": [
-      {
-        "name": "SEC EDGAR",
-        "url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-        "role": "10-K、10-Q、XBRL companyfacts 来源"
+        "role": "ETF 实时/延迟行情"
       }
     ]
-  },
-  "catalog": {
-    "cache_seconds": 21600,
-    "note": "按指数成分股动态加载：上证指数、深证综指、恒生指数、标普500"
   }
 }

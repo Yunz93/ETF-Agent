@@ -40,9 +40,8 @@ python3 -m desktop.smoke_test
 
 | Path | Purpose |
 |------|---------|
-| `~/Library/Application Support/StockAgent/workspace.json` | Watchlist, holdings, notes, prefs |
+| `~/Library/Application Support/StockAgent/workspace.json` | ETF pool (symbols, shares, cost) |
 | `~/Library/Application Support/StockAgent/config.json` | Data-source config |
-| `~/Library/Application Support/StockAgent/.catalog-cache.json` | Index constituent cache |
 | `~/Library/Application Support/StockAgent/logs/launch.log` | Desktop launch / crash diagnostics |
 
 On first desktop launch, if those files are missing, bootstrap copies matching files from the repo root when present.
@@ -176,5 +175,5 @@ Download artifacts from the Actions run summary, or from the Release page for ta
 
 - HTTP server listens on loopback only
 - No LAN bind in desktop mode
-- Network egress is limited to existing quote / catalog / SEC providers
+- Network egress is limited to existing quote / index-valuation providers (Tencent, Eastmoney, CSIndex, Danjuan, Yahoo)
 - Entitlements request only client/server network + user-selected files

@@ -52,7 +52,7 @@ def main() -> int:
             assert Path(runtime["data_dir"]) == data.resolve()
 
             # Desktop launch must succeed against a lightweight probe even when
-            # /api/health would block (catalog/quote fan-out).
+            # /api/health would block (network probe fan-out).
             from desktop.bootstrap import _wait_for_ready
 
             started = time.time()
