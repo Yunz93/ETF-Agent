@@ -13,6 +13,16 @@
     "enabled": true,
     "user_agent": "StockAgent/0.1 personal-local contact@example.com"
   },
+  "dividend": {
+    "index_code": "H30269",
+    "index_name": "红利低波",
+    "index_full_name": "中证红利低波",
+    "danjuan_code": "CSIH30269",
+    "etf_symbol": "512890",
+    "etf_name": "红利低波ETF",
+    "cache_seconds": 1800,
+    "note": "红利低波日度决策：中证指数官网 + 蛋卷估值 + 东方财富国债收益率"
+  },
   "ai": {
     "enabled": true,
     "provider": "deepseek",

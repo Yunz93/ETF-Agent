@@ -5,7 +5,7 @@ import { exportSelectedMarkdown } from "./markdown.js";
 import { restoreRoute, syncSidebarForViewport, toggleSidebar, toggleTheme } from "./navigation.js";
 import { addSymbolsToWatchlist } from "./views/watchlist.js";
 import { upsertHolding } from "./views/holdings.js";
-import { compareIndustryPeers, refreshStocks, renderCompare, renderDetail, renderHoldings, renderRows, renderWatchlist, renderWorkbench, switchView } from "./views/render.js";
+import { compareIndustryPeers, refreshStocks, renderCompare, renderDetail, renderDividend, renderHoldings, renderRows, renderWatchlist, renderWorkbench, switchView } from "./views/render.js";
 
 export function bindEvents() {
   [els.searchInput, els.industryFilter, els.valuationFilter].forEach((el) => {
@@ -119,6 +119,10 @@ export function bindEvents() {
 
   els.comparePeers?.addEventListener("click", () => {
     compareIndustryPeers();
+  });
+
+  els.dividendRefresh?.addEventListener("click", () => {
+    renderDividend({ force: true });
   });
 
   els.exportMarkdown?.addEventListener("click", exportSelectedMarkdown);

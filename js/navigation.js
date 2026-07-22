@@ -1,7 +1,7 @@
 import { PAGE_TITLES, SIDEBAR_COLLAPSE_MIN, SIDEBAR_KEY, THEME_KEY } from "./constants.js";
 import { els, provider, state } from "./state.js";
 import { renderSettings } from "./settings.js";
-import { registerRenderers, refreshStocks, renderCompare, renderDetail, renderHoldings, renderIndexSegment, renderPager, renderResearchLoadStatus, renderRows, renderWatchlist, renderWorkbench, selectStock } from "./views/render.js";
+import { registerRenderers, refreshStocks, renderCompare, renderDetail, renderDividend, renderHoldings, renderIndexSegment, renderPager, renderResearchLoadStatus, renderRows, renderWatchlist, renderWorkbench, selectStock } from "./views/render.js";
 
 export function switchView(view) {
   if (view === "dashboard") view = "workbench";
@@ -14,6 +14,7 @@ export function switchView(view) {
   if (view === "workbench") renderWorkbench();
   if (view === "watchlist") renderWatchlist();
   if (view === "holdings") renderHoldings();
+  if (view === "dividend") renderDividend();
   if (view === "research") {
     renderIndexSegment();
     renderResearchLoadStatus();

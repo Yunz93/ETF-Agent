@@ -56,6 +56,10 @@
             <span class="icon" aria-hidden="true">☰</span>
             <span class="nav-label">研究池</span>
           </button>
+          <button class="nav-item" data-view="dividend" type="button" title="红利低波">
+            <span class="icon" aria-hidden="true">◉</span>
+            <span class="nav-label">红利低波</span>
+          </button>
           <button class="nav-item" data-view="settings" type="button" title="设置">
             <span class="icon" aria-hidden="true">⚙</span>
             <span class="nav-label">设置</span>
@@ -341,6 +345,20 @@
               <div class="list-pager" id="listPager" hidden></div>
             </section>
           </div>
+        </section>
+
+        <section id="dividendView" class="view">
+          <div class="panel-heading dividend-heading">
+            <div>
+              <h2 class="section-title">红利低波 · 日度决策</h2>
+              <p class="muted dividend-lede">估值水位 → 股债性价比 → 技术位置 → 综合评分与档位 → 历史同评分回测 → 盘面结论，一屏看完今天买不买。</p>
+            </div>
+            <div class="inline-actions">
+              <button id="dividendRefresh" class="ghost-button compact" type="button">刷新数据</button>
+            </div>
+          </div>
+          <div id="dividendStatus" class="research-load-status muted" role="status">进入本页后自动加载红利低波数据</div>
+          <div id="dividendContent" class="dividend-content" hidden></div>
         </section>
 
         <section id="detailView" class="view detail-view-shell">

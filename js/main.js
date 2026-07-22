@@ -9,6 +9,7 @@ import { renderWatchlist } from "./views/watchlist.js";
 import { renderHoldings } from "./views/holdings.js";
 import { renderWorkbench, evaluateAlerts } from "./views/workbench.js";
 import { selectStock } from "./views/detail.js";
+import "./views/dividend.js";
 
 export async function init() {
   initEls();

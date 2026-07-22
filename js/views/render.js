@@ -25,6 +25,7 @@ export const renderWatchlist = (...args) => callRenderer("renderWatchlist", ...a
 export const toggleWatch = (...args) => callRenderer("toggleWatch", ...args);
 export const renderHoldings = (...args) => callRenderer("renderHoldings", ...args);
 export const renderWorkbench = (...args) => callRenderer("renderWorkbench", ...args);
+export const renderDividend = (...args) => callRenderer("renderDividend", ...args);
 export const evaluateAlerts = (...args) => callRenderer("evaluateAlerts", ...args);
 export const switchView = (...args) => callRenderer("switchView", ...args);
 export const showDetail = (...args) => callRenderer("showDetail", ...args);

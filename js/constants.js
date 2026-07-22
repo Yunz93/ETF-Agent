@@ -88,6 +88,7 @@ export const PAGE_TITLES = {
   watchlist: "自选跟踪",
   holdings: "持仓",
   research: "研究池",
+  dividend: "红利低波",
   detail: "股票详情",
   settings: "设置",
 };

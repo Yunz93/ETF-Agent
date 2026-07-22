@@ -59,6 +59,8 @@ def normalize_config(payload):
         config["catalog"].update(payload["catalog"])
     if isinstance(payload.get("sec"), dict):
         config["sec"].update(payload["sec"])
+    if isinstance(payload.get("dividend"), dict):
+        config["dividend"].update(payload["dividend"])
     if isinstance(payload.get("ai"), dict):
         config["ai"].update(payload["ai"])
         config["ai"] = normalize_ai_config(config["ai"], payload.get("ai") or {})

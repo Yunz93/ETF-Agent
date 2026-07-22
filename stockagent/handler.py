@@ -24,6 +24,7 @@ from .config_store import public_config, save_config
 from .workspace_store import get_workspace, save_workspace
 from .ai import analyze_stock_with_ai, list_ai_providers, test_ai_connection
 from .catalog import get_catalog
+from .dividend import get_dividend_dashboard
 from .quotes import get_price_history, get_quotes, get_single_quote
 from .financials import get_financials, get_sec_filings, get_sec_financials
 from .health import get_data_health, get_runtime_info
@@ -75,6 +76,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/health":
             self.send_json(get_data_health())
+            return
+        if parsed.path == "/api/dividend/daily":
+            refresh = query.get("refresh", ["0"])[0] in ("1", "true")
+            try:
+                self.send_json(get_dividend_dashboard(refresh=refresh))
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, status=500)
             return
         if parsed.path == "/api/ready":
             # Lightweight liveness for desktop launch — must not touch markets.
