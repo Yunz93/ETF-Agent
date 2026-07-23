@@ -60,7 +60,7 @@ def _notify_launch_failure(detail: str, log_path: Path | None = None) -> None:
 def _wait_for_ready(base: str, timeout: float = 15.0) -> dict:
     """Poll a lightweight endpoint until the local HTTP server accepts requests.
 
-    Do NOT use /api/health here — that route refreshes catalogs and samples quotes
+    Do NOT use /api/health here — that route probes quote and index-valuation sources
     across markets, and can exceed desktop launch budgets (causing silent quit in
     windowed .app builds). Prefer /api/ready, then fall back to /api/runtime.
     """

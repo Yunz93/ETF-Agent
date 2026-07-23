@@ -6,7 +6,6 @@ __pycache__/
 !.env.example
 workspace.json
 workspace.json.tmp
-.catalog-cache.json
 build/
 dist/
 *.spec.bak

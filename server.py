@@ -20,10 +20,9 @@ from stockagent import symbols as _symbols
 from stockagent import market_time as _market_time
 from stockagent import config_store as _config_store
 from stockagent import workspace_store as _workspace_store
-from stockagent import catalog as _catalog
+from stockagent import indicators as _indicators
 from stockagent import quotes as _quotes
-from stockagent import financials as _financials
-from stockagent import ai as _ai
+from stockagent import dividend as _dividend
 from stockagent import health as _health
 from stockagent import handler as _handler
 from stockagent import serve as _serve
@@ -36,10 +35,9 @@ from stockagent.symbols import *  # noqa: F401,F403
 from stockagent.market_time import *  # noqa: F401,F403
 from stockagent.config_store import *  # noqa: F401,F403
 from stockagent.workspace_store import *  # noqa: F401,F403
-from stockagent.catalog import *  # noqa: F401,F403
+from stockagent.indicators import *  # noqa: F401,F403
 from stockagent.quotes import *  # noqa: F401,F403
-from stockagent.financials import *  # noqa: F401,F403
-from stockagent.ai import *  # noqa: F401,F403
+from stockagent.dividend import *  # noqa: F401,F403
 from stockagent.health import *  # noqa: F401,F403
 from stockagent.handler import *  # noqa: F401,F403
 from stockagent.serve import *  # noqa: F401,F403
@@ -53,10 +51,9 @@ _MODULES = [
     _market_time,
     _config_store,
     _workspace_store,
-    _catalog,
+    _indicators,
     _quotes,
-    _financials,
-    _ai,
+    _dividend,
     _health,
     _handler,
     _serve,

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>StockAgent | 个人股票工作台</title>
+    <title>StockAgent | 指数 ETF 工作台</title>
     <script>
       (function () {
         const stored = localStorage.getItem("stockagent.theme");
@@ -35,26 +35,18 @@
           <div class="brand-mark">SA</div>
           <div class="brand-text">
             <p>StockAgent</p>
-            <span>个人股票工作台</span>
+            <span>指数 ETF 工作台</span>
           </div>
         </div>
 
         <nav class="nav-stack" aria-label="主导航">
-          <button class="nav-item active" data-view="workbench" type="button" title="今日工作台">
-            <span class="icon" aria-hidden="true">⌁</span>
-            <span class="nav-label">今日工作台</span>
+          <button class="nav-item active" data-view="dividend" type="button" title="红利低波">
+            <span class="icon" aria-hidden="true">◉</span>
+            <span class="nav-label">红利低波</span>
           </button>
-          <button class="nav-item" data-view="watchlist" type="button" title="自选跟踪">
-            <span class="icon" aria-hidden="true">◆</span>
-            <span class="nav-label">自选跟踪</span>
-          </button>
-          <button class="nav-item" data-view="holdings" type="button" title="持仓">
+          <button class="nav-item" data-view="etf" type="button" title="ETF 池">
             <span class="icon" aria-hidden="true">▣</span>
-            <span class="nav-label">持仓</span>
-          </button>
-          <button class="nav-item" data-view="research" type="button" title="研究池">
-            <span class="icon" aria-hidden="true">☰</span>
-            <span class="nav-label">研究池</span>
+            <span class="nav-label">ETF 池</span>
           </button>
           <button class="nav-item" data-view="settings" type="button" title="设置">
             <span class="icon" aria-hidden="true">⚙</span>
@@ -76,10 +68,9 @@
       <main id="main-content" class="workspace" tabindex="-1">
         <header class="topbar">
           <div>
-            <h1 id="pageTitle">今日工作台</h1>
+            <h1 id="pageTitle">红利低波</h1>
             <div class="session-strip" aria-label="数据状态摘要">
               <span><i class="status-dot"></i><strong id="topSourceStatus">行情连接中</strong></span>
-              <span id="selectedStockSummary">等待选择标的</span>
             </div>
           </div>
           <div class="topbar-actions">
@@ -89,309 +80,102 @@
           </div>
         </header>
 
-        <section id="workbenchView" class="view active">
-          <p class="workbench-lede muted">打开先看三件事：自选变了什么、持仓怎样、今天该看什么。</p>
-          <div class="metric-grid workbench-metrics" id="workbenchMetrics"></div>
-          <div class="workbench-grid workbench-questions">
-            <section class="panel-block workbench-q" data-question="changed">
-              <div class="panel-heading">
-                <div>
-                  <p class="question-kicker">一</p>
-                  <h2 class="section-title">变了什么</h2>
-                </div>
-                <div class="inline-actions">
-                  <button id="enableNotify" class="ghost-button compact" type="button">开启通知</button>
-                  <button class="ghost-button compact" data-goto="watchlist" type="button">打开自选</button>
-                </div>
-              </div>
-              <p class="question-hint muted">自选异动与价格 / 财报提醒</p>
-              <div id="workbenchChanged" class="stack-list"></div>
-            </section>
-            <section class="panel-block workbench-q" data-question="position">
-              <div class="panel-heading">
-                <div>
-                  <p class="question-kicker">二</p>
-                  <h2 class="section-title">仓位怎样</h2>
-                </div>
-                <button class="ghost-button compact" data-goto="holdings" type="button">管理持仓</button>
-              </div>
-              <p class="question-hint muted">浮盈亏、仓位占比、相对合理价</p>
-              <div id="workbenchHoldings" class="stack-list"></div>
-            </section>
-            <section class="panel-block workbench-q workbench-q-wide" data-question="today">
-              <div class="panel-heading">
-                <div>
-                  <p class="question-kicker">三</p>
-                  <h2 class="section-title">今天看什么</h2>
-                </div>
-                <span class="muted">财报 · 待复盘</span>
-              </div>
-              <p class="question-hint muted">近期财报与到期 / 久未更新的判断卡</p>
-              <div class="workbench-today-grid">
-                <div>
-                  <h3 class="subsection-title">近期财报</h3>
-                  <div id="workbenchEarnings" class="stack-list"></div>
-                </div>
-                <div>
-                  <h3 class="subsection-title">待复盘判断</h3>
-                  <div id="workbenchReviews" class="stack-list"></div>
-                </div>
-              </div>
-            </section>
-          </div>
-          <details class="panel-block alert-history-block">
-            <summary class="alert-history-summary">提醒历史</summary>
-            <div class="alert-history-toolbar">
-              <button id="clearAlertHistory" class="ghost-button compact" type="button">清空</button>
+        <section id="dividendView" class="view active">
+          <div class="panel-heading dividend-heading">
+            <div>
+              <h2 class="section-title">红利低波 · 日度决策</h2>
+              <p class="muted dividend-lede">估值水位 → 股债性价比 → 技术位置 → 综合评分与档位 → 历史同评分回测 → 盘面结论，一屏看完今天买不买。</p>
             </div>
-            <div id="alertHistory" class="stack-list"></div>
-          </details>
+            <div class="inline-actions">
+              <button id="dividendRefresh" class="ghost-button compact" type="button">刷新数据</button>
+            </div>
+          </div>
+          <div id="dividendStatus" class="research-load-status muted" role="status">进入本页后自动加载红利低波数据</div>
+          <div id="dividendContent" class="dividend-content" hidden></div>
         </section>
 
-        <section id="watchlistView" class="view">
+        <section id="etfView" class="view">
           <div class="panel-heading">
-            <h2 class="section-title">自选跟踪</h2>
+            <div>
+              <h2 class="section-title">ETF 池</h2>
+              <p class="muted dividend-lede">只跟指数 ETF：行情、持有份额与浮盈亏。点名称或「走势」查看历史 K 线。</p>
+            </div>
             <div class="inline-actions">
-              <select id="watchGroupFilter" aria-label="分组筛选">
-                <option value="all">全部分组</option>
-                <option value="core">核心仓</option>
-                <option value="watch">观察</option>
-                <option value="long">长期</option>
-              </select>
-              <select id="watchAlertFilter" aria-label="提醒筛选">
-                <option value="all">全部状态</option>
-                <option value="hit">已触及</option>
-                <option value="near">接近目标</option>
-              </select>
-              <label class="inline-label">
-                <input id="watchShowTargets" type="checkbox" />
-                显示目标价列
-              </label>
-              <button id="clearWatchlist" class="ghost-button" type="button">清空自选</button>
+              <button id="etfRefresh" class="ghost-button compact" type="button">刷新行情</button>
             </div>
           </div>
-          <form id="addSymbolForm" class="add-symbol-strip" autocomplete="off">
-            <label>
-              <span>市场</span>
-              <select id="addMarket" aria-label="添加市场">
-                <option value="A">A 股</option>
-                <option value="HK">港股</option>
-                <option value="US">美股</option>
-              </select>
-            </label>
+          <div class="metric-grid" id="etfMetrics"></div>
+          <form id="etfForm" class="add-symbol-strip" autocomplete="off">
             <label class="grow">
-              <span>代码</span>
-              <input id="addSymbol" type="text" placeholder="单个：600519；批量：600519, 0700, AAPL" required />
+              <span>ETF 代码</span>
+              <input id="etfSymbol" type="text" placeholder="例如 512890、510300、159915" required />
             </label>
-            <button class="primary-button" type="submit">加入自选</button>
-            <p id="addSymbolStatus" class="muted" role="status"></p>
+            <label>
+              <span>持有份额（可选）</span>
+              <input id="etfShares" type="number" min="0" step="any" placeholder="0" />
+            </label>
+            <label>
+              <span>成本价（可选）</span>
+              <input id="etfCost" type="number" min="0" step="any" placeholder="0" />
+            </label>
+            <button class="primary-button" type="submit">加入 ETF 池</button>
+            <p id="etfFormStatus" class="muted" role="status"></p>
           </form>
-          <p class="muted batch-hint">支持批量粘贴：逗号 / 空格 / 换行分隔；可带市场前缀如 <code>HK:0700</code>、<code>US:AAPL</code>。</p>
+          <p id="etfQuoteStatus" class="research-load-status muted" role="status">进入本页后自动加载 ETF 行情</p>
           <div class="table-wrap">
-            <table class="stock-table watch-table" id="watchTable">
+            <table class="stock-table etf-table">
               <thead>
                 <tr>
-                  <th>股票</th>
-                  <th>分组</th>
+                  <th>ETF</th>
                   <th class="num">现价</th>
                   <th class="num">涨跌</th>
-                  <th>决策</th>
-                  <th>提醒</th>
-                  <th class="num watch-extra">买入关注</th>
-                  <th class="num watch-extra">加仓</th>
-                  <th class="num watch-extra">止盈</th>
-                  <th class="num watch-extra">止损</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="watchlistRows"></tbody>
-            </table>
-          </div>
-          <div id="watchlistEmpty" class="empty-state" hidden>还没有自选股。在研究池或上方表单添加标的。</div>
-        </section>
-
-        <section id="holdingsView" class="view">
-          <div class="panel-heading">
-            <h2 class="section-title">持仓</h2>
-            <div class="inline-actions">
-              <label class="inline-label">
-                本位币
-                <select id="baseCurrency" aria-label="本位币">
-                  <option value="CNY">CNY</option>
-                  <option value="HKD">HKD</option>
-                  <option value="USD">USD</option>
-                </select>
-              </label>
-            </div>
-          </div>
-          <div class="metric-grid" id="holdingsMetrics"></div>
-          <form id="addHoldingForm" class="add-symbol-strip" autocomplete="off">
-            <label>
-              <span>市场</span>
-              <select id="holdingMarket">
-                <option value="A">A 股</option>
-                <option value="HK">港股</option>
-                <option value="US">美股</option>
-              </select>
-            </label>
-            <label>
-              <span>代码</span>
-              <input id="holdingSymbol" type="text" placeholder="代码" required />
-            </label>
-            <label>
-              <span>数量</span>
-              <input id="holdingShares" type="number" min="0" step="any" required />
-            </label>
-            <label>
-              <span>成本价</span>
-              <input id="holdingCost" type="number" min="0" step="any" required />
-            </label>
-            <button class="primary-button" type="submit">保存持仓</button>
-            <p id="holdingFormStatus" class="muted" role="status"></p>
-          </form>
-          <div class="table-wrap">
-            <table class="stock-table">
-              <thead>
-                <tr>
-                  <th>股票</th>
-                  <th class="num">数量</th>
-                  <th class="num">成本</th>
-                  <th class="num">现价</th>
+                  <th class="num">持有份额</th>
+                  <th class="num">成本价</th>
                   <th class="num">市值</th>
                   <th class="num">浮盈亏</th>
                   <th class="num">仓位</th>
-                  <th class="num">相对合理价</th>
                   <th></th>
                 </tr>
               </thead>
-              <tbody id="holdingsRows"></tbody>
+              <tbody id="etfRows"></tbody>
             </table>
           </div>
-          <div id="holdingsEmpty" class="empty-state" hidden>还没有持仓。添加数量与成本后即可跟踪浮盈亏。</div>
-        </section>
+          <div id="etfEmpty" class="empty-state" hidden>ETF 池为空。用上方表单按代码添加指数 ETF。</div>
 
-        <section id="researchView" class="view">
-          <div class="panel-heading research-heading">
-            <h2 class="section-title">研究池</h2>
-            <div class="index-segment" id="indexSegment" aria-label="指数切换"></div>
-          </div>
-          <div class="metric-grid" id="marketMetrics"></div>
-          <div id="researchLoadStatus" class="research-load-status muted" role="status">选择指数后加载成分股行情</div>
-          <section id="upcomingPanel" class="upcoming-panel" hidden aria-label="近期财报"></section>
-
-          <section class="control-strip" aria-label="搜索和筛选">
-            <label class="search-box">
-              <input id="searchInput" type="search" placeholder="搜索代码、公司名、行业" aria-label="搜索" />
-            </label>
-            <label>
-              <select id="industryFilter" aria-label="行业">
-                <option value="all">全部行业</option>
-              </select>
-            </label>
-            <label>
-              <select id="valuationFilter" aria-label="估值状态">
-                <option value="all">全部状态</option>
-                <option value="undervalued">低估区间</option>
-                <option value="fair">合理区间</option>
-                <option value="expensive">偏贵区间</option>
-                <option value="risk">风险区间</option>
-              </select>
-            </label>
-          </section>
-
-          <div class="compare-strip panel-block">
+          <section id="etfChartPanel" class="panel-block etf-chart-panel" hidden>
             <div class="panel-heading">
-              <h2 class="section-title">同业对比</h2>
-              <div class="inline-actions">
-                <button id="comparePeers" class="ghost-button compact" type="button">同行业一键对比</button>
-                <button id="clearCompare" class="ghost-button compact" type="button">清空对比</button>
+              <div>
+                <h3 class="section-title" id="etfChartTitle">走势</h3>
+                <p class="muted" id="etfChartSummary"></p>
+              </div>
+              <div class="range-segment" role="group" aria-label="走势区间">
+                <button class="segment-button js-range" data-range="1m" type="button">1M</button>
+                <button class="segment-button js-range" data-range="3m" type="button">3M</button>
+                <button class="segment-button js-range" data-range="6m" type="button">6M</button>
+                <button class="segment-button js-range active" data-range="1y" type="button">1Y</button>
+                <button class="segment-button js-range" data-range="5y" type="button">5Y</button>
               </div>
             </div>
-            <div id="compareBar" class="compare-bar muted">勾选研究池中的股票，或用「同行业一键对比」（最多 4 只）。</div>
-            <div id="compareTable" class="table-wrap"></div>
-          </div>
-
-          <div class="research-empty-hint panel-block" id="researchEmptyHint">
-            <p class="question-kicker">研究路径</p>
-            <h3 class="section-title">先选指数 → 筛行业 → 加入自选并写判断卡</h3>
-            <p class="muted">研究池按指数成分加载。用行业筛选缩小范围，勾选同业对比，再把候选放进自选跟踪。</p>
-          </div>
-
-          <div class="content-grid list-only">
-            <section class="stock-table-panel">
-              <div class="table-wrap">
-                <table class="stock-table">
-                  <thead>
-                    <tr>
-                      <th></th>
-                      <th>股票</th>
-                      <th>市场</th>
-                      <th>行业</th>
-                      <th class="num">价格</th>
-                      <th class="num">涨跌</th>
-                      <th class="num">PE</th>
-                      <th class="num">安全边际</th>
-                      <th class="num">52 周</th>
-                      <th>状态</th>
-                    </tr>
-                  </thead>
-                  <tbody id="stockRows"></tbody>
-                </table>
-              </div>
-              <div class="list-pager" id="listPager" hidden></div>
-            </section>
-          </div>
-        </section>
-
-        <section id="detailView" class="view detail-view-shell">
-          <div class="detail-subheader">
-            <button id="backToList" class="ghost-button compact" type="button">返回</button>
-            <h2 id="detailCrumb" class="section-title">选择一只股票</h2>
-            <div class="detail-actions">
-              <button id="exportMarkdown" class="ghost-button compact" type="button">导出 Markdown</button>
-              <button id="printReport" class="ghost-button compact" type="button">打印 / PDF</button>
+            <div class="price-chart-shell">
+              <canvas id="etfChart" width="960" height="360" aria-label="ETF 走势图"></canvas>
+              <div class="price-tooltip" id="etfChartTooltip" hidden></div>
             </div>
-          </div>
-          <nav class="detail-tabs" aria-label="股票详情二级目录">
-            <a href="#detail-summary">概览</a>
-            <a href="#detail-price">走势</a>
-            <a href="#detail-notes">判断卡</a>
-            <a href="#detail-more">更多</a>
-          </nav>
-          <section class="detail-panel" id="stockDetail" aria-live="polite" aria-label="股票研究票据"></section>
+          </section>
         </section>
 
         <section id="settingsView" class="view">
           <div class="settings-layout">
             <section class="settings-card">
               <div class="panel-heading settings-heading">
-                <h2 class="section-title">数据源与模型配置</h2>
+                <h2 class="section-title">数据源配置</h2>
                 <div class="settings-actions">
                   <button id="resetConfig" class="ghost-button" type="button">重新加载</button>
                   <button id="saveConfig" class="primary-button" type="button">保存配置</button>
                 </div>
               </div>
-              <p class="muted settings-note">修改后保存至项目根目录 config.json。可在下方配置 DeepSeek 等主流模型 Token 服务；行情缓存会自动刷新。需通过 python3 server.py 启动本地代理。</p>
+              <p class="muted settings-note">修改后保存至项目根目录 config.json。需通过 python3 server.py 启动本地代理。</p>
               <div id="settingsForm" class="settings-form"></div>
               <p id="settingsStatus" class="settings-status muted" role="status"></p>
-            </section>
-            <section class="settings-card">
-              <h2 class="section-title">工作台偏好</h2>
-              <div class="settings-form">
-                <label class="config-check">
-                  <input id="prefNotify" type="checkbox" />
-                  <span>允许浏览器价格 / 财报提醒</span>
-                </label>
-                <label class="config-check">
-                  <input id="prefCompact" type="checkbox" />
-                  <span>精简模式：今日工作台只保留三问</span>
-                </label>
-                <label class="config-check">
-                  <input id="prefCoreOnly" type="checkbox" />
-                  <span>工作台默认只看「核心仓」自选异动</span>
-                </label>
-                <p class="muted">提醒仅在本机浏览器生效；触及目标价或财报临近时会写入提醒历史。</p>
-              </div>
             </section>
             <section class="settings-card">
               <div class="panel-heading settings-heading">
@@ -404,7 +188,7 @@
                 </div>
               </div>
               <p class="muted settings-note">
-                自选、持仓、笔记、提醒历史与自定义标的会写入项目根目录 <code>workspace.json</code>；浏览器 localStorage 仅作缓存与离线兜底。首次启动若服务器为空，会自动迁移本地数据。
+                ETF 池（自选、份额、成本）写入项目根目录 <code>workspace.json</code>；浏览器 localStorage 仅作缓存与离线兜底。
               </p>
               <p id="workspaceStatus" class="settings-status muted" role="status">尚未同步</p>
             </section>
@@ -412,263 +196,6 @@
         </section>
       </main>
     </div>
-
-    <template id="detailTemplate">
-      <article class="report-card">
-        <div id="detail-summary" class="report-top">
-          <div>
-            <h2 class="js-name"></h2>
-            <p class="muted js-meta"></p>
-          </div>
-          <button class="watch-button js-watch" type="button"></button>
-        </div>
-
-        <div class="quote-grid">
-          <div>
-            <span>当前价</span>
-            <strong class="js-price"></strong>
-          </div>
-          <div>
-            <span>估值状态</span>
-            <strong class="js-valuation-state"></strong>
-          </div>
-          <div>
-            <span>安全边际</span>
-            <strong class="js-margin"></strong>
-          </div>
-          <div>
-            <span>综合评分</span>
-            <strong class="js-score"></strong>
-          </div>
-        </div>
-
-        <div class="metrics-grid">
-          <div>
-            <span>PE</span>
-            <strong class="js-pe"></strong>
-          </div>
-          <div>
-            <span>PB</span>
-            <strong class="js-pb"></strong>
-          </div>
-          <div>
-            <span>PS</span>
-            <strong class="js-ps"></strong>
-          </div>
-          <div>
-            <span>股息率</span>
-            <strong class="js-dividend"></strong>
-          </div>
-          <div>
-            <span>市值</span>
-            <strong class="js-market-cap"></strong>
-          </div>
-          <div>
-            <span>52 周区间</span>
-            <strong class="js-week52"></strong>
-          </div>
-        </div>
-
-        <section id="detail-price" class="price-section">
-          <div class="panel-heading">
-            <div>
-              <h3 class="section-title">价格走势</h3>
-              <p class="muted js-price-summary"></p>
-            </div>
-            <div class="range-segment" role="group" aria-label="走势区间">
-              <button class="segment-button js-range active" data-range="1m" type="button">1M</button>
-              <button class="segment-button js-range" data-range="3m" type="button">3M</button>
-              <button class="segment-button js-range" data-range="6m" type="button">6M</button>
-              <button class="segment-button js-range" data-range="1y" type="button">1Y</button>
-              <button class="segment-button js-range" data-range="5y" type="button">5Y</button>
-            </div>
-          </div>
-          <div class="price-chart-shell">
-            <canvas class="js-price-chart" width="960" height="360" aria-label="价格走势图"></canvas>
-            <div class="price-tooltip js-price-tooltip" hidden></div>
-          </div>
-          <div class="price-legend js-price-legend"></div>
-        </section>
-
-        <section id="detail-notes" class="notes-section judgment-card">
-          <h3 class="section-title">判断卡</h3>
-          <p class="muted judgment-lede">留下可回看的判断：论点、失效条件、关注价与下次复盘。</p>
-          <label>
-            <span>投资论点</span>
-            <textarea class="js-thesis" rows="3" placeholder="为什么关注？关键点是什么…"></textarea>
-          </label>
-          <label>
-            <span>失效条件</span>
-            <textarea class="js-invalidation" rows="2" placeholder="什么情况下这套判断作废？"></textarea>
-          </label>
-          <div class="judgment-grid">
-            <label>
-              <span>决策状态</span>
-              <select class="js-decision">
-                <option value="watch">观望</option>
-                <option value="buy">关注买入</option>
-                <option value="hold">持有</option>
-                <option value="trim">减仓</option>
-                <option value="exit">移出</option>
-              </select>
-            </label>
-            <label>
-              <span>关注价</span>
-              <input class="js-watch-price" type="number" step="any" min="0" placeholder="可选" />
-            </label>
-            <label>
-              <span>下次复盘</span>
-              <input class="js-review-date" type="date" />
-            </label>
-          </div>
-          <label>
-            <span>证据链接</span>
-            <textarea class="js-evidence" rows="2" placeholder="每行一个 URL，或用逗号分隔"></textarea>
-          </label>
-          <div class="inline-actions">
-            <button class="primary-button compact js-save-note" type="button">保存判断卡</button>
-            <span class="muted js-note-status"></span>
-          </div>
-        </section>
-
-        <section id="detail-ai" class="ai-section">
-          <div class="panel-heading">
-            <div>
-              <h3 class="section-title">AI 深度分析</h3>
-              <p class="muted ai-lede">调用外部大模型（DeepSeek / OpenAI 兼容）结合历史走势、估值与财报，输出可回看的研究建议。</p>
-            </div>
-            <div class="ai-controls">
-              <select class="js-ai-range" aria-label="分析历史区间">
-                <option value="3m">近 3 月</option>
-                <option value="6m">近 6 月</option>
-                <option value="1y" selected>近 1 年</option>
-                <option value="5y">近 5 年</option>
-              </select>
-              <button class="primary-button compact js-ai-analyze" type="button">开始分析</button>
-            </div>
-          </div>
-          <label class="ai-focus-label">
-            <span>额外关注点（可选）</span>
-            <textarea class="js-ai-focus" rows="2" placeholder="例如：关注分红与分红、是否适合分批建仓、和同业估值对比…"></textarea>
-          </label>
-          <div class="inline-actions ai-status-row">
-            <span class="muted js-ai-status">在设置中配置 API Key 后即可使用。</span>
-            <button class="ghost-button compact js-ai-to-thesis" type="button" hidden>写入判断卡论点</button>
-          </div>
-          <article class="ai-result js-ai-result" hidden></article>
-        </section>
-
-
-        <details id="detail-more" class="detail-more">
-          <summary class="detail-more-summary">更多分析 · 估值 / 财报 / 事件 / 来源</summary>
-          <div class="detail-more-body">
-<div id="detail-more-anchor"></div>
-<section id="detail-valuation" class="valuation-section">
-          <div class="valuation-meta">
-            <p class="muted js-valuation-method"></p>
-            <div class="scenario-grid">
-              <div>
-                <span>保守</span>
-                <strong class="js-bear"></strong>
-              </div>
-              <div>
-                <span>基准</span>
-                <strong class="js-base"></strong>
-              </div>
-              <div>
-                <span>乐观</span>
-                <strong class="js-bull"></strong>
-              </div>
-            </div>
-            <p class="muted js-peer"></p>
-          </div>
-          <div class="band-track">
-            <span class="band-segment watch">低估</span>
-            <span class="band-segment fair">合理</span>
-            <span class="band-segment expensive">偏贵</span>
-            <span class="band-segment risk">风险</span>
-            <span class="price-marker js-marker"></span>
-          </div>
-          <div class="band-labels js-band-labels"></div>
-        </section>
-
-        <section id="detail-analysis" class="analysis-block">
-          <h3 class="js-rating-label"></h3>
-          <p class="js-summary"></p>
-          <div class="score-breakdown js-breakdown"></div>
-          <div class="evidence-grid">
-            <div>
-              <h4>积极因素</h4>
-              <ul class="js-positives"></ul>
-            </div>
-            <div>
-              <h4>风险因素</h4>
-              <ul class="js-risks"></ul>
-            </div>
-          </div>
-        </section>
-
-        <section id="detail-financials" class="financial-grid">
-          <div>
-            <div class="mini-heading">
-              <span>收入</span>
-              <strong class="js-revenue-growth"></strong>
-            </div>
-            <canvas class="js-chart" data-metric="revenue" width="560" height="150"></canvas>
-          </div>
-          <div>
-            <div class="mini-heading">
-              <span>净利润</span>
-              <strong class="js-net-income"></strong>
-            </div>
-            <canvas class="js-chart" data-metric="net_income" width="560" height="150"></canvas>
-          </div>
-          <div>
-            <div class="mini-heading">
-              <span>毛利率</span>
-              <strong class="js-gross-margin"></strong>
-            </div>
-            <canvas class="js-chart" data-metric="gross_margin" width="560" height="150"></canvas>
-          </div>
-          <div>
-            <div class="mini-heading">
-              <span>负债率</span>
-              <strong class="js-debt-ratio"></strong>
-            </div>
-            <canvas class="js-chart" data-metric="debt_ratio" width="560" height="150"></canvas>
-          </div>
-        </section>
-
-                <section id="detail-events" class="events-section">
-          <h4>事件与披露</h4>
-          <div class="events-block">
-            <p class="events-label">即将到来</p>
-            <ul class="event-list js-events-upcoming"></ul>
-          </div>
-          <div class="events-block">
-            <p class="events-label">近期披露</p>
-            <ul class="event-list js-events-past"></ul>
-          </div>
-        </section>
-
-        <section id="detail-sources" class="facts-section">
-          <div>
-            <h4>估值假设</h4>
-            <ul class="js-assumptions"></ul>
-          </div>
-          <div>
-            <h4>数据来源</h4>
-            <ul class="js-sources"></ul>
-          </div>
-        </section>
-          </div>
-        </details>
-
-        <footer class="disclaimer js-disclaimer">
-          仅供研究参考，不构成投资建议。估值区间基于延迟数据和模型假设，真实投资决策需结合个人风险承受能力。
-        </footer>
-      </article>
-    </template>
 
     <script type="module" src="./js/main.js"></script>
   </body>

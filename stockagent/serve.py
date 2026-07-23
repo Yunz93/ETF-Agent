@@ -1,23 +1,8 @@
 #!/usr/bin/env python3
 """HTTP server construction and serving helpers."""
 
-import csv
-import http.cookiejar
-import json
-import mimetypes
-import os
-import re
 import socket
-import sys
-import threading
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
-from datetime import datetime, time as datetime_time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from zoneinfo import ZoneInfo
+from http.server import ThreadingHTTPServer
 
 from .paths import DATA_DIR
 from .state import CONFIG

@@ -1,68 +1,24 @@
 import { PAGE_TITLES, SIDEBAR_COLLAPSE_MIN, SIDEBAR_KEY, THEME_KEY } from "./constants.js";
-import { els, provider, state } from "./state.js";
-import { renderSettings } from "./settings.js";
-import { registerRenderers, refreshStocks, renderCompare, renderDetail, renderHoldings, renderIndexSegment, renderPager, renderResearchLoadStatus, renderRows, renderWatchlist, renderWorkbench, selectStock } from "./views/render.js";
+import { els, state } from "./state.js";
+import { registerRenderers, renderDividend, renderEtfPool, renderSettings } from "./views/render.js";
 
 export function switchView(view) {
-  if (view === "dashboard") view = "workbench";
+  if (!PAGE_TITLES[view]) view = "dividend";
   state.activeView = view;
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
   document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === `${view}View`));
   if (els.pageTitle) els.pageTitle.textContent = PAGE_TITLES[view] || "StockAgent";
   document.querySelector(`#${view}View`)?.scrollIntoView({ block: "start" });
+  if (view === "dividend") renderDividend();
+  if (view === "etf") renderEtfPool();
   if (view === "settings") renderSettings();
-  if (view === "workbench") renderWorkbench();
-  if (view === "watchlist") renderWatchlist();
-  if (view === "holdings") renderHoldings();
-  if (view === "research") {
-    renderIndexSegment();
-    renderResearchLoadStatus();
-    if (!(provider.stocksByIndex[state.index] || []).length) {
-      refreshStocks({ resetQuotes: true });
-    } else {
-      renderRows();
-      renderPager();
-      renderCompare();
-    }
-  }
-  if (view !== "detail" && location.hash.startsWith("#/stock/")) {
-    history.replaceState(null, "", location.pathname);
-  }
 }
 
-export function showDetail(stock, { updateHash = true } = {}) {
-  state.activeView = "detail";
-  document.querySelectorAll(".nav-item").forEach((button) => button.classList.remove("active"));
-  document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === "detailView"));
-  if (els.pageTitle) els.pageTitle.textContent = PAGE_TITLES.detail;
-  if (updateHash) {
-    history.pushState(null, "", `#/stock/${stock.market}/${encodeURIComponent(stock.symbol)}`);
-  }
+export function setSourceStatus(label, statusKey = "connected") {
+  if (els.topSourceStatus) els.topSourceStatus.textContent = label;
+  document.body.dataset.quoteStatus = statusKey;
 }
 
-export function showDashboard({ clearHash = false } = {}) {
-  switchView("workbench");
-  if (clearHash) history.pushState(null, "", location.pathname);
-}
-
-export async function restoreRoute() {
-  const match = location.hash.match(/^#\/stock\/(A|HK|US)\/([^/]+)$/i);
-  if (!match) return;
-  const market = match[1].toUpperCase();
-  const symbol = decodeURIComponent(match[2]).toUpperCase();
-  const stock = await provider.getStock(symbol, market);
-  if (stock) selectStock(stock, { openDetail: true, updateHash: false });
-}
-
-export function syncMarketShortcuts() {
-  // Market shortcuts removed from global topbar; index controls live in research view.
-}
-
-export function renderSourceStatus() {
-  const label = provider.status.quoteLabel || "行情连接中";
-  els.topSourceStatus.textContent = label;
-  document.body.dataset.quoteStatus = provider.status.quote || "connecting";
-}
 export function resolveTheme(stored) {
   if (stored === "light" || stored === "dark") return stored;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -115,7 +71,8 @@ export function applyTheme(theme) {
     const icon = els.themeToggle.querySelector(".theme-icon");
     if (icon) icon.textContent = theme === "dark" ? "☀" : "☾";
   }
-  if (state.selected) renderDetail();
+  if (state.activeView === "dividend") renderDividend();
+  if (state.activeView === "etf") renderEtfPool();
 }
 
 export function themeChartColors() {
@@ -127,4 +84,4 @@ export function themeChartColors() {
   };
 }
 
-registerRenderers({ switchView, showDetail, renderSourceStatus });
+registerRenderers({ switchView });
