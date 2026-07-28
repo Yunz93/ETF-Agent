@@ -148,13 +148,15 @@ class WorkspaceNormalizationTests(unittest.TestCase):
             {
                 "etfs": [
                     {"symbol": "512890", "name": "红利低波ETF", "shares": 100, "cost": 1.2},
+                    {"symbol": "563360", "shares": 0, "cost": 0},
                     {"symbol": "510300", "shares": 0, "cost": 0},
                 ]
             }
         )
         by_symbol = {item["symbol"]: item for item in workspace["etfs"]}
-        self.assertEqual(by_symbol["512890"]["target_weight"], 30)
-        self.assertEqual(by_symbol["510300"]["target_weight"], 25)
+        self.assertEqual(by_symbol["512890"]["target_weight"], 20)
+        self.assertEqual(by_symbol["563360"]["target_weight"], 20)
+        self.assertEqual(by_symbol["510300"]["target_weight"], 0)
         self.assertEqual(workspace["plan"]["cadence"], "monthly")
 
     def test_normalizes_buy_records(self):

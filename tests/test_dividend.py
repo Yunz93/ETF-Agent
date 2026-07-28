@@ -282,9 +282,18 @@ class AnalysisRoutingTests(unittest.TestCase):
         self.assertEqual(ndx["danjuan_code"], "NDX")
         self.assertEqual(ndx.get("history_symbol"), "us.NDX")
 
+        ndx_bosera = dividend.resolve_analysis_settings("513390")
+        self.assertIsNotNone(ndx_bosera)
+        self.assertEqual(ndx_bosera["index_code"], "NDX")
+        self.assertEqual(ndx_bosera.get("history_symbol"), "us.NDX")
+
         gold = dividend.resolve_analysis_settings("518880")
         self.assertIsNotNone(gold)
         self.assertEqual(gold.get("analysis_mode"), "etf_proxy")
+
+        gold_bosera = dividend.resolve_analysis_settings("159937", name="黄金ETF博时")
+        self.assertIsNotNone(gold_bosera)
+        self.assertEqual(gold_bosera.get("analysis_mode"), "etf_proxy")
 
         inferred = dividend.resolve_analysis_settings("999999", name="华安黄金ETF")
         self.assertEqual(inferred.get("analysis_mode"), "etf_proxy")
@@ -307,12 +316,16 @@ class AnalysisRoutingTests(unittest.TestCase):
         self.assertEqual(rows[1]["pe"], 12.0)
 
     def test_analysis_support_map(self):
-        items = dividend.analysis_support_map(["512890", "518880", "513100", "563360"])
+        items = dividend.analysis_support_map(["512890", "518880", "513100", "563360", "513390", "159937"])
         self.assertTrue(items["512890"]["supported"])
         self.assertTrue(items["518880"]["supported"])
         self.assertEqual(items["518880"]["mode"], "etf_proxy")
         self.assertTrue(items["513100"]["supported"])
         self.assertTrue(items["563360"]["supported"])
+        self.assertTrue(items["513390"]["supported"])
+        self.assertEqual(items["513390"]["mode"], "index")
+        self.assertTrue(items["159937"]["supported"])
+        self.assertEqual(items["159937"]["mode"], "etf_proxy")
 
 
 class ServerFacadeTests(unittest.TestCase):
