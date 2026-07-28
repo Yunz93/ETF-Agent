@@ -3,7 +3,12 @@
 import time
 
 from .dividend_analysis import analyze_dividend_data
-from .dividend_registry import _normalize_etf_symbol, resolve_analysis_settings, unsupported_analysis_payload
+from .dividend_registry import (
+    _normalize_etf_symbol,
+    proxy_valuation_note,
+    resolve_analysis_settings,
+    unsupported_analysis_payload,
+)
 from .dividend_sources import (
     fetch_danjuan_valuation,
     fetch_etf_as_index_history,
@@ -18,6 +23,15 @@ DIVIDEND_CACHE = {}
 
 def clear_dividend_cache():
     DIVIDEND_CACHE.clear()
+
+def missing_danjuan_note(has_daily_pe):
+    """蛋卷未收录该指数（如中证A500）时的降级说明。"""
+    if has_daily_pe:
+        return (
+            "蛋卷暂未收录该指数：PE 采用指数源每日序列并自算近 10 年分位；"
+            "股息率缺失，股债利差与 PB 暂缺"
+        )
+    return "蛋卷暂未收录该指数，且指数源无每日 PE：估值与股债利差暂缺，本页以行情技术面为主"
 
 def get_dividend_dashboard(refresh=False, symbol=None):
     """日度决策仪表盘。
@@ -84,9 +98,10 @@ def get_dividend_dashboard(refresh=False, symbol=None):
         except Exception as exc:
             errors["valuation"] = f"蛋卷估值不可用，改用指数源 PE：{exc}"
     elif proxy:
-        errors["valuation"] = "未匹配指数估值映射，本页以 ETF 行情技术面为主（PE/股债利差暂缺）"
+        errors["valuation"] = proxy_valuation_note(settings.get("etf_name") or etf_name)
     else:
-        errors["valuation"] = "未配置蛋卷估值代码，改用指数源 PE 序列"
+        has_daily_pe = any(row.get("pe") is not None for row in index_rows[-30:])
+        errors["valuation"] = missing_danjuan_note(has_daily_pe)
 
     if valuation and valuation.get("pe") is not None:
         fill_missing_pe(index_rows, valuation.get("pe"))
@@ -118,7 +133,10 @@ def get_dividend_dashboard(refresh=False, symbol=None):
                 "https://finance.sina.com.cn/" if index_source == "新浪财经" else "https://finance.qq.com/"
             )
             if "valuation" not in errors:
-                errors["index_pe"] = f"该指数日线来自{index_source}，无每日 PE；股债利差历史用当前估值 PE 近似"
+                errors["index_pe"] = (
+                    f"该指数日线来自{index_source}，无每日 PE；"
+                    "历史 PE 按当前估值随价格回推（盈利恒定近似），利差分位与回测仅供参考"
+                )
     if errors:
         payload["errors"] = errors
     index_source_url = {

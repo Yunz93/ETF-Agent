@@ -305,15 +305,94 @@ class AnalysisRoutingTests(unittest.TestCase):
         self.assertFalse(unsupported["supported"])
         self.assertIn("暂不支持", unsupported["error"])
 
+    def test_new_registry_mappings(self):
+        kc50 = dividend.resolve_analysis_settings("588000")
+        self.assertEqual(kc50["index_code"], "000688")
+        self.assertEqual(kc50["danjuan_code"], "SH000688")
+        self.assertEqual(kc50.get("analysis_mode"), "index")
+
+        zzhl = dividend.resolve_analysis_settings("515080")
+        self.assertEqual(zzhl["index_code"], "000922")
+        self.assertEqual(zzhl["danjuan_code"], "SH000922")
+
+        hsi = dividend.resolve_analysis_settings("159920")
+        self.assertEqual(hsi["index_code"], "HSI")
+        self.assertEqual(hsi["danjuan_code"], "HKHSI")
+        self.assertEqual(hsi.get("history_symbol"), "hkHSI")
+
+    def test_new_name_inference_rules(self):
+        kc50 = dividend.resolve_analysis_settings("588080", name="科创板50ETF易方达")
+        self.assertEqual(kc50.get("analysis_mode"), "index")
+        self.assertEqual(kc50["index_code"], "000688")
+
+        zzhl = dividend.resolve_analysis_settings("159905", name="中证红利ETF工银")
+        self.assertEqual(zzhl["index_code"], "000922")
+
+        hsi = dividend.resolve_analysis_settings("513600", name="恒生指数ETF")
+        self.assertEqual(hsi["index_code"], "HSI")
+
+        # 「红利低波」优先于「中证红利」
+        hldb = dividend.infer_mapping_from_name("中证红利低波ETF")
+        self.assertEqual(hldb["index_code"], "H30269")
+        # 「恒生科技」不被「恒生指数/恒生ETF」规则吞掉
+        hstech = dividend.infer_mapping_from_name("恒生科技ETF")
+        self.assertEqual(hstech["index_code"], "HSTECH")
+
+    def test_proxy_asset_class_and_note(self):
+        self.assertEqual(dividend.proxy_asset_class("黄金ETF博时"), "commodity")
+        self.assertEqual(dividend.proxy_asset_class("豆粕ETF"), "commodity")
+        self.assertEqual(dividend.proxy_asset_class("十年国债ETF"), "bond")
+        self.assertEqual(dividend.proxy_asset_class("短融ETF"), "bond")
+        self.assertEqual(dividend.proxy_asset_class("证券公司ETF"), "equity")
+        self.assertEqual(dividend.proxy_asset_class(""), "equity")
+
+        self.assertIn("商品类", dividend.proxy_valuation_note("黄金ETF博时"))
+        self.assertIn("不适用", dividend.proxy_valuation_note("黄金ETF博时"))
+        self.assertIn("债券/货币类", dividend.proxy_valuation_note("国开债ETF"))
+        self.assertIn("etf.analysis", dividend.proxy_valuation_note("机器人ETF"))
+
+        gold = dividend.resolve_analysis_settings("159937", name="黄金ETF博时")
+        self.assertEqual(gold.get("asset_class"), "commodity")
+
+    def test_missing_danjuan_note(self):
+        with_pe = dividend.missing_danjuan_note(True)
+        self.assertIn("蛋卷暂未收录", with_pe)
+        self.assertIn("自算近 10 年分位", with_pe)
+        without_pe = dividend.missing_danjuan_note(False)
+        self.assertIn("无每日 PE", without_pe)
+        self.assertIn("技术面为主", without_pe)
+        # A500 是当前唯一 danjuan 缺失的内置指数映射（蛋卷仅收录 63 个指数，无 000510）
+        a500 = dividend.resolve_analysis_settings("563360")
+        self.assertEqual(a500.get("danjuan_code"), "")
+        self.assertEqual(a500.get("history_source"), "csindex")
+
     def test_market_prefixed_index(self):
         self.assertEqual(dividend._market_prefixed_index("399006"), "sz399006")
         self.assertEqual(dividend._market_prefixed_index("000300"), "sh000300")
 
-    def test_fill_missing_pe(self):
-        rows = [{"date": "2024-01-02", "close": 1.0, "pe": None}, {"date": "2024-01-03", "close": 1.1, "pe": 12.0}]
+    def test_fill_missing_pe_scales_with_price(self):
+        rows = [
+            {"date": "2024-01-02", "close": 1.0, "pe": None},
+            {"date": "2024-01-03", "close": 1.1, "pe": 12.0},
+            {"date": "2024-01-04", "close": 2.0, "pe": None},
+        ]
         dividend.fill_missing_pe(rows, 44.5)
-        self.assertEqual(rows[0]["pe"], 44.5)
+        # 锚点是最后一根收盘（2.0）：pe_t = 44.5 × close_t / 2.0
+        self.assertAlmostEqual(rows[0]["pe"], 44.5 * 1.0 / 2.0, places=4)
+        # 已有真实 PE 的行不覆盖
         self.assertEqual(rows[1]["pe"], 12.0)
+        # 最新行等于当前 PE
+        self.assertAlmostEqual(rows[2]["pe"], 44.5, places=4)
+
+    def test_fill_missing_pe_guards(self):
+        self.assertEqual(dividend.fill_missing_pe([], 10), [])
+        rows = [{"date": "2024-01-02", "close": 1.0, "pe": None}]
+        dividend.fill_missing_pe(rows, None)
+        self.assertIsNone(rows[0]["pe"])
+        # 收盘全缺失时不填充、不报错
+        weird = [{"date": "2024-01-02", "close": None, "pe": None}]
+        dividend.fill_missing_pe(weird, 10)
+        self.assertIsNone(weird[0]["pe"])
 
     def test_analysis_support_map(self):
         items = dividend.analysis_support_map(["512890", "518880", "513100", "563360", "513390", "159937"])

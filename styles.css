@@ -1669,7 +1669,8 @@ button:active {
   position: relative;
   overflow: hidden;
   height: auto;
-  align-self: start;
+  /* 父容器是纵向 flex：align-self 作用于水平方向，start 会把卡片压成内容宽度 */
+  align-self: stretch;
   animation: grade-enter 420ms var(--ease-out) both;
 }
 
