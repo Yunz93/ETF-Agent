@@ -133,7 +133,10 @@ def get_dividend_dashboard(refresh=False, symbol=None):
                 "https://finance.sina.com.cn/" if index_source == "新浪财经" else "https://finance.qq.com/"
             )
             if "valuation" not in errors:
-                errors["index_pe"] = f"该指数日线来自{index_source}，无每日 PE；股债利差历史用当前估值 PE 近似"
+                errors["index_pe"] = (
+                    f"该指数日线来自{index_source}，无每日 PE；"
+                    "历史 PE 按当前估值随价格回推（盈利恒定近似），利差分位与回测仅供参考"
+                )
     if errors:
         payload["errors"] = errors
     index_source_url = {

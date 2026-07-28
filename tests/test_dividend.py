@@ -370,11 +370,29 @@ class AnalysisRoutingTests(unittest.TestCase):
         self.assertEqual(dividend._market_prefixed_index("399006"), "sz399006")
         self.assertEqual(dividend._market_prefixed_index("000300"), "sh000300")
 
-    def test_fill_missing_pe(self):
-        rows = [{"date": "2024-01-02", "close": 1.0, "pe": None}, {"date": "2024-01-03", "close": 1.1, "pe": 12.0}]
+    def test_fill_missing_pe_scales_with_price(self):
+        rows = [
+            {"date": "2024-01-02", "close": 1.0, "pe": None},
+            {"date": "2024-01-03", "close": 1.1, "pe": 12.0},
+            {"date": "2024-01-04", "close": 2.0, "pe": None},
+        ]
         dividend.fill_missing_pe(rows, 44.5)
-        self.assertEqual(rows[0]["pe"], 44.5)
+        # 锚点是最后一根收盘（2.0）：pe_t = 44.5 × close_t / 2.0
+        self.assertAlmostEqual(rows[0]["pe"], 44.5 * 1.0 / 2.0, places=4)
+        # 已有真实 PE 的行不覆盖
         self.assertEqual(rows[1]["pe"], 12.0)
+        # 最新行等于当前 PE
+        self.assertAlmostEqual(rows[2]["pe"], 44.5, places=4)
+
+    def test_fill_missing_pe_guards(self):
+        self.assertEqual(dividend.fill_missing_pe([], 10), [])
+        rows = [{"date": "2024-01-02", "close": 1.0, "pe": None}]
+        dividend.fill_missing_pe(rows, None)
+        self.assertIsNone(rows[0]["pe"])
+        # 收盘全缺失时不填充、不报错
+        weird = [{"date": "2024-01-02", "close": None, "pe": None}]
+        dividend.fill_missing_pe(weird, 10)
+        self.assertIsNone(weird[0]["pe"])
 
     def test_analysis_support_map(self):
         items = dividend.analysis_support_map(["512890", "518880", "513100", "563360", "513390", "159937"])

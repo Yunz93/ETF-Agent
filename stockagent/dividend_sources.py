@@ -203,12 +203,23 @@ def fetch_index_history(index_code, start_date="20140101", preferred_source=None
     raise RuntimeError("；".join(errors) or f"无法获取 {code} 历史数据")
 
 def fill_missing_pe(index_rows, pe):
-    """非中证源日线无 PE 时，用当前估值 PE 近似填入，便于股债利差序列计算。"""
+    """非中证源日线无 PE 时，按「盈利恒定」假设用当前 PE 随价格回推填充。
+
+    pe_t ≈ pe_now × close_t / close_now（恒定 PE 填充会让股债利差历史只随国债
+    变动，几乎失真；价格回推能保留估值波动，历史分位与回测才有意义）。
+    """
     if pe is None or not index_rows:
         return index_rows
+    anchor_close = None
+    for row in reversed(index_rows):
+        if row.get("close"):
+            anchor_close = float(row["close"])
+            break
+    if not anchor_close:
+        return index_rows
     for row in index_rows:
-        if row.get("pe") is None:
-            row["pe"] = float(pe)
+        if row.get("pe") is None and row.get("close"):
+            row["pe"] = round(float(pe) * float(row["close"]) / anchor_close, 4)
     return index_rows
 
 def fetch_danjuan_valuation(danjuan_code):
