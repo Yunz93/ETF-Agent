@@ -305,6 +305,55 @@ class AnalysisRoutingTests(unittest.TestCase):
         self.assertFalse(unsupported["supported"])
         self.assertIn("暂不支持", unsupported["error"])
 
+    def test_new_registry_mappings(self):
+        kc50 = dividend.resolve_analysis_settings("588000")
+        self.assertEqual(kc50["index_code"], "000688")
+        self.assertEqual(kc50["danjuan_code"], "SH000688")
+        self.assertEqual(kc50.get("analysis_mode"), "index")
+
+        zzhl = dividend.resolve_analysis_settings("515080")
+        self.assertEqual(zzhl["index_code"], "000922")
+        self.assertEqual(zzhl["danjuan_code"], "SH000922")
+
+        hsi = dividend.resolve_analysis_settings("159920")
+        self.assertEqual(hsi["index_code"], "HSI")
+        self.assertEqual(hsi["danjuan_code"], "HKHSI")
+        self.assertEqual(hsi.get("history_symbol"), "hkHSI")
+
+    def test_new_name_inference_rules(self):
+        kc50 = dividend.resolve_analysis_settings("588080", name="科创板50ETF易方达")
+        self.assertEqual(kc50.get("analysis_mode"), "index")
+        self.assertEqual(kc50["index_code"], "000688")
+
+        zzhl = dividend.resolve_analysis_settings("159905", name="中证红利ETF工银")
+        self.assertEqual(zzhl["index_code"], "000922")
+
+        hsi = dividend.resolve_analysis_settings("513600", name="恒生指数ETF")
+        self.assertEqual(hsi["index_code"], "HSI")
+
+        # 「红利低波」优先于「中证红利」
+        hldb = dividend.infer_mapping_from_name("中证红利低波ETF")
+        self.assertEqual(hldb["index_code"], "H30269")
+        # 「恒生科技」不被「恒生指数/恒生ETF」规则吞掉
+        hstech = dividend.infer_mapping_from_name("恒生科技ETF")
+        self.assertEqual(hstech["index_code"], "HSTECH")
+
+    def test_proxy_asset_class_and_note(self):
+        self.assertEqual(dividend.proxy_asset_class("黄金ETF博时"), "commodity")
+        self.assertEqual(dividend.proxy_asset_class("豆粕ETF"), "commodity")
+        self.assertEqual(dividend.proxy_asset_class("十年国债ETF"), "bond")
+        self.assertEqual(dividend.proxy_asset_class("短融ETF"), "bond")
+        self.assertEqual(dividend.proxy_asset_class("证券公司ETF"), "equity")
+        self.assertEqual(dividend.proxy_asset_class(""), "equity")
+
+        self.assertIn("商品类", dividend.proxy_valuation_note("黄金ETF博时"))
+        self.assertIn("不适用", dividend.proxy_valuation_note("黄金ETF博时"))
+        self.assertIn("债券/货币类", dividend.proxy_valuation_note("国开债ETF"))
+        self.assertIn("etf.analysis", dividend.proxy_valuation_note("机器人ETF"))
+
+        gold = dividend.resolve_analysis_settings("159937", name="黄金ETF博时")
+        self.assertEqual(gold.get("asset_class"), "commodity")
+
     def test_market_prefixed_index(self):
         self.assertEqual(dividend._market_prefixed_index("399006"), "sz399006")
         self.assertEqual(dividend._market_prefixed_index("000300"), "sh000300")

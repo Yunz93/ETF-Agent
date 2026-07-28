@@ -32,16 +32,41 @@ def analysis_registry():
 
 NAME_INFER_RULES = (
     (("红利低波", "红利低波动"), {"index_code": "H30269", "index_name": "红利低波", "index_full_name": "中证红利低波", "danjuan_code": "CSIH30269"}),
+    (("中证红利",), {"index_code": "000922", "index_name": "中证红利", "index_full_name": "中证红利", "danjuan_code": "SH000922", "history_source": "csindex"}),
     (("沪深300",), {"index_code": "000300", "index_name": "沪深300", "index_full_name": "沪深300", "danjuan_code": "CSI000300"}),
     (("中证500",), {"index_code": "000905", "index_name": "中证500", "index_full_name": "中证500", "danjuan_code": "CSI000905"}),
     (("中证1000",), {"index_code": "000852", "index_name": "中证1000", "index_full_name": "中证1000", "danjuan_code": "CSI000852"}),
+    (("科创50", "科创板50"), {"index_code": "000688", "index_name": "科创50", "index_full_name": "上证科创板50成份", "danjuan_code": "SH000688", "history_source": "csindex"}),
     (("创业板",), {"index_code": "399006", "index_name": "创业板指", "index_full_name": "创业板指数", "danjuan_code": "SZ399006", "history_source": "sina"}),
     (("中证A500", "A500"), {"index_code": "000510", "index_name": "中证A500", "index_full_name": "中证A500", "danjuan_code": "", "history_source": "csindex"}),
     (("上证50",), {"index_code": "000016", "index_name": "上证50", "index_full_name": "上证50", "danjuan_code": "CSI000016"}),
     (("恒生科技",), {"index_code": "HSTECH", "index_name": "恒生科技", "index_full_name": "恒生科技指数", "danjuan_code": "HKHSTECH", "history_source": "tencent", "history_symbol": "hkHSTECH"}),
+    (("恒生指数", "恒生ETF"), {"index_code": "HSI", "index_name": "恒生指数", "index_full_name": "恒生指数", "danjuan_code": "HKHSI", "history_source": "tencent", "history_symbol": "hkHSI"}),
     (("标普500", "S&P500", "SP500"), {"index_code": "SPX", "index_name": "标普500", "index_full_name": "标普500", "danjuan_code": "SP500", "history_source": "tencent", "history_symbol": "us.INX"}),
     (("纳指", "纳斯达克100", "纳斯达克"), {"index_code": "NDX", "index_name": "纳斯达克100", "index_full_name": "纳斯达克100", "danjuan_code": "NDX", "history_source": "tencent", "history_symbol": "us.NDX"}),
 )
+
+# 代理模式（无指数映射）下按名称粗分资产类别，用于给出准确的降级说明。
+PROXY_ASSET_RULES = (
+    ("commodity", ("黄金", "白银", "贵金属", "豆粕", "原油", "石油", "天然气", "能源化工", "有色", "商品", "饲料")),
+    ("bond", ("国债", "政金债", "金融债", "信用债", "城投债", "短融", "债券", "转债", "可转债", "货币", "存单", "国开")),
+)
+
+PROXY_VALUATION_NOTES = {
+    "commodity": "黄金/商品类 ETF 没有 PE、股息率等股票估值口径，本页以行情技术面为主（估值与股债利差不适用）",
+    "bond": "债券/货币类 ETF 没有股票估值口径，本页以行情技术面为主（估值与股债利差不适用）",
+    "equity": "该 ETF 暂未收录指数估值映射，本页以行情技术面为主（PE/股债利差暂缺）；可在 config.json 的 etf.analysis 添加映射",
+}
+
+def proxy_asset_class(name):
+    text = str(name or "")
+    for asset_class, keywords in PROXY_ASSET_RULES:
+        if any(key in text for key in keywords):
+            return asset_class
+    return "equity"
+
+def proxy_valuation_note(name):
+    return PROXY_VALUATION_NOTES[proxy_asset_class(name)]
 
 def infer_mapping_from_name(name):
     text = str(name or "")
@@ -66,6 +91,7 @@ def etf_proxy_settings(symbol, name=""):
         "danjuan_code": "",
         "history_source": "etf",
         "analysis_mode": "etf_proxy",
+        "asset_class": proxy_asset_class(label),
     }
 
 def resolve_analysis_settings(symbol=None, name=""):

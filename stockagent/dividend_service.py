@@ -3,7 +3,12 @@
 import time
 
 from .dividend_analysis import analyze_dividend_data
-from .dividend_registry import _normalize_etf_symbol, resolve_analysis_settings, unsupported_analysis_payload
+from .dividend_registry import (
+    _normalize_etf_symbol,
+    proxy_valuation_note,
+    resolve_analysis_settings,
+    unsupported_analysis_payload,
+)
 from .dividend_sources import (
     fetch_danjuan_valuation,
     fetch_etf_as_index_history,
@@ -84,7 +89,7 @@ def get_dividend_dashboard(refresh=False, symbol=None):
         except Exception as exc:
             errors["valuation"] = f"蛋卷估值不可用，改用指数源 PE：{exc}"
     elif proxy:
-        errors["valuation"] = "未匹配指数估值映射，本页以 ETF 行情技术面为主（PE/股债利差暂缺）"
+        errors["valuation"] = proxy_valuation_note(settings.get("etf_name") or etf_name)
     else:
         errors["valuation"] = "未配置蛋卷估值代码，改用指数源 PE 序列"
 
