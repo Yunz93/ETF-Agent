@@ -10,12 +10,13 @@ export const PAGE_TITLES = {
 
 /** 种子池目标仓位（%），与后端 DEFAULT_TARGET_WEIGHTS 对齐 */
 export const DEFAULT_TARGET_WEIGHTS = {
-  "512890": 30,
-  "510300": 25,
-  "510500": 15,
-  "159915": 15,
-  "513100": 10,
-  "518880": 5,
+  "563360": 20,
+  "513390": 15,
+  "513500": 15,
+  "563020": 15,
+  "512890": 20,
+  "513010": 10,
+  "159937": 5,
 };
 
 export const PLAN_CADENCE_LABELS = {

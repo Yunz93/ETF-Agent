@@ -19,10 +19,10 @@ test("workspace source prefers server, then local cache, then defaults", () => {
 test("legacy workspace entries receive default target weights", () => {
   const entries = normalizeWorkspaceEntries([
     { symbol: "512890", shares: 100, cost: 1.2 },
-    { symbol: "510300", shares: -1, cost: "bad" },
+    { symbol: "563360", shares: -1, cost: "bad" },
   ]);
-  assert.equal(entries[0].target_weight, 30);
-  assert.equal(entries[1].target_weight, 25);
+  assert.equal(entries[0].target_weight, 20);
+  assert.equal(entries[1].target_weight, 20);
   assert.equal(entries[1].shares, 0);
   assert.equal(entries[1].cost, 0);
 });

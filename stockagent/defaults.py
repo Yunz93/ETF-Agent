@@ -2,12 +2,13 @@
 """Static defaults and provider constants for the index-ETF workbench."""
 
 DEFAULT_ETF_POOL = [
-    {"symbol": "512890", "name": "红利低波ETF"},
-    {"symbol": "510300", "name": "沪深300ETF"},
-    {"symbol": "510500", "name": "中证500ETF"},
-    {"symbol": "159915", "name": "创业板ETF"},
-    {"symbol": "513100", "name": "纳指ETF"},
-    {"symbol": "518880", "name": "黄金ETF"},
+    {"symbol": "563360", "name": "A500ETF华泰柏瑞"},
+    {"symbol": "513390", "name": "纳指100ETF博时"},
+    {"symbol": "513500", "name": "标普500ETF博时"},
+    {"symbol": "563020", "name": "红利低波ETF易方达"},
+    {"symbol": "512890", "name": "红利低波ETF华泰柏瑞"},
+    {"symbol": "513010", "name": "恒生科技ETF易方达"},
+    {"symbol": "159937", "name": "黄金ETF博时"},
 ]
 
 # 完整估值分析需要指数日线 +（尽量）蛋卷估值；未收录 ETF 使用自身行情做技术面分析。
@@ -104,6 +105,15 @@ ETF_ANALYSIS_REGISTRY = {
         "history_source": "tencent",
         "history_symbol": "us.NDX",
     },
+    "513390": {
+        "index_code": "NDX",
+        "index_name": "纳斯达克100",
+        "index_full_name": "纳斯达克100",
+        "danjuan_code": "NDX",
+        "etf_name": "纳指100ETF博时",
+        "history_source": "tencent",
+        "history_symbol": "us.NDX",
+    },
 }
 
 ETF_ANALYSIS_FIELDS = (
@@ -147,12 +157,13 @@ DEFAULT_WORKSPACE = {
 
 # 种子池目标仓位（合计 100），仅用于首次初始化
 DEFAULT_TARGET_WEIGHTS = {
-    "512890": 30,
-    "510300": 25,
-    "510500": 15,
-    "159915": 15,
-    "513100": 10,
-    "518880": 5,
+    "563360": 20,
+    "513390": 15,
+    "513500": 15,
+    "563020": 15,
+    "512890": 20,
+    "513010": 10,
+    "159937": 5,
 }
 
 DEFAULT_CONFIG = {
@@ -175,7 +186,7 @@ DEFAULT_CONFIG = {
         "index_full_name": "中证红利低波",
         "danjuan_code": "CSIH30269",
         "etf_symbol": "512890",
-        "etf_name": "红利低波ETF",
+        "etf_name": "红利低波ETF华泰柏瑞",
         "cache_seconds": 1800,
         "note": "红利低波日度决策：中证指数官网 + 蛋卷估值 + 东方财富国债收益率",
     },
