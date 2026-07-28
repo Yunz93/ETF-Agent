@@ -42,7 +42,7 @@ def _notify_launch_failure(detail: str, log_path: Path | None = None) -> None:
     print(text, file=sys.stderr)
     if sys.platform == "darwin":
         script = (
-            f'display alert "StockAgent 启动失败" message {json.dumps(text[:900])} '
+            f'display alert "ETF Agent 启动失败" message {json.dumps(text[:900])} '
             f'as critical buttons {{"好"}} default button 1'
         )
         try:
@@ -78,7 +78,7 @@ def _wait_for_ready(base: str, timeout: float = 15.0) -> dict:
                 if not isinstance(payload, dict):
                     last_error = RuntimeError(f"unexpected payload from {url}: {payload!r}")
                     continue
-                if payload.get("ready") is True or payload.get("app") == "StockAgent":
+                if payload.get("ready") is True or payload.get("app") == "ETF Agent":
                     return payload
                 last_error = RuntimeError(f"unexpected payload from {url}: {payload!r}")
             except Exception as exc:  # noqa: BLE001 - startup probe
@@ -158,7 +158,7 @@ def run(width: int = 1280, height: int = 860, debug: bool = False) -> int:
     def on_about():
         window = window_holder["window"]
         detail = (
-            f"StockAgent Desktop {runtime.get('version') or APP_VERSION}\n"
+            f"ETF Agent Desktop {runtime.get('version') or APP_VERSION}\n"
             f"数据目录：{runtime.get('data_dir') or data_path}\n"
             f"模式：{runtime.get('mode') or 'desktop'}"
         )
@@ -223,7 +223,7 @@ def run(width: int = 1280, height: int = 860, debug: bool = False) -> int:
     )
 
     window = webview.create_window(
-        "StockAgent",
+        "ETF Agent",
         url=base,
         width=width,
         height=height,
@@ -248,7 +248,7 @@ def run(width: int = 1280, height: int = 860, debug: bool = False) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="StockAgent macOS / desktop shell")
+    parser = argparse.ArgumentParser(description="ETF Agent macOS / desktop shell")
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=860)
     parser.add_argument("--debug", action="store_true", help="Open webview DevTools when supported")

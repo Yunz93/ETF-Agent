@@ -227,7 +227,9 @@ class AnalyzeTests(unittest.TestCase):
         self.assertTrue(payload["commentary"][-1].startswith("结论"))
         self.assertGreaterEqual(payload["backtest"]["samples"], 0)
         chart = payload["chart"]
-        self.assertLessEqual(len(chart["points"]), 160)
+        self.assertEqual(len(chart["points"]), len(self.index_rows))
+        self.assertEqual(chart["available_from"], self.index_rows[0]["date"])
+        self.assertEqual(chart["available_to"], self.index_rows[-1]["date"])
         self.assertIsNotNone(chart["markers"]["boll_mid"])
 
     def test_note_text_contains_expected_sections(self):
@@ -252,6 +254,65 @@ class AnalyzeTests(unittest.TestCase):
         self.assertIsNotNone(payload["valuation"]["pe_percentile_10y"])
         self.assertIsNotNone(payload["score"]["total"])
         self.assertIn("今日盘面：", payload["note_text"])
+
+
+class AnalysisRoutingTests(unittest.TestCase):
+    def test_resolve_default_and_registry(self):
+        default = dividend.resolve_analysis_settings(None)
+        self.assertEqual(default["etf_symbol"], "512890")
+        self.assertEqual(default["index_code"], "H30269")
+
+        hs300 = dividend.resolve_analysis_settings("510300")
+        self.assertIsNotNone(hs300)
+        self.assertEqual(hs300["index_code"], "000300")
+        self.assertEqual(hs300["danjuan_code"], "CSI000300")
+
+        cyb = dividend.resolve_analysis_settings("159915")
+        self.assertIsNotNone(cyb)
+        self.assertEqual(cyb["index_code"], "399006")
+        self.assertEqual(cyb["danjuan_code"], "SZ399006")
+        self.assertEqual(cyb.get("history_source"), "sina")
+
+        a500 = dividend.resolve_analysis_settings("563360")
+        self.assertIsNotNone(a500)
+        self.assertEqual(a500["index_code"], "000510")
+
+        ndx = dividend.resolve_analysis_settings("513100")
+        self.assertIsNotNone(ndx)
+        self.assertEqual(ndx["danjuan_code"], "NDX")
+        self.assertEqual(ndx.get("history_symbol"), "us.NDX")
+
+        gold = dividend.resolve_analysis_settings("518880")
+        self.assertIsNotNone(gold)
+        self.assertEqual(gold.get("analysis_mode"), "etf_proxy")
+
+        inferred = dividend.resolve_analysis_settings("999999", name="华安黄金ETF")
+        self.assertEqual(inferred.get("analysis_mode"), "etf_proxy")
+
+        by_name = dividend.infer_mapping_from_name("某红利低波ETF联接")
+        self.assertEqual(by_name["index_code"], "H30269")
+
+        unsupported = dividend.unsupported_analysis_payload("518880", "黄金ETF")
+        self.assertFalse(unsupported["supported"])
+        self.assertIn("暂不支持", unsupported["error"])
+
+    def test_market_prefixed_index(self):
+        self.assertEqual(dividend._market_prefixed_index("399006"), "sz399006")
+        self.assertEqual(dividend._market_prefixed_index("000300"), "sh000300")
+
+    def test_fill_missing_pe(self):
+        rows = [{"date": "2024-01-02", "close": 1.0, "pe": None}, {"date": "2024-01-03", "close": 1.1, "pe": 12.0}]
+        dividend.fill_missing_pe(rows, 44.5)
+        self.assertEqual(rows[0]["pe"], 44.5)
+        self.assertEqual(rows[1]["pe"], 12.0)
+
+    def test_analysis_support_map(self):
+        items = dividend.analysis_support_map(["512890", "518880", "513100", "563360"])
+        self.assertTrue(items["512890"]["supported"])
+        self.assertTrue(items["518880"]["supported"])
+        self.assertEqual(items["518880"]["mode"], "etf_proxy")
+        self.assertTrue(items["513100"]["supported"])
+        self.assertTrue(items["563360"]["supported"])
 
 
 class ServerFacadeTests(unittest.TestCase):

@@ -108,7 +108,7 @@ def get_runtime_info():
     root = resource_root()
     index = resolve_static_path("/index.html")
     return {
-        "app": "StockAgent",
+        "app": "ETF Agent",
         "version": version,
         "mode": "desktop" if os.environ.get("STOCKAGENT_DESKTOP") == "1" else "server",
         "resource_root": str(root),

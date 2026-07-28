@@ -33,7 +33,7 @@ def build_menu(
 
     help_items = []
     if on_about:
-        help_items.append(MenuAction("关于 StockAgent", on_about))
+        help_items.append(MenuAction("关于 ETF Agent", on_about))
 
     menus = []
     if file_items:

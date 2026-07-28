@@ -55,6 +55,21 @@ def normalize_config(payload):
             config["etf"]["pool"] = pool
         if etf.get("note"):
             config["etf"]["note"] = str(etf["note"]).strip()
+        analysis = {}
+        raw_analysis = etf.get("analysis") or {}
+        if isinstance(raw_analysis, dict):
+            for key, value in raw_analysis.items():
+                symbol = "".join(ch for ch in str(key or "") if ch.isdigit()).zfill(6)
+                if len(symbol) != 6 or not isinstance(value, dict):
+                    continue
+                entry = {
+                    field: str(value[field]).strip()
+                    for field in ETF_ANALYSIS_FIELDS
+                    if value.get(field) is not None and str(value[field]).strip()
+                }
+                if entry.get("index_code"):
+                    analysis[symbol] = entry
+        config["etf"]["analysis"] = analysis
     if isinstance(payload.get("sources"), dict):
         items = payload["sources"].get("QUOTE")
         if isinstance(items, list):
@@ -71,7 +86,22 @@ def normalize_config(payload):
 
 
 def public_config(config=None):
-    return json.loads(json.dumps(config if config is not None else CONFIG))
+    payload = json.loads(json.dumps(config if config is not None else CONFIG))
+    try:
+        from .defaults import ETF_ANALYSIS_REGISTRY
+        from .dividend import analysis_support_map
+
+        registry = {symbol: dict(entry) for symbol, entry in ETF_ANALYSIS_REGISTRY.items()}
+        custom = (payload.get("etf") or {}).get("analysis") or {}
+        if isinstance(custom, dict):
+            for symbol, entry in custom.items():
+                if isinstance(entry, dict):
+                    registry[symbol] = {**registry.get(symbol, {}), **entry}
+        payload.setdefault("etf", {})["analysis_registry"] = registry
+        payload["etf"]["analysis_support"] = analysis_support_map()
+    except Exception:
+        payload.setdefault("etf", {})["analysis_support"] = {}
+    return payload
 
 
 def save_config(payload):
@@ -80,6 +110,12 @@ def save_config(payload):
     CONFIG_PATH.write_text(json.dumps(CONFIG, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     QUOTE_CACHE["expires"] = 0
     QUOTE_MARKET_CACHE.clear()
+    try:
+        from .dividend import clear_dividend_cache
+
+        clear_dividend_cache()
+    except Exception:
+        pass
     return CONFIG
 
 

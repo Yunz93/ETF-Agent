@@ -1,12 +1,28 @@
-import { els } from "../state.js";
-import { escapeHtml } from "../utils.js";
-import { drawPriceChart } from "../chart.js";
-import { registerRenderers } from "./render.js";
+import { els, state, appConfig } from "../state.js";
+import { escapeHtml, money, signed } from "../utils.js";
+import { analysisSupported, INDEX_CHART_RANGE_MONTHS, INDEX_CHART_RANGE_LABELS } from "../constants.js";
+import { valuationDcaMultiplier, rebalanceHint, allocatePoolBudget, allocationForSymbol } from "../strategy.js";
+import { buildPoolHoldingsForAllocation } from "../pool-alloc.js";
+import { drawPriceChart, buyEventMarkers } from "../chart.js";
+import { callRenderer, registerRenderers } from "./render.js";
 
-let payload = null;
 let loadingPromise = null;
+let loadingKey = null;
+let indexChartBound = false;
 
 const GRADE_TONES = { A: "grade-a", B: "grade-b", C: "grade-c", D: "grade-d", E: "grade-e" };
+
+function cacheKey(symbol) {
+  return symbol || "__default__";
+}
+
+function currentPayload() {
+  return state.analysisCache[cacheKey(state.analysisSymbol)] || null;
+}
+
+function setCurrentPayload(payload) {
+  state.analysisCache[cacheKey(state.analysisSymbol)] = payload;
+}
 
 function fmt(value, digits = 2, suffix = "") {
   if (value == null || Number.isNaN(Number(value))) return "—";
@@ -19,23 +35,82 @@ function fmtSigned(value, digits = 2, suffix = "") {
   return `${number > 0 ? "+" : ""}${number.toFixed(digits)}${suffix}`;
 }
 
+function syncAnalysisChrome(payload) {
+  const symbol = state.analysisSymbol;
+  const indexName = payload?.index_name || payload?.name || symbol || "指数";
+  const etfName = payload?.etf?.symbol_name || payload?.etf?.name || payload?.etf_name || "";
+  const title = etfName || indexName || symbol || "分析";
+
+  if (els.pageTitle) els.pageTitle.textContent = title;
+  if (els.dividendEyebrow) {
+    els.dividendEyebrow.textContent = symbol ? `Analysis · ${symbol}` : "Analysis";
+  }
+  if (els.dividendSectionTitle) {
+    els.dividendSectionTitle.textContent = `${indexName} · 今日位置`;
+  }
+  if (els.dividendLede) {
+    const proxy = payload?.analysis_mode === "etf_proxy";
+    els.dividendLede.textContent = symbol
+      ? proxy
+        ? `${symbol}${etfName ? ` · ${etfName}` : ""} · ETF 口径`
+        : `${symbol}${etfName ? ` · ${etfName}` : ""}`
+      : "看档位、估值分位与年线位置。";
+  }
+}
+
 async function loadDividend(force = false) {
-  if (loadingPromise) return loadingPromise;
+  const symbol = state.analysisSymbol;
+  const key = cacheKey(symbol);
+  if (!force && state.analysisCache[key] != null) {
+    return state.analysisCache[key];
+  }
+  if (loadingPromise && loadingKey === key) return loadingPromise;
+
+  loadingKey = key;
   loadingPromise = (async () => {
-    if (els.dividendStatus) els.dividendStatus.textContent = "正在拉取红利低波数据（指数历史 / 估值 / 国债收益率 / ETF 行情）…";
+    const label = symbol || "分析";
+    if (els.dividendStatus) {
+      els.dividendStatus.textContent = `正在拉取 ${label} 数据（指数历史 / 估值 / 国债收益率 / ETF 行情）…`;
+    }
     try {
-      const response = await fetch(`/api/dividend/daily${force ? "?refresh=1" : ""}`);
-      payload = await response.json();
+      const params = new URLSearchParams();
+      if (force) params.set("refresh", "1");
+      if (symbol) params.set("symbol", symbol);
+      const query = params.toString();
+      const response = await fetch(`/api/dividend/daily${query ? `?${query}` : ""}`);
+      const payload = await response.json();
+      setCurrentPayload(payload);
+      syncAnalysisChrome(payload);
       if (els.dividendStatus) {
-        els.dividendStatus.textContent = payload.error
-          ? `红利低波数据不可用：${payload.error}`
-          : `数据更新于 ${payload.updated_at || "—"} · 指数收盘日 ${payload.index?.date || "—"}`;
+        if (payload.supported === false) {
+          els.dividendStatus.textContent = payload.error || "暂不支持完整估值分析";
+        } else {
+          els.dividendStatus.textContent = payload.error
+            ? `数据不可用：${payload.error}`
+            : `数据更新于 ${payload.updated_at || "—"} · 指数收盘日 ${payload.index?.date || "—"}`;
+        }
       }
+      if (els.topSourceStatus) {
+        els.topSourceStatus.textContent =
+          payload.supported === false
+            ? "分析不可用"
+            : payload.error
+              ? `分析不可用：${payload.error}`
+              : payload.etf?.provider || "分析数据已就绪";
+      }
+      document.body.dataset.quoteStatus =
+        payload.supported === false || payload.error ? "error" : "connected";
+      return payload;
     } catch (error) {
-      payload = { error: String(error) };
-      if (els.dividendStatus) els.dividendStatus.textContent = `红利低波数据不可用：${error}`;
+      const payload = { supported: false, error: String(error), symbol };
+      setCurrentPayload(payload);
+      if (els.dividendStatus) els.dividendStatus.textContent = `数据不可用：${error}`;
+      return payload;
     } finally {
-      loadingPromise = null;
+      if (loadingKey === key) {
+        loadingPromise = null;
+        loadingKey = null;
+      }
     }
   })();
   return loadingPromise;
@@ -43,17 +118,48 @@ async function loadDividend(force = false) {
 
 export async function renderDividend({ force = false } = {}) {
   if (!els.dividendContent) return;
-  if (!payload || force) {
-    els.dividendContent.hidden = payload == null;
+  const cached = currentPayload();
+  if (!cached || force) {
+    els.dividendContent.hidden = cached == null;
     await loadDividend(force);
+  } else {
+    syncAnalysisChrome(cached);
   }
   paintDividend();
 }
 
+/** 打开某只池内 ETF 的分析页；symbol 为空则回到红利低波快捷入口。 */
+/** 打开某只池内 ETF 的分析页。 */
+export async function openAnalysis(symbol = null) {
+  if (!symbol) {
+    const preferred = appConfig?.dividend?.etf_symbol || "512890";
+    symbol = state.etfs.find((item) => item.symbol === preferred)?.symbol || state.etfs[0]?.symbol || null;
+  }
+  if (!symbol) {
+    callRenderer("switchView", "etf");
+    return;
+  }
+  state.analysisSymbol = symbol;
+  state.activeView = "dividend";
+  document.querySelectorAll(".nav-item").forEach((button) => button.classList.remove("active"));
+  document.querySelectorAll(".view").forEach((section) => {
+    section.classList.toggle("active", section.id === "dividendView");
+  });
+  callRenderer("renderSidebarEtfs");
+  const cached = state.analysisCache[cacheKey(symbol)];
+  const forceRefresh =
+    Boolean(cached?.error) ||
+    (cached?.supported === false && analysisSupported(appConfig, symbol));
+  await renderDividend({ force: forceRefresh });
+  document.querySelector("#dividendView")?.scrollIntoView({ block: "start" });
+}
+
 function scoreCardHtml() {
+  const payload = currentPayload() || {};
   const score = payload.score || {};
   const backtest = payload.backtest || {};
   const tone = GRADE_TONES[score.grade] || "grade-c";
+  const grade = score.grade || "—";
   const components = (score.components || [])
     .map((component) => {
       const width = component.score == null ? 0 : Math.max(2, Math.min(100, component.score));
@@ -67,18 +173,15 @@ function scoreCardHtml() {
     })
     .join("");
   const backtestLine = backtest.samples
-    ? `历史同评分（±${backtest.band}分）共 ${backtest.samples} 个交易日样本：往后 ${backtest.horizon_days} 天平均收益 <strong>${fmtSigned(backtest.avg_return_pct, 1, "%")}</strong>，胜率 <strong>${fmt(backtest.win_rate_pct, 0, "%")}</strong>（${escapeHtml(backtest.label || "")}；区间 ${fmtSigned(backtest.worst_pct, 1, "%")} ~ ${fmtSigned(backtest.best_pct, 1, "%")}）`
+    ? `同评分 ±${backtest.band} · ${backtest.samples} 日样本 · ${backtest.horizon_days} 日均 <strong>${fmtSigned(backtest.avg_return_pct, 1, "%")}</strong> · 胜率 <strong>${fmt(backtest.win_rate_pct, 0, "%")}</strong>（${escapeHtml(backtest.label || "")} · ${fmtSigned(backtest.worst_pct, 1, "%")} ~ ${fmtSigned(backtest.best_pct, 1, "%")}）`
     : "历史同评分样本不足，暂无回测参考。";
   return `
-    <section class="panel-block dividend-score-card ${tone}">
+    <section class="panel-block dividend-score-card ${tone}" aria-label="综合评分档位">
       <div class="dividend-score-main">
-        <div class="dividend-score-number">
-          <strong>${score.total == null ? "—" : Math.round(score.total)}</strong>
-          <span>综合评分</span>
-        </div>
-        <div class="dividend-score-grade">
-          <span class="dividend-grade-badge">${escapeHtml(score.grade || "—")}档</span>
-          <p>${escapeHtml(score.action || "数据不足")}</p>
+        <div class="dividend-grade-mark" aria-hidden="true">${escapeHtml(grade)}</div>
+        <div class="dividend-score-copy">
+          <p class="dividend-grade-kicker">${escapeHtml(grade)} 档 · 综合评分</p>
+          <strong class="dividend-score-total">${score.total == null ? "—" : Math.round(score.total)}</strong>
         </div>
       </div>
       <div class="dividend-components">${components}</div>
@@ -88,6 +191,7 @@ function scoreCardHtml() {
 }
 
 function metricsHtml() {
+  const payload = currentPayload() || {};
   const etf = payload.etf || {};
   const index = payload.index || {};
   const valuation = payload.valuation || {};
@@ -105,24 +209,27 @@ function metricsHtml() {
   const pePct = valuation.pe_percentile_10y;
   const cards = [
     {
-      label: "现价 / 单日",
-      value: `${fmt(price, priceDigits)} <em class="${changeClass}">${fmtSigned(change, 2, "%")}</em>`,
-      sub: priceSub,
+      label: "PE 近 10 年分位",
+      value: pePct == null ? "—" : `${Math.round(pePct * 100)}<em>%</em>`,
+      sub: `PE ${fmt(valuation.pe, 2)} · PB ${fmt(valuation.pb, 2)}`,
+      priority: true,
     },
     {
       label: "年线乖离",
       value: fmtSigned(technicals.bias_pct, 2, "%"),
       sub: `MA250 ${fmt(technicals.ma250, 2)}`,
+      priority: true,
     },
     {
-      label: "股息率 vs 十年国债",
-      value: `${fmt(valuation.dividend_yield_pct, 2, "%")} / ${fmt(bond.yield10y, 2, "%")}`,
-      sub: `股债利差 ${fmt(spread.value, 2)}，${escapeHtml(spread.label || "—")}`,
+      label: "股债利差",
+      value: fmt(spread.value, 2),
+      sub: `股息 ${fmt(valuation.dividend_yield_pct, 2, "%")} / 国债 ${fmt(bond.yield10y, 2, "%")} · ${escapeHtml(spread.label || "—")}`,
+      priority: true,
     },
     {
-      label: "PE / PB",
-      value: `${fmt(valuation.pe, 2)} / ${fmt(valuation.pb, 2)}`,
-      sub: pePct == null ? "PE 分位数据不足" : `PE 近 10 年 ${Math.round(pePct * 100)} 分位`,
+      label: "现价 / 单日",
+      value: `${fmt(price, priceDigits)} <em class="${changeClass}">${fmtSigned(change, 2, "%")}</em>`,
+      sub: priceSub,
     },
     {
       label: "RSI(14)",
@@ -137,8 +244,8 @@ function metricsHtml() {
   ];
   return cards
     .map(
-      (card) => `
-        <div class="metric-card dividend-metric">
+      (card, index) => `
+        <div class="metric-card dividend-metric${card.priority ? " metric-priority" : ""}" style="--stagger:${index}">
           <span>${card.label}</span>
           <strong>${card.value}</strong>
           <small class="muted">${card.sub}</small>
@@ -149,13 +256,224 @@ function metricsHtml() {
 }
 
 function commentaryHtml() {
-  const lines = payload.commentary || [];
+  const lines = (currentPayload() || {}).commentary || [];
   if (!lines.length) return '<p class="muted">暂无盘面点评。</p>';
   return `<ol class="dividend-commentary">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol>`;
 }
 
+function portfolioWeight(symbol) {
+  const entry = state.etfs.find((item) => item.symbol === symbol);
+  if (!entry) return { entry: null, actualWeight: null, targetWeight: null };
+  let totalValue = 0;
+  let value = null;
+  state.etfs.forEach((item) => {
+    const quote = state.quotesBySymbol[item.symbol];
+    const price = quote?.price;
+    if (price != null && item.shares > 0) {
+      const v = price * item.shares;
+      totalValue += v;
+      if (item.symbol === symbol) value = v;
+    }
+  });
+  const actualWeight = value != null && totalValue > 0 ? (value / totalValue) * 100 : null;
+  const targetWeight = Number(entry.target_weight) > 0 ? Number(entry.target_weight) : null;
+  return { entry, actualWeight, targetWeight };
+}
+
+function dcaAdviceHtml() {
+  const payload = currentPayload() || {};
+  const score = payload.score || {};
+  const grade = score.grade || "—";
+  const pePct = payload.valuation?.pe_percentile_10y;
+  const bias = payload.technicals?.bias_pct;
+  const proxy = payload.analysis_mode === "etf_proxy";
+  const plan = state.plan || {};
+  const symbol = state.analysisSymbol || payload.symbol || "";
+  const { entry, actualWeight, targetWeight } = portfolioWeight(symbol);
+
+  const grid = valuationDcaMultiplier({ pePct, grade });
+  const pool = allocatePoolBudget({
+    budget: plan.amount,
+    holdings: buildPoolHoldingsForAllocation({ preferLive: currentPayload() }),
+  });
+  const mine = allocationForSymbol(pool, symbol);
+  const myAmount = mine?.amount ?? 0;
+
+  let headline;
+  if (!(plan.amount > 0)) {
+    headline = "先在定投计划设置「全池每期预算」";
+  } else if (pool.deployTotal <= 0) {
+    headline = "本期建议不投，保留现金";
+  } else if (myAmount > 0) {
+    headline = `本期建议投入 ${money(myAmount)}`;
+  } else {
+    headline = "建议不投";
+  }
+
+  const bullets = [];
+  bullets.push(`${grid.band} · ${grid.mult}×`);
+  if (mine && myAmount > 0) {
+    bullets.push(`约占全池部署 ${mine.sharePct.toFixed(0)}%`);
+  } else if (symbol && plan.amount > 0) {
+    const skipped = (pool.skipped || []).find((item) => item.symbol === symbol);
+    bullets.push(skipped ? skipped.reason : "本期未分到额度");
+  }
+
+  if (targetWeight != null) {
+    bullets.push(
+      `目标 ${targetWeight.toFixed(1)}%${actualWeight != null ? ` · 实际 ${actualWeight.toFixed(1)}%` : ""}`,
+    );
+    const rb = rebalanceHint({
+      targetWeight,
+      actualWeight,
+      name: entry?.name || payload.etf_name || symbol,
+    });
+    if (rb) bullets.push(rb);
+  }
+
+  if (pePct != null) {
+    bullets.push(`PE 分位约 ${Math.round(pePct * 100)}%`);
+  } else if (proxy) {
+    bullets.push("ETF 口径，无 PE 分位");
+  }
+  if (bias != null) {
+    bullets.push(`年线乖离 ${fmtSigned(bias, 2, "%")}`);
+  }
+
+  return `
+    <section class="panel-block dividend-advice ${GRADE_TONES[grade] || "grade-c"}" aria-label="本只定投建议">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">This ETF</p>
+          <h2 class="section-title">定投建议</h2>
+        </div>
+        <span class="dividend-advice-grade">${escapeHtml(grade)} · ${escapeHtml(grid.band)}</span>
+      </div>
+      <p class="dividend-advice-headline">${escapeHtml(headline)}</p>
+      <ul class="dividend-advice-list">
+        ${bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function operationPlan(grade, technicals, pePct) {
+  const plan = state.plan || {};
+  const symbol = state.analysisSymbol || currentPayload()?.symbol || "";
+  const grid = valuationDcaMultiplier({ pePct, grade });
+  const pool = allocatePoolBudget({
+    budget: plan.amount,
+    holdings: buildPoolHoldingsForAllocation({ preferLive: currentPayload() }),
+  });
+  const mine = allocationForSymbol(pool, symbol);
+  const ma250 = technicals?.ma250;
+  const bollMid = technicals?.boll?.mid;
+  const triggers = [];
+  if (!(plan.amount > 0)) triggers.push("先设置全池预算");
+  else if (pool.deployTotal <= 0) triggers.push("全池暂缓，留现金");
+  else if (mine && mine.amount > 0) triggers.push(`本只用 ${money(mine.amount)}`);
+  else triggers.push("本只不投");
+  if (ma250 != null) triggers.push(`年线 ${fmt(ma250, 2)}`);
+  if (bollMid != null) triggers.push(`布林中轨 ${fmt(bollMid, 2)}`);
+
+  return [
+    { label: "估值倍率", value: `${grid.mult}×` },
+    { label: "全池预算", value: plan.amount > 0 ? money(plan.amount) : "未设置" },
+    { label: "全池部署", value: plan.amount > 0 ? `${money(pool.deployTotal)}（留现金 ${money(pool.cashKeep)}）` : "—" },
+    { label: "本只建议", value: mine ? money(mine.amount) : grid.mult <= 0 ? "不投" : "—" },
+    { label: "执行要点", value: triggers.join("；") },
+  ];
+}
+
+function holdingsPanel(symbol, price) {
+  const entry = state.etfs.find((item) => item.symbol === symbol);
+  if (!entry || !(entry.shares > 0)) {
+    return `
+      <div class="dividend-holdings empty">
+        <p class="muted">计划内暂无持仓份额。</p>
+      </div>
+    `;
+  }
+  const cost = entry.cost > 0 ? entry.cost : null;
+  const value = price != null ? price * entry.shares : null;
+  const costValue = cost != null ? cost * entry.shares : null;
+  const pnl = value != null && costValue != null ? value - costValue : null;
+  const pnlPct = pnl != null && costValue ? (pnl / costValue) * 100 : null;
+  const vsCost = price != null && cost != null ? ((price - cost) / cost) * 100 : null;
+  // 简单加仓参考：成本下方 3% / 5% 作为分批参考价
+  const add1 = cost != null ? cost * 0.97 : null;
+  const add2 = cost != null ? cost * 0.95 : null;
+  const rows = [
+    ["目标仓位", entry.target_weight > 0 ? `${Number(entry.target_weight).toFixed(1)}%` : "未设置"],
+    ["持有份额", entry.shares.toLocaleString("zh-CN")],
+    ["成本价", cost != null ? cost.toFixed(3) : "—"],
+    ["现价", price != null ? Number(price).toFixed(3) : "—"],
+    ["市值", value != null ? money(value) : "—"],
+    ["浮盈亏", pnl != null ? `${money(pnl)}（${signed(pnlPct, 1)}%）` : "—"],
+    ["相对成本", vsCost != null ? `${signed(vsCost, 2)}%` : "—"],
+  ];
+  return `
+    <div class="dividend-holdings">
+      <dl class="dividend-holdings-grid">
+        ${rows
+          .map(
+            ([label, valueText]) => `
+          <div>
+            <dt>${escapeHtml(label)}</dt>
+            <dd class="${label === "浮盈亏" && pnl != null ? (pnl > 0 ? "up" : pnl < 0 ? "down" : "") : ""}">${valueText}</dd>
+          </div>
+        `,
+          )
+          .join("")}
+      </dl>
+      ${
+        add1 != null
+          ? `<p class="muted dividend-holdings-hint">加仓参考：${add1.toFixed(3)} / ${add2.toFixed(3)}（成本 -3% / -5%）</p>`
+          : `<p class="muted dividend-holdings-hint">补成本价后可生成加仓参考。</p>`
+      }
+    </div>
+  `;
+}
+
+function auxPanelHtml() {
+  const payload = currentPayload() || {};
+  const grade = payload.score?.grade || "—";
+  const technicals = payload.technicals || {};
+  const price = payload.etf?.price != null ? payload.etf.price : payload.index?.close;
+  const symbol = state.analysisSymbol || payload.symbol || payload.etf?.symbol || "";
+  const steps = operationPlan(grade, technicals, payload.valuation?.pe_percentile_10y);
+
+  return `
+    <section class="panel-block dividend-aux" aria-label="操作清单与持仓对照">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Playbook</p>
+          <h2 class="section-title">操作清单</h2>
+        </div>
+      </div>
+      <ul class="dividend-playbook">
+        ${steps
+          .map(
+            (step) => `
+          <li>
+            <span>${escapeHtml(step.label)}</span>
+            <strong>${escapeHtml(step.value)}</strong>
+          </li>
+        `,
+          )
+          .join("")}
+      </ul>
+      <div class="dividend-aux-divider">
+        <p class="eyebrow">Holdings</p>
+        <h3 class="section-title">持仓对照</h3>
+      </div>
+      ${holdingsPanel(symbol, price)}
+    </section>
+  `;
+}
+
 function sourcesHtml() {
-  const sources = payload.sources || [];
+  const sources = (currentPayload() || {}).sources || [];
   return sources
     .map(
       (source) =>
@@ -165,56 +483,100 @@ function sourcesHtml() {
 }
 
 function errorsHtml() {
-  const errors = payload.errors || {};
+  const errors = (currentPayload() || {}).errors || {};
   const entries = Object.values(errors);
   if (!entries.length) return "";
   return `<p class="dividend-degraded muted">部分数据降级：${entries.map((entry) => escapeHtml(entry)).join("；")}</p>`;
 }
 
+function buildIndexChartMarkers(payload) {
+  const markers = [];
+  const markerValues = payload?.chart?.markers || {};
+  if (markerValues.ma250 != null) markers.push({ key: "fair", label: "年线 MA250", value: markerValues.ma250 });
+  if (markerValues.boll_mid != null) markers.push({ key: "add", label: "布林中轨", value: markerValues.boll_mid });
+  if (markerValues.boll_upper != null) markers.push({ key: "tp", label: "布林上轨", value: markerValues.boll_upper });
+  if (markerValues.boll_lower != null) markers.push({ key: "sl", label: "布林下轨", value: markerValues.boll_lower });
+  const symbol = state.analysisSymbol || payload?.symbol || "";
+  markers.push(
+    ...buyEventMarkers(
+      (state.buys || []).filter((item) => item.symbol === symbol),
+      { useBuyPrice: false },
+    ),
+  );
+  return markers;
+}
+
 function paintDividend() {
   if (!els.dividendContent) return;
+  const payload = currentPayload();
   if (!payload) return;
-  if (payload.error) {
+
+  if (payload.supported === false) {
     els.dividendContent.hidden = false;
-    els.dividendContent.innerHTML = `<div class="empty-state">红利低波数据加载失败：${escapeHtml(payload.error)}<br />请确认本机可以访问中证指数官网 / 蛋卷基金 / 东方财富，然后点右上角「刷新数据」。</div>`;
+    els.dividendContent.innerHTML = `
+      <div class="empty-state analysis-unsupported">
+        <p class="eyebrow">Unsupported</p>
+        <h3 class="section-title">${escapeHtml(payload.name || payload.symbol || state.analysisSymbol || "该 ETF")}</h3>
+        <p>${escapeHtml(payload.error || "暂不支持完整估值分析")}</p>
+        <p class="muted">${escapeHtml(payload.reason || "缺少指数/估值映射。")}</p>
+      </div>
+    `;
     return;
   }
+
+  if (payload.error && !payload.score) {
+    els.dividendContent.hidden = false;
+    els.dividendContent.innerHTML = `<div class="empty-state">分析数据加载失败：${escapeHtml(payload.error)}<br />请确认本机可以访问中证指数官网 / 蛋卷基金 / 东方财富，然后点「刷新」。</div>`;
+    return;
+  }
+
   els.dividendContent.hidden = false;
   els.dividendContent.innerHTML = `
     ${errorsHtml()}
     <div class="dividend-hero">
-      ${scoreCardHtml()}
-      <div class="metric-grid dividend-metrics">${metricsHtml()}</div>
+      <div class="dividend-hero-main">
+        ${scoreCardHtml()}
+        ${dcaAdviceHtml()}
+      </div>
+      <div class="dividend-hero-aside">
+        <div class="metric-grid dividend-metrics">${metricsHtml()}</div>
+        ${auxPanelHtml()}
+      </div>
     </div>
     <section class="panel-block dividend-chart-block">
       <div class="panel-heading">
         <div>
-          <h2 class="section-title">指数走势 · 年线与布林带</h2>
-          <p class="muted">近 ${(payload.chart?.points || []).length} 个交易日 · ${escapeHtml(payload.index_full_name || "")}（${escapeHtml(payload.index_code || "")}）</p>
+          <p class="eyebrow">Chart</p>
+          <h2 class="section-title">指数走势 · 年线与布林</h2>
+          <p class="muted" id="indexChartSummary">加载区间… · ${escapeHtml(payload.index_full_name || "")}（${escapeHtml(payload.index_code || "")}）</p>
+        </div>
+        <div class="range-segment" role="group" aria-label="指数走势区间">
+          ${Object.entries(INDEX_CHART_RANGE_LABELS)
+            .map(
+              ([key, label]) => `
+            <button class="segment-button js-index-range${state.indexChartRange === key ? " active" : ""}" data-index-range="${key}" type="button">${label}</button>
+          `,
+            )
+            .join("")}
         </div>
       </div>
       <div class="price-chart-shell">
-        <canvas id="dividendChart" width="960" height="360" aria-label="红利低波指数走势"></canvas>
+        <canvas id="dividendChart" width="960" height="360" aria-label="指数走势"></canvas>
         <div class="price-tooltip" id="dividendChartTooltip" hidden></div>
       </div>
     </section>
-    <div class="dividend-columns">
-      <section class="panel-block">
-        <div class="panel-heading"><h2 class="section-title">今日盘面</h2><span class="muted">规则化点评</span></div>
-        ${commentaryHtml()}
-      </section>
-      <section class="panel-block">
-        <div class="panel-heading">
-          <h2 class="section-title">笔记文本</h2>
-          <div class="inline-actions">
-            <button id="dividendCopyNote" class="ghost-button compact" type="button">复制笔记</button>
-          </div>
+    <section class="panel-block">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Tape</p>
+          <h2 class="section-title">今日盘面</h2>
         </div>
-        <p class="muted">小红书风格日更笔记，复制即可发布。</p>
-        <textarea id="dividendNoteText" class="dividend-note" rows="16" readonly>${escapeHtml(payload.note_text || "")}</textarea>
-      </section>
-    </div>
+        <span class="muted">规则点评</span>
+      </div>
+      ${commentaryHtml()}
+    </section>
     <section class="panel-block dividend-sources">
+      <p class="eyebrow">Sources</p>
       <h2 class="section-title">数据来源</h2>
       <ul>${sourcesHtml()}</ul>
       ${payload.spread?.note ? `<p class="muted">口径说明：${escapeHtml(payload.spread.note)}。</p>` : ""}
@@ -224,30 +586,60 @@ function paintDividend() {
 
   const canvas = els.dividendContent.querySelector("#dividendChart");
   const tooltip = els.dividendContent.querySelector("#dividendChartTooltip");
-  const markers = [];
-  const markerValues = payload.chart?.markers || {};
-  if (markerValues.ma250 != null) markers.push({ key: "fair", label: "年线 MA250", value: markerValues.ma250 });
-  if (markerValues.boll_mid != null) markers.push({ key: "add", label: "布林中轨", value: markerValues.boll_mid });
-  if (markerValues.boll_upper != null) markers.push({ key: "tp", label: "布林上轨", value: markerValues.boll_upper });
-  if (markerValues.boll_lower != null) markers.push({ key: "sl", label: "布林下轨", value: markerValues.boll_lower });
-  if (canvas) drawPriceChart(canvas, tooltip, payload.chart?.points || [], markers, "CNY", null);
+  drawIndexChart(payload, canvas, tooltip, buildIndexChartMarkers(payload));
+  bindIndexChartRangeControls();
+}
 
-  const copyButton = els.dividendContent.querySelector("#dividendCopyNote");
-  copyButton?.addEventListener("click", async () => {
-    const textarea = els.dividendContent.querySelector("#dividendNoteText");
-    if (!textarea) return;
-    try {
-      await navigator.clipboard.writeText(textarea.value);
-      copyButton.textContent = "已复制";
-    } catch {
-      textarea.select();
-      document.execCommand("copy");
-      copyButton.textContent = "已复制";
-    }
-    setTimeout(() => {
-      copyButton.textContent = "复制笔记";
-    }, 2000);
+function sliceIndexChartPoints(points, rangeKey) {
+  if (!Array.isArray(points) || !points.length) return [];
+  const months = INDEX_CHART_RANGE_MONTHS[rangeKey];
+  if (months == null) return points;
+  const lastDate = points[points.length - 1]?.date;
+  if (!lastDate) return points;
+  const end = new Date(`${lastDate}T00:00:00`);
+  if (Number.isNaN(end.getTime())) return points;
+  const start = new Date(end);
+  start.setMonth(start.getMonth() - months);
+  const startStr = start.toISOString().slice(0, 10);
+  const sliced = points.filter((point) => point.date >= startStr);
+  return sliced.length ? sliced : points;
+}
+
+function drawIndexChart(payload, canvas, tooltip, markers) {
+  if (!canvas) return;
+  const allPoints = payload?.chart?.points || [];
+  const points = sliceIndexChartPoints(allPoints, state.indexChartRange || "1y");
+  const summary = els.dividendContent?.querySelector("#indexChartSummary");
+  if (summary) {
+    const label = INDEX_CHART_RANGE_LABELS[state.indexChartRange] || "1Y";
+    const from = points[0]?.date || payload?.chart?.available_from || "—";
+    const to = points[points.length - 1]?.date || payload?.chart?.available_to || "—";
+    const name = payload?.index_full_name || "";
+    const code = payload?.index_code || "";
+    const buyCount = (markers || []).filter((item) => item?.date && item.key === "buy").length;
+    summary.textContent = `${label} · ${points.length} 个交易日（${from} → ${to}） · ${name}${code ? `（${code}）` : ""} · 共可看 ${allPoints.length} 日${buyCount ? ` · 买入点 ${buyCount}` : ""}`;
+  }
+  drawPriceChart(canvas, tooltip, points, markers || [], "CNY", null);
+}
+
+function bindIndexChartRangeControls() {
+  if (!els.dividendContent || indexChartBound) return;
+  indexChartBound = true;
+  els.dividendContent.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-index-range]");
+    if (!button || !els.dividendContent.contains(button)) return;
+    const next = button.dataset.indexRange;
+    if (!next || next === state.indexChartRange) return;
+    state.indexChartRange = next;
+    els.dividendContent.querySelectorAll("[data-index-range]").forEach((node) => {
+      node.classList.toggle("active", node.dataset.indexRange === next);
+    });
+    const payload = currentPayload();
+    if (!payload) return;
+    const canvas = els.dividendContent.querySelector("#dividendChart");
+    const tooltip = els.dividendContent.querySelector("#dividendChartTooltip");
+    drawIndexChart(payload, canvas, tooltip, buildIndexChartMarkers(payload));
   });
 }
 
-registerRenderers({ renderDividend });
+registerRenderers({ renderDividend, openAnalysis });

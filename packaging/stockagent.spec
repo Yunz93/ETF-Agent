@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(SPECPATH).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from desktop.version import APP_NAME, BUNDLE_ID, __version__, build_number  # noqa: E402
+from desktop.version import APP_NAME, BUNDLE_ID, DISPLAY_NAME, __version__, build_number  # noqa: E402
 
 ICON_ICNS = ROOT / "packaging" / "icons" / "StockAgent.icns"
 ICON_PNG = ROOT / "packaging" / "icons" / "icon-1024.png"
@@ -52,6 +52,11 @@ hiddenimports = [
     "stockagent.indicators",
     "stockagent.quotes",
     "stockagent.dividend",
+    "stockagent.dividend_constants",
+    "stockagent.dividend_registry",
+    "stockagent.dividend_sources",
+    "stockagent.dividend_analysis",
+    "stockagent.dividend_service",
     "stockagent.health",
     "stockagent.handler",
     "stockagent.serve",
@@ -116,8 +121,8 @@ app = BUNDLE(
     icon=ICON,
     bundle_identifier=BUNDLE_ID,
     info_plist={
-        "CFBundleName": APP_NAME,
-        "CFBundleDisplayName": APP_NAME,
+        "CFBundleName": DISPLAY_NAME,
+        "CFBundleDisplayName": DISPLAY_NAME,
         "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleShortVersionString": __version__,
         "CFBundleVersion": str(build_number()),

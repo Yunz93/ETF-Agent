@@ -1,15 +1,119 @@
-import { ETF_QUOTE_TTL_MS } from "../constants.js";
-import { els, state } from "../state.js";
+import { ETF_QUOTE_TTL_MS, PLAN_CADENCE_LABELS, analysisIsFullIndex } from "../constants.js";
+import { appConfig, els, state } from "../state.js";
 import { escapeAttr, escapeHtml, money, normalizeEtfSymbol, signed } from "../utils.js";
-import { drawPriceChart } from "../chart.js";
+import { drawPriceChart, buyEventMarkers } from "../chart.js";
 import { setSourceStatus } from "../navigation.js";
 import { persistWorkspace } from "../workspace.js";
-import { registerRenderers } from "./render.js";
+import { poolAllocationHtml } from "../pool-alloc.js";
+import { openAnalysis, registerRenderers } from "./render.js";
 
 let quotesPromise = null;
 
 function poolSymbols() {
   return state.etfs.map((item) => item.symbol);
+}
+
+function clampWeight(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  return Math.min(100, Math.round(number * 100) / 100);
+}
+
+function moveEtfRelative(fromSymbol, toSymbol, placeAfter = false) {
+  if (!fromSymbol || !toSymbol || fromSymbol === toSymbol) return false;
+  const from = state.etfs.findIndex((item) => item.symbol === fromSymbol);
+  if (from < 0) return false;
+  const [item] = state.etfs.splice(from, 1);
+  let to = state.etfs.findIndex((entry) => entry.symbol === toSymbol);
+  if (to < 0) {
+    state.etfs.push(item);
+    return true;
+  }
+  if (placeAfter) to += 1;
+  state.etfs.splice(to, 0, item);
+  return true;
+}
+
+function commitEtfOrder() {
+  persistWorkspace();
+  renderMetrics();
+  renderRows();
+  renderSidebarEtfs();
+}
+
+const dragBound = new WeakSet();
+
+function bindDragReorder(container, { itemSelector, handleSelector = null } = {}) {
+  if (!container || dragBound.has(container)) return;
+  dragBound.add(container);
+  let dragSymbol = null;
+  let suppressClick = false;
+
+  container.addEventListener("dragstart", (event) => {
+    const handle = handleSelector ? event.target.closest(handleSelector) : event.target.closest(itemSelector);
+    if (!handle || !container.contains(handle)) return;
+    const item = event.target.closest(itemSelector);
+    if (!item || !container.contains(item)) return;
+    dragSymbol = item.dataset.symbol;
+    if (!dragSymbol) return;
+    suppressClick = false;
+    item.classList.add("is-dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", dragSymbol);
+  });
+
+  container.addEventListener("dragover", (event) => {
+    const item = event.target.closest(itemSelector);
+    if (!item || !dragSymbol || item.dataset.symbol === dragSymbol) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const rect = item.getBoundingClientRect();
+    const after = event.clientY > rect.top + rect.height / 2;
+    container.querySelectorAll(".drag-over, .drag-over-after").forEach((node) => {
+      if (node !== item) node.classList.remove("drag-over", "drag-over-after");
+    });
+    item.classList.toggle("drag-over", !after);
+    item.classList.toggle("drag-over-after", after);
+  });
+
+  container.addEventListener("dragleave", (event) => {
+    const item = event.target.closest(itemSelector);
+    if (item && !item.contains(event.relatedTarget)) {
+      item.classList.remove("drag-over", "drag-over-after");
+    }
+  });
+
+  container.addEventListener("drop", (event) => {
+    const item = event.target.closest(itemSelector);
+    if (!item || !dragSymbol) return;
+    event.preventDefault();
+    const toSymbol = item.dataset.symbol;
+    const rect = item.getBoundingClientRect();
+    const placeAfter = event.clientY > rect.top + rect.height / 2;
+    item.classList.remove("drag-over", "drag-over-after");
+    if (moveEtfRelative(dragSymbol, toSymbol, placeAfter)) {
+      suppressClick = true;
+      commitEtfOrder();
+    }
+  });
+
+  container.addEventListener("dragend", () => {
+    container.querySelectorAll(".is-dragging, .drag-over, .drag-over-after").forEach((node) => {
+      node.classList.remove("is-dragging", "drag-over", "drag-over-after");
+    });
+    dragSymbol = null;
+  });
+
+  container.addEventListener(
+    "click",
+    (event) => {
+      if (!suppressClick) return;
+      event.preventDefault();
+      event.stopPropagation();
+      suppressClick = false;
+    },
+    true,
+  );
 }
 
 async function refreshQuotes(force = false) {
@@ -61,8 +165,7 @@ function entryMetrics(entry) {
   return { quote, price, value, costValue, pnl, pnlPct };
 }
 
-function renderMetrics() {
-  if (!els.etfMetrics) return;
+function portfolioTotals() {
   let totalValue = 0;
   let totalCost = 0;
   let held = 0;
@@ -74,13 +177,74 @@ function renderMetrics() {
     }
     if (costValue != null) totalCost += costValue;
   });
+  const targetSum = state.etfs.reduce((sum, entry) => sum + (Number(entry.target_weight) || 0), 0);
+  return { totalValue, totalCost, held, targetSum };
+}
+
+function syncPlanForm() {
+  const plan = state.plan || {};
+  if (els.planName) els.planName.value = plan.name || "";
+  if (els.planAmount) els.planAmount.value = plan.amount > 0 ? plan.amount : "";
+  if (els.planCadence) els.planCadence.value = plan.cadence || "monthly";
+  if (els.planDay) {
+    els.planDay.value = plan.day || 1;
+    els.planDay.max = plan.cadence === "monthly" ? "28" : "7";
+  }
+  if (els.planNote) els.planNote.value = plan.note || "";
+  if (els.planDayHint) {
+    els.planDayHint.textContent = plan.cadence === "monthly" ? "执行日（号）" : "执行日（周几 1–7）";
+  }
+}
+
+export function readPlanFormIntoState() {
+  if (!state.plan) state.plan = {};
+  const cadence = els.planCadence?.value || "monthly";
+  let day = Number.parseInt(els.planDay?.value, 10);
+  if (!Number.isFinite(day)) day = 1;
+  if (cadence === "monthly") day = Math.min(28, Math.max(1, day));
+  else day = Math.min(7, Math.max(1, day));
+  const amount = Number(els.planAmount?.value);
+  state.plan = {
+    name: String(els.planName?.value || "").trim() || "默认定投计划",
+    amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
+    cadence,
+    day,
+    note: String(els.planNote?.value || "").trim(),
+  };
+  if (els.planDay) {
+    els.planDay.max = cadence === "monthly" ? "28" : "7";
+    els.planDay.value = String(day);
+  }
+  if (els.planDayHint) {
+    els.planDayHint.textContent = cadence === "monthly" ? "执行日（号）" : "执行日（周几 1–7）";
+  }
+}
+
+function renderMetrics() {
+  if (!els.etfMetrics) return;
+  const { totalValue, totalCost, held, targetSum } = portfolioTotals();
   const pnl = totalCost ? totalValue - totalCost : null;
   const pnlPct = totalCost ? ((totalValue - totalCost) / totalCost) * 100 : null;
+  const plan = state.plan || {};
+  const cadenceLabel = PLAN_CADENCE_LABELS[plan.cadence] || "每月";
+  const dayLabel = plan.cadence === "monthly" ? `${plan.day || 1} 号` : `周${plan.day || 1}`;
+  const targetClass = Math.abs(targetSum - 100) < 0.05 ? "" : targetSum > 100.05 ? "down" : "up";
+  let maxDrift = null;
+  if (totalValue > 0) {
+    state.etfs.forEach((entry) => {
+      const { value } = entryMetrics(entry);
+      const actual = value != null ? (value / totalValue) * 100 : 0;
+      const drift = actual - (Number(entry.target_weight) || 0);
+      if (maxDrift == null || Math.abs(drift) > Math.abs(maxDrift)) maxDrift = drift;
+    });
+  }
   const cards = [
-    ["池内 ETF", `${state.etfs.length} 只`],
-    ["有持仓", `${held} 只`],
+    ["全池预算", plan.amount > 0 ? `${money(plan.amount)} · ${cadenceLabel}${dayLabel}` : `${cadenceLabel}${dayLabel}`],
+    ["计划内 ETF", `${state.etfs.length} 只 · 持仓 ${held}`],
+    ["目标合计", `<span class="${targetClass}">${targetSum.toFixed(1)}%</span>`],
     ["组合市值", totalValue ? money(totalValue) : "—"],
     ["浮盈亏", pnl != null ? `${money(pnl)}（${signed(pnlPct, 1)}%）` : "—"],
+    ["最大偏离", maxDrift != null ? `${signed(maxDrift, 1)} pp` : "—"],
   ];
   els.etfMetrics.innerHTML = cards
     .map(
@@ -102,27 +266,36 @@ function renderRows() {
     return;
   }
   if (els.etfEmpty) els.etfEmpty.hidden = true;
-  const totalValue = state.etfs.reduce((sum, entry) => {
-    const { value } = entryMetrics(entry);
-    return sum + (value || 0);
-  }, 0);
+  const { totalValue } = portfolioTotals();
   els.etfRows.innerHTML = state.etfs
     .map((entry) => {
       const { quote, price, value, pnl, pnlPct } = entryMetrics(entry);
       const change = quote?.change_pct;
       const changeClass = change > 0 ? "up" : change < 0 ? "down" : "";
-      const weight = value != null && totalValue ? (value / totalValue) * 100 : null;
+      const actualWeight = value != null && totalValue ? (value / totalValue) * 100 : null;
+      const target = Number(entry.target_weight) || 0;
+      const drift = actualWeight != null ? actualWeight - target : null;
+      const driftClass = drift != null ? (drift > 0.5 ? "up" : drift < -0.5 ? "down" : "") : "";
       const selected = state.selectedEtf === entry.symbol;
+      const fullIndex = analysisIsFullIndex(appConfig, entry.symbol);
       return `
         <tr class="${selected ? "etf-row-selected" : ""}" data-symbol="${escapeAttr(entry.symbol)}">
+          <td class="etf-drag-cell">
+            <span class="etf-drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序">⋮⋮</span>
+          </td>
           <td>
-            <button class="link-button etf-name" data-chart="${escapeAttr(entry.symbol)}" type="button" title="查看走势">
+            <button class="link-button etf-name" data-analyze="${escapeAttr(entry.symbol)}" type="button" title="打开定投分析">
               <strong>${escapeHtml(entry.name || quote?.name || entry.symbol)}</strong>
-              <span class="muted">${escapeHtml(entry.symbol)}</span>
+              <span class="muted">${escapeHtml(entry.symbol)}${fullIndex ? "" : " · ETF 口径"}</span>
             </button>
           </td>
           <td class="num">${price != null ? price.toFixed(3) : "—"}</td>
           <td class="num ${changeClass}">${change != null ? `${signed(change)}%` : "—"}</td>
+          <td class="num etf-input-cell">
+            <input type="number" min="0" max="100" step="any" value="${target || ""}" placeholder="0" data-field="target_weight" data-symbol="${escapeAttr(entry.symbol)}" aria-label="目标仓位" />
+          </td>
+          <td class="num">${actualWeight != null ? `${actualWeight.toFixed(1)}%` : "—"}</td>
+          <td class="num ${driftClass}">${drift != null ? `${signed(drift, 1)}` : "—"}</td>
           <td class="num etf-input-cell">
             <input type="number" min="0" step="any" value="${entry.shares || ""}" placeholder="0" data-field="shares" data-symbol="${escapeAttr(entry.symbol)}" aria-label="持有份额" />
           </td>
@@ -133,9 +306,7 @@ function renderRows() {
           <td class="num ${pnl > 0 ? "up" : pnl < 0 ? "down" : ""}">${
             pnl != null ? `${money(pnl)}<br /><small>${signed(pnlPct, 1)}%</small>` : "—"
           }</td>
-          <td class="num">${weight != null ? `${weight.toFixed(1)}%` : "—"}</td>
           <td class="etf-actions">
-            <button class="ghost-button compact" data-chart="${escapeAttr(entry.symbol)}" type="button">走势</button>
             <button class="ghost-button compact danger" data-remove="${escapeAttr(entry.symbol)}" type="button">移除</button>
           </td>
         </tr>
@@ -148,10 +319,16 @@ function renderRows() {
       const entry = state.etfs.find((item) => item.symbol === input.dataset.symbol);
       if (!entry) return;
       const value = Number(input.value);
-      entry[input.dataset.field] = Number.isFinite(value) && value > 0 ? value : 0;
+      if (input.dataset.field === "target_weight") {
+        entry.target_weight = clampWeight(value);
+        input.value = entry.target_weight || "";
+      } else {
+        entry[input.dataset.field] = Number.isFinite(value) && value > 0 ? value : 0;
+      }
       persistWorkspace();
       renderMetrics();
       renderRows();
+      renderSidebarEtfs();
     });
   });
   els.etfRows.querySelectorAll("[data-remove]").forEach((button) => {
@@ -164,10 +341,15 @@ function renderRows() {
       persistWorkspace();
       renderMetrics();
       renderRows();
+      renderSidebarEtfs();
     });
   });
-  els.etfRows.querySelectorAll("[data-chart]").forEach((button) => {
-    button.addEventListener("click", () => selectEtfChart(button.dataset.chart));
+  els.etfRows.querySelectorAll("[data-analyze]").forEach((button) => {
+    button.addEventListener("click", () => openAnalysis(button.dataset.analyze));
+  });
+  bindDragReorder(els.etfRows, {
+    itemSelector: "tr[data-symbol]",
+    handleSelector: ".etf-drag-handle",
   });
 }
 
@@ -202,6 +384,12 @@ export async function selectEtfChart(symbol) {
     }
     const markers = [];
     if (entry && entry.cost > 0) markers.push({ key: "cost", label: "成本", value: entry.cost });
+    markers.push(
+      ...buyEventMarkers(
+        (state.buys || []).filter((item) => item.symbol === symbol),
+        { useBuyPrice: true },
+      ),
+    );
     drawPriceChart(els.etfChart, els.etfChartTooltip, points, markers, "CNY", payload.error);
     els.etfChartPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (error) {
@@ -209,14 +397,14 @@ export async function selectEtfChart(symbol) {
   }
 }
 
-export async function addEtf(rawSymbol, shares, cost) {
+export async function addEtf(rawSymbol, shares, cost, targetWeight) {
   const symbol = normalizeEtfSymbol(rawSymbol);
   if (!symbol) {
     if (els.etfFormStatus) els.etfFormStatus.textContent = "请输入 6 位 ETF 代码，例如 512890";
     return;
   }
   if (state.etfs.some((item) => item.symbol === symbol)) {
-    if (els.etfFormStatus) els.etfFormStatus.textContent = `${symbol} 已在池中`;
+    if (els.etfFormStatus) els.etfFormStatus.textContent = `${symbol} 已在计划中`;
     return;
   }
   if (els.etfFormStatus) els.etfFormStatus.textContent = `正在核验 ${symbol} 行情…`;
@@ -232,6 +420,7 @@ export async function addEtf(rawSymbol, shares, cost) {
       name: quote.name || "",
       shares: Number(shares) > 0 ? Number(shares) : 0,
       cost: Number(cost) > 0 ? Number(cost) : 0,
+      target_weight: clampWeight(targetWeight),
       note: "",
     });
     state.quotesBySymbol[symbol] = quote;
@@ -240,18 +429,190 @@ export async function addEtf(rawSymbol, shares, cost) {
     if (els.etfSymbol) els.etfSymbol.value = "";
     if (els.etfShares) els.etfShares.value = "";
     if (els.etfCost) els.etfCost.value = "";
+    if (els.etfTargetWeight) els.etfTargetWeight.value = "";
     renderMetrics();
     renderRows();
+    renderBuys();
+    renderSidebarEtfs();
   } catch (error) {
     if (els.etfFormStatus) els.etfFormStatus.textContent = `添加失败：${String(error).replace("Error: ", "")}`;
   }
 }
 
-export async function renderEtfPool({ refresh = false } = {}) {
-  if (!els.etfRows) return;
-  await refreshQuotes(refresh);
-  renderMetrics();
-  renderRows();
+function renderPoolAllocation() {
+  if (!els.poolAllocPanel) return;
+  els.poolAllocPanel.innerHTML = poolAllocationHtml({ clickable: true });
+  els.poolAllocPanel.querySelectorAll("[data-analyze]").forEach((button) => {
+    button.addEventListener("click", () => openAnalysis(button.dataset.analyze));
+  });
 }
 
-registerRenderers({ renderEtfPool });
+function renderBuySymbolOptions() {
+  if (!els.buySymbol) return;
+  const current = els.buySymbol.value;
+  const options = state.etfs
+    .map((entry) => {
+      const quote = state.quotesBySymbol[entry.symbol];
+      const name = entry.name || quote?.name || entry.symbol;
+      return `<option value="${escapeAttr(entry.symbol)}">${escapeHtml(name)}（${escapeHtml(entry.symbol)}）</option>`;
+    })
+    .join("");
+  els.buySymbol.innerHTML = `<option value="">选择品种</option>${options}`;
+  if (current && state.etfs.some((item) => item.symbol === current)) {
+    els.buySymbol.value = current;
+  }
+}
+
+function renderBuys() {
+  if (!els.buyRows) return;
+  renderBuySymbolOptions();
+  const buys = state.buys || [];
+  if (els.buyEmpty) els.buyEmpty.hidden = buys.length > 0;
+  if (!buys.length) {
+    els.buyRows.innerHTML = "";
+    return;
+  }
+  els.buyRows.innerHTML = buys
+    .map((buy) => {
+      const entry = state.etfs.find((item) => item.symbol === buy.symbol);
+      const quote = state.quotesBySymbol[buy.symbol];
+      const name = entry?.name || quote?.name || buy.symbol;
+      const amount = buy.price * buy.shares;
+      return `
+        <tr data-buy-id="${escapeAttr(buy.id)}">
+          <td>${escapeHtml(buy.date)}</td>
+          <td>
+            <button class="link-button etf-name" data-analyze="${escapeAttr(buy.symbol)}" type="button">${escapeHtml(name)}</button>
+            <span class="muted"> ${escapeHtml(buy.symbol)}</span>
+          </td>
+          <td class="num">${money(buy.price)}</td>
+          <td class="num">${buy.shares}</td>
+          <td class="num">${money(amount)}</td>
+          <td>${escapeHtml(buy.note || "—")}</td>
+          <td class="num">
+            <button class="ghost-button compact" type="button" data-remove-buy="${escapeAttr(buy.id)}">删除</button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  els.buyRows.querySelectorAll("[data-analyze]").forEach((button) => {
+    button.addEventListener("click", () => openAnalysis(button.dataset.analyze));
+  });
+  els.buyRows.querySelectorAll("[data-remove-buy]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.buys = (state.buys || []).filter((item) => item.id !== button.dataset.removeBuy);
+      persistWorkspace();
+      renderBuys();
+      if (els.buyFormStatus) els.buyFormStatus.textContent = "已删除买入记录";
+    });
+  });
+}
+
+function newBuyId(symbol, date) {
+  return `buy_${symbol}_${date}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+export function addBuyRecord() {
+  const symbol = String(els.buySymbol?.value || "").trim();
+  const date = String(els.buyDate?.value || "").trim();
+  const price = Number(els.buyPrice?.value);
+  const shares = Number(els.buyShares?.value);
+  const note = String(els.buyNote?.value || "").trim();
+  if (!symbol) {
+    if (els.buyFormStatus) els.buyFormStatus.textContent = "请选择 ETF";
+    return;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    if (els.buyFormStatus) els.buyFormStatus.textContent = "请填写买入日期";
+    return;
+  }
+  if (!(price > 0) || !(shares > 0)) {
+    if (els.buyFormStatus) els.buyFormStatus.textContent = "买入价与份额需大于 0";
+    return;
+  }
+  if (!state.etfs.some((item) => item.symbol === symbol)) {
+    if (els.buyFormStatus) els.buyFormStatus.textContent = "该 ETF 不在计划中";
+    return;
+  }
+  state.buys = [
+    {
+      id: newBuyId(symbol, date),
+      symbol,
+      date,
+      price,
+      shares,
+      note,
+    },
+    ...(state.buys || []),
+  ];
+  persistWorkspace();
+  renderBuys();
+  if (els.buyPrice) els.buyPrice.value = "";
+  if (els.buyShares) els.buyShares.value = "";
+  if (els.buyNote) els.buyNote.value = "";
+  if (els.buyFormStatus) els.buyFormStatus.textContent = `已记录 ${symbol} ${date} 买入`;
+}
+
+export async function renderEtfPool({ refresh = false } = {}) {
+  if (!els.etfRows) return;
+  syncPlanForm();
+  await refreshQuotes(refresh);
+  renderMetrics();
+  renderPoolAllocation();
+  renderRows();
+  renderBuys();
+  renderSidebarEtfs();
+}
+
+export function renderSidebarEtfs() {
+  if (!els.sidebarEtfList) return;
+  if (els.sidebarPoolCount) els.sidebarPoolCount.textContent = String(state.etfs.length);
+  if (!state.etfs.length) {
+    els.sidebarEtfList.innerHTML = `<p class="sidebar-etf-empty muted">计划为空，去「定投计划」添加</p>`;
+    return;
+  }
+  const activeSymbol = state.analysisSymbol;
+  els.sidebarEtfList.innerHTML = state.etfs
+    .map((entry) => {
+      const quote = state.quotesBySymbol[entry.symbol];
+      const name = entry.name || quote?.name || entry.symbol;
+      const change = quote?.change_pct;
+      const changeClass = change > 0 ? "up" : change < 0 ? "down" : "";
+      const active = activeSymbol === entry.symbol ? " active" : "";
+      const fullIndex = analysisIsFullIndex(appConfig, entry.symbol);
+      const target = Number(entry.target_weight) || 0;
+      return `
+        <div class="sidebar-etf-item${active}" data-symbol="${escapeAttr(entry.symbol)}">
+          <span class="sidebar-etf-handle" draggable="true" title="拖动排序" aria-label="拖动排序">⋮⋮</span>
+          <button
+            class="sidebar-etf-button"
+            type="button"
+            data-analyze="${escapeAttr(entry.symbol)}"
+            title="${escapeAttr(name)}（${escapeAttr(entry.symbol)}）${target ? ` · 目标 ${target}%` : ""}${fullIndex ? "" : " · ETF 口径分析"}"
+          >
+            <span class="sidebar-etf-mark" aria-hidden="true">${escapeHtml(entry.symbol.slice(-3))}</span>
+            <span class="sidebar-etf-name">
+              <strong>${escapeHtml(name)}</strong>
+              <em>${escapeHtml(entry.symbol)}${target ? ` · ${target}%` : ""}</em>
+            </span>
+            <span class="sidebar-etf-meta ${changeClass}">
+              ${change != null ? `${signed(change)}%` : "—"}
+            </span>
+          </button>
+        </div>
+      `;
+    })
+    .join("");
+
+  els.sidebarEtfList.querySelectorAll("[data-analyze]").forEach((button) => {
+    button.addEventListener("click", () => openAnalysis(button.dataset.analyze));
+  });
+  bindDragReorder(els.sidebarEtfList, {
+    itemSelector: ".sidebar-etf-item[data-symbol]",
+    handleSelector: ".sidebar-etf-handle",
+  });
+}
+
+registerRenderers({ renderEtfPool, renderSidebarEtfs });

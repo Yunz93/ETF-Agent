@@ -2,15 +2,6 @@ import { appConfig, els, setAppConfig } from "./state.js";
 import { escapeAttr, escapeHtml } from "./utils.js";
 import { registerRenderers, renderDividend } from "./views/render.js";
 
-const DIVIDEND_FIELDS = [
-  ["index_code", "中证指数代码", "H30269"],
-  ["index_name", "短名（笔记标题用）", "红利低波"],
-  ["index_full_name", "指数全名", "中证红利低波"],
-  ["danjuan_code", "蛋卷估值代码", "CSIH30269"],
-  ["etf_symbol", "跟踪 ETF 代码", "512890"],
-  ["etf_name", "跟踪 ETF 名称", "红利低波ETF"],
-];
-
 export async function loadAppConfig({ rerender = false } = {}) {
   try {
     const response = await fetch("/api/config");
@@ -27,23 +18,47 @@ export function renderSettings() {
   if (!els.settingsForm) return;
   const dividend = appConfig?.dividend || {};
   const quotes = appConfig?.quotes || {};
+  const cacheSeconds = dividend.cache_seconds ?? 1800;
   els.settingsForm.innerHTML = `
     <div class="config-group">
-      <h3>红利低波日度决策</h3>
-      <p class="muted">默认跟踪中证红利低波（H30269）。可换成其他指数：需要同时提供中证指数代码、蛋卷估值代码与跟踪 ETF。</p>
-      ${DIVIDEND_FIELDS.map(
-        ([key, label, placeholder]) => `
-          <label>
-            <span>${escapeHtml(label)}</span>
-            <input type="text" data-dividend-key="${escapeAttr(key)}" value="${escapeAttr(dividend[key] ?? "")}" placeholder="${escapeAttr(placeholder)}" />
-          </label>
-        `,
-      ).join("")}
+      <h3>启动默认</h3>
+      <p class="muted">需已在定投计划中</p>
+      <label>
+        <span>默认分析 ETF 代码</span>
+        <input type="text" data-dividend-key="etf_symbol" value="${escapeAttr(dividend.etf_symbol ?? "")}" placeholder="512890" />
+      </label>
+      <label>
+        <span>默认 ETF 名称（可选）</span>
+        <input type="text" data-dividend-key="etf_name" value="${escapeAttr(dividend.etf_name ?? "")}" placeholder="红利低波ETF" />
+      </label>
+      <label>
+        <span>分析缓存（秒）</span>
+        <input type="number" min="60" step="60" data-dividend-key="cache_seconds" value="${escapeAttr(String(cacheSeconds))}" placeholder="1800" />
+      </label>
     </div>
     <div class="config-group">
-      <h3>行情源</h3>
-      <p class="muted">${escapeHtml(quotes.provider_name || "腾讯行情")} · ${escapeHtml(quotes.note || "")}</p>
-      <p class="muted">ETF 池的自选与持仓保存在项目根目录 workspace.json，默认池种子在 config.json 的 etf.pool。</p>
+      <h3>行情与数据</h3>
+      <p class="muted">${escapeHtml(quotes.provider_name || "腾讯行情")}</p>
+    </div>
+    <div class="config-group config-group-advanced">
+      <h3>高级 · 默认指数映射</h3>
+      <p class="muted">仅影响未进池时的默认口径</p>
+      <label>
+        <span>中证指数代码</span>
+        <input type="text" data-dividend-key="index_code" value="${escapeAttr(dividend.index_code ?? "")}" placeholder="H30269" />
+      </label>
+      <label>
+        <span>蛋卷估值代码</span>
+        <input type="text" data-dividend-key="danjuan_code" value="${escapeAttr(dividend.danjuan_code ?? "")}" placeholder="CSIH30269" />
+      </label>
+      <label>
+        <span>指数短名</span>
+        <input type="text" data-dividend-key="index_name" value="${escapeAttr(dividend.index_name ?? "")}" placeholder="红利低波" />
+      </label>
+      <label>
+        <span>指数全名</span>
+        <input type="text" data-dividend-key="index_full_name" value="${escapeAttr(dividend.index_full_name ?? "")}" placeholder="中证红利低波" />
+      </label>
     </div>
   `;
 }
@@ -51,8 +66,14 @@ export function renderSettings() {
 export async function saveAppConfig() {
   if (!els.settingsForm) return;
   const dividend = { ...(appConfig?.dividend || {}) };
-  els.settingsForm.querySelectorAll("input[data-dividend-key]").forEach((input) => {
-    dividend[input.dataset.dividendKey] = input.value.trim();
+  els.settingsForm.querySelectorAll("[data-dividend-key]").forEach((input) => {
+    const key = input.dataset.dividendKey;
+    if (key === "cache_seconds") {
+      const n = Number.parseInt(input.value, 10);
+      dividend[key] = Number.isFinite(n) && n >= 60 ? n : 1800;
+    } else {
+      dividend[key] = input.value.trim();
+    }
   });
   const payload = { ...(appConfig || {}), dividend };
   try {
@@ -63,7 +84,7 @@ export async function saveAppConfig() {
     });
     if (!response.ok) throw new Error(`config API ${response.status}`);
     setAppConfig(await response.json());
-    if (els.settingsStatus) els.settingsStatus.textContent = "已保存到 config.json，红利低波数据将按新配置刷新";
+    if (els.settingsStatus) els.settingsStatus.textContent = "已保存到 config.json";
     renderSettings();
     renderDividend({ force: true });
   } catch (error) {

@@ -1,0 +1,8 @@
+{
+  "name": "stockagent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:js": "node --test tests_js/*.test.js"
+  }
+}

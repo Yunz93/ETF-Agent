@@ -4,8 +4,9 @@ from __future__ import annotations
 
 __version__ = "0.0.3"
 APP_NAME = "StockAgent"
+DISPLAY_NAME = "ETF Agent"
 BUNDLE_ID = "com.stockagent.desktop"
-CF_BUNDLE_NAME = "StockAgent"
+CF_BUNDLE_NAME = "ETF Agent"
 
 
 def version_parts() -> tuple[str, str, str]:

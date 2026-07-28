@@ -15,4 +15,4 @@ packaging/icons/StockAgent.iconset/
 packaging/icons/*.icns
 !packaging/icons/icon-1024.png
 !packaging/icons/.gitkeep
-
+.playwright-cli/

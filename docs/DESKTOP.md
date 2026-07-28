@@ -90,7 +90,7 @@ Phase 1 ships **ad-hoc signed** (not Developer ID / not notarized) builds. Downl
 On a Mac, run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/install_mac.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/v0.0.3/packaging/install_mac.sh | bash
 ```
 
 Or from a local checkout / artifact:
@@ -124,7 +124,7 @@ Optional env:
 If download still fails, install a manually downloaded package (use the newest build, not an old `+9`):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/install_mac.sh) \
+bash <(curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/v0.0.3/packaging/install_mac.sh) \
   ~/Downloads/StockAgent-0.0.3-macos-arm64.zip
 ```
 

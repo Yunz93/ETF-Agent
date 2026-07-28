@@ -1,17 +1,32 @@
 import { PAGE_TITLES, SIDEBAR_COLLAPSE_MIN, SIDEBAR_KEY, THEME_KEY } from "./constants.js";
-import { els, state } from "./state.js";
-import { registerRenderers, renderDividend, renderEtfPool, renderSettings } from "./views/render.js";
+import { appConfig, els, state } from "./state.js";
+import { registerRenderers, renderDividend, renderEtfPool, renderSettings, renderSidebarEtfs, openAnalysis } from "./views/render.js";
 
 export function switchView(view) {
-  if (!PAGE_TITLES[view]) view = "dividend";
+  if (view === "dividend") {
+    const symbol = state.analysisSymbol || defaultAnalysisSymbol();
+    if (symbol) {
+      openAnalysis(symbol);
+      return;
+    }
+    view = "etf";
+  }
+  if (!PAGE_TITLES[view]) view = "etf";
   state.activeView = view;
+  if (view !== "dividend") state.analysisSymbol = null;
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
   document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === `${view}View`));
-  if (els.pageTitle) els.pageTitle.textContent = PAGE_TITLES[view] || "StockAgent";
+  if (els.pageTitle) els.pageTitle.textContent = PAGE_TITLES[view] || "ETF Agent";
   document.querySelector(`#${view}View`)?.scrollIntoView({ block: "start" });
-  if (view === "dividend") renderDividend();
   if (view === "etf") renderEtfPool();
   if (view === "settings") renderSettings();
+  renderSidebarEtfs();
+}
+
+function defaultAnalysisSymbol() {
+  const preferred = appConfig?.dividend?.etf_symbol || "512890";
+  if (state.etfs.some((item) => item.symbol === preferred)) return preferred;
+  return state.etfs[0]?.symbol || null;
 }
 
 export function setSourceStatus(label, statusKey = "connected") {

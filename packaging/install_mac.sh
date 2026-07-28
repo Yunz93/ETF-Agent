@@ -5,7 +5,7 @@
 # 重新 ad-hoc 签名，并安装到 /Applications —— 无需「右键 → 打开」。
 #
 # 一键安装（推荐）：
-#   curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/install_mac.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/v0.0.3/packaging/install_mac.sh | bash
 #
 # 也可指定本地包或 URL：
 #   ./install_mac.sh StockAgent-....zip
@@ -26,6 +26,7 @@ set -euo pipefail
 
 APP_NAME="StockAgent.app"
 REPO="${REPO:-Yunz93/StockAgent}"
+INSTALLER_REF="${INSTALLER_REF:-v0.0.3}"
 TAG="${TAG:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/Applications}"
 OPEN_AFTER="${OPEN_AFTER:-1}"
@@ -352,7 +353,7 @@ resolve_asset_url() {
   https://github.com/$REPO/releases/tag/$tag
 
 或指定本地包:
-  bash <(curl -fsSL https://raw.githubusercontent.com/$REPO/main/packaging/install_mac.sh) ~/Downloads/StockAgent-*-macos-arm64.zip"
+  bash <(curl -fsSL https://raw.githubusercontent.com/$REPO/$INSTALLER_REF/packaging/install_mac.sh) ~/Downloads/StockAgent-*-macos-arm64.zip"
 }
 
 download_latest_release() {
@@ -560,7 +561,7 @@ usage() {
 StockAgent 一键安装（macOS）
 
 一键安装:
-  curl -fsSL https://raw.githubusercontent.com/$REPO/main/packaging/install_mac.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/$REPO/$INSTALLER_REF/packaging/install_mac.sh | bash
 
 本地 / 指定包:
   $0                          # 下载最新 Release 并安装
@@ -621,7 +622,7 @@ main() {
           die "无法下载最新 Release，且未找到本地 StockAgent.zip/dmg/app。
 
 一键安装:
-  curl -fsSL https://raw.githubusercontent.com/$REPO/main/packaging/install_mac.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/$REPO/$INSTALLER_REF/packaging/install_mac.sh | bash
 
 或手动指定（请用最新 Release 包）:
   $0 ~/Downloads/StockAgent-0.0.2-macos-arm64.zip"
@@ -631,7 +632,7 @@ main() {
 
 请重试一键安装，或手动下载后指定路径（请用最新 Release 包）:
   https://github.com/$REPO/releases/latest
-  bash <(curl -fsSL https://raw.githubusercontent.com/$REPO/main/packaging/install_mac.sh) ~/Downloads/StockAgent-*-macos-arm64.zip"
+  bash <(curl -fsSL https://raw.githubusercontent.com/$REPO/$INSTALLER_REF/packaging/install_mac.sh) ~/Downloads/StockAgent-*-macos-arm64.zip"
       fi
     fi
   fi

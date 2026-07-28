@@ -1,11 +1,20 @@
-import { WORKSPACE_CACHE_KEY, WORKSPACE_SYNC_DEBOUNCE_MS } from "./constants.js";
+import { WORKSPACE_CACHE_KEY, WORKSPACE_SYNC_DEBOUNCE_MS, DEFAULT_TARGET_WEIGHTS } from "./constants.js";
 import { appConfig, els, state, workspaceRuntime } from "./state.js";
 import { loadJSON, saveJSON } from "./utils.js";
+import {
+  chooseWorkspaceSource,
+  clampWeight,
+  normalizeBuys,
+  normalizePlan,
+  normalizeWorkspaceEntries,
+} from "./workspace_model.js";
 
 export function buildWorkspacePayload() {
   return {
-    version: 2,
+    version: 4,
     etfs: state.etfs,
+    buys: state.buys,
+    plan: state.plan,
     prefs: {},
   };
 }
@@ -20,15 +29,9 @@ export function writeLocalWorkspaceCache() {
 
 function applyWorkspace(payload, source) {
   if (!payload || !Array.isArray(payload.etfs)) return false;
-  state.etfs = payload.etfs
-    .filter((item) => item && item.symbol)
-    .map((item) => ({
-      symbol: String(item.symbol),
-      name: String(item.name || ""),
-      shares: Number(item.shares) > 0 ? Number(item.shares) : 0,
-      cost: Number(item.cost) > 0 ? Number(item.cost) : 0,
-      note: String(item.note || ""),
-    }));
+  state.etfs = normalizeWorkspaceEntries(payload.etfs);
+  state.buys = normalizeBuys(payload.buys || []);
+  state.plan = normalizePlan(payload.plan);
   state.workspaceSync.source = source;
   return true;
 }
@@ -40,8 +43,11 @@ function seedDefaultPool() {
     name: String(item.name || ""),
     shares: 0,
     cost: 0,
+    target_weight: clampWeight(DEFAULT_TARGET_WEIGHTS[item.symbol] || 0),
     note: "",
   }));
+  state.buys = [];
+  state.plan = normalizePlan(null);
   state.workspaceSync.source = "default-pool";
 }
 
@@ -51,13 +57,14 @@ export async function hydrateWorkspace() {
     const response = await fetch("/api/workspace");
     if (!response.ok) throw new Error(`workspace API ${response.status}`);
     const remote = await response.json();
-    if (Array.isArray(remote.etfs) && remote.etfs.length) {
-      applyWorkspace(remote, "server");
+    const selected = chooseWorkspaceSource(remote, local);
+    if (selected.source === "server") {
+      applyWorkspace(selected.payload, selected.source);
       state.workspaceSync.status = "synced";
       state.workspaceSync.updatedAt = remote.updated_at || null;
-    } else if (local && Array.isArray(local.etfs) && local.etfs.length) {
+    } else if (selected.source === "local-cache") {
       // 服务器为空时迁移浏览器缓存
-      applyWorkspace(local, "local-cache");
+      applyWorkspace(selected.payload, selected.source);
       await persistWorkspace({ immediate: true });
     } else {
       seedDefaultPool();
@@ -128,7 +135,7 @@ export function exportWorkspaceBackup() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `stockagent-etf-workspace-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `stockagent-dca-plan-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
   URL.revokeObjectURL(url);
 }

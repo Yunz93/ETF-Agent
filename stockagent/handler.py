@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler
 from .paths import RESOURCE_ROOT, resolve_static_path
 from .config_store import public_config, save_config
 from .workspace_store import get_workspace, save_workspace
-from .dividend import get_dividend_dashboard
+from .dividend import analysis_support_map, get_dividend_dashboard
 from .quotes import get_etf_quotes, get_price_history, get_single_quote
 from .health import get_data_health, get_runtime_info
 
@@ -46,7 +46,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/dividend/daily":
                 refresh = query.get("refresh", ["0"])[0] in ("1", "true")
-                self.send_json(get_dividend_dashboard(refresh=refresh))
+                symbol = query.get("symbol", [""])[0].strip()
+                self.send_json(get_dividend_dashboard(refresh=refresh, symbol=symbol or None))
+                return
+            if parsed.path == "/api/etf/analysis-map":
+                raw = query.get("symbols", [""])[0]
+                symbols = [part.strip() for part in raw.replace("，", ",").split(",") if part.strip()] or None
+                self.send_json({"items": analysis_support_map(symbols)})
                 return
             if parsed.path == "/api/etf/quotes":
                 raw = query.get("symbols", [""])[0]
@@ -74,7 +80,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(
                     {
                         "ready": True,
-                        "app": "StockAgent",
+                        "app": "ETF Agent",
                         "mode": "desktop" if os.environ.get("STOCKAGENT_DESKTOP") == "1" else "server",
                         "frozen": bool(getattr(sys, "frozen", False)),
                         "index_html": bool(index),

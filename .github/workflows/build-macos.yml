@@ -8,22 +8,30 @@ on:
       - "desktop/**"
       - "packaging/**"
       - "server.py"
+      - "stockagent/**"
+      - "js/**"
       - "index.html"
       - "styles.css"
       - "config.json"
       - "requirements*.txt"
+      - "package.json"
       - "tests/**"
+      - "tests_js/**"
       - ".github/workflows/build-macos.yml"
   pull_request:
     paths:
       - "desktop/**"
       - "packaging/**"
       - "server.py"
+      - "stockagent/**"
+      - "js/**"
       - "index.html"
       - "styles.css"
       - "config.json"
       - "requirements*.txt"
+      - "package.json"
       - "tests/**"
+      - "tests_js/**"
       - ".github/workflows/build-macos.yml"
   workflow_dispatch:
 
@@ -59,6 +67,9 @@ jobs:
 
       - name: Quote accuracy unit tests
         run: python -m unittest discover -s tests -v
+
+      - name: Frontend behavior tests
+        run: npm run test:js
 
       - name: Headless desktop smoke
         run: python -m desktop.smoke_test

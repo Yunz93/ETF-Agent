@@ -58,18 +58,18 @@ def main() -> int:
             started = time.time()
             payload = _wait_for_ready(base, timeout=5.0)
             elapsed = time.time() - started
-            assert payload.get("ready") is True or payload.get("app") == "StockAgent"
+            assert payload.get("ready") is True or payload.get("app") == "ETF Agent"
             assert elapsed < 2.0, f"ready probe too slow for launch: {elapsed:.2f}s"
 
             with urllib.request.urlopen(f"{base}/", timeout=3) as response:
                 html = response.read().decode("utf-8", errors="replace")
-            assert "StockAgent" in html
+            assert "ETF Agent" in html
             with urllib.request.urlopen(f"{base}/index.html", timeout=3) as response:
                 html = response.read().decode("utf-8", errors="replace")
-            assert "StockAgent" in html
+            assert "ETF Agent" in html
             with urllib.request.urlopen(f"{base}/js/main.js", timeout=3) as response:
                 js = response.read().decode("utf-8", errors="replace")
-            assert "StockAgent" in js or "stockagent" in js.lower() or "import" in js
+            assert "ETF Agent" in js or "stockagent" in js.lower() or "import" in js
             # Simulate the macOS /var vs /private/var startswith false-negative.
             from stockagent.paths import resolve_static_path
 

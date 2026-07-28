@@ -29,18 +29,34 @@ echo "==> Generating icons"
 echo "==> PyInstaller"
 "$PYTHON" -m PyInstaller packaging/stockagent.spec --noconfirm --clean --distpath dist --workpath build
 
-APP="$ROOT/dist/StockAgent.app"
-if [[ ! -d "$APP" ]]; then
-  echo "ERROR: missing $APP" >&2
+PYINSTALLER_APP="$ROOT/dist/StockAgent.app"
+if [[ ! -d "$PYINSTALLER_APP" ]]; then
+  echo "ERROR: missing $PYINSTALLER_APP" >&2
   exit 1
 fi
 
+# iCloud/File Provider can restore FinderInfo between xattr and codesign.
+# Sign and package a metadata-free copy in a non-synchronized temp directory.
+SIGNING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/stockagent-sign.XXXXXX")"
+cleanup_signing_dir() { rm -rf "$SIGNING_DIR"; }
+trap cleanup_signing_dir EXIT
+APP="$SIGNING_DIR/StockAgent.app"
+ditto --norsrc "$PYINSTALLER_APP" "$APP"
+
 if [[ "$ADHOC_SIGN" == "1" ]] && command -v codesign >/dev/null 2>&1; then
   echo "==> Ad-hoc codesign"
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -cr "$APP"
+    # iCloud/File Provider folders may immediately restore these metadata
+    # attributes after a generic clear; codesign rejects both.
+    xattr -dr com.apple.FinderInfo "$APP"
+    xattr -dr "com.apple.fileprovider.fpfs#P" "$APP"
+    xattr -dr com.apple.provenance "$APP"
+  fi
   codesign --force --deep --sign - \
     --entitlements "$ROOT/packaging/entitlements.plist" \
-    "$APP" || echo "WARN: codesign failed (continuing)" >&2
-  codesign --verify --verbose=1 "$APP" || true
+    "$APP"
+  codesign --verify --deep --strict --verbose=1 "$APP"
 fi
 
 ARTIFACT_DIR="$ROOT/dist/artifacts"
@@ -52,7 +68,7 @@ if [[ "$MAKE_ZIP" == "1" ]]; then
   zip_path="$ARTIFACT_DIR/StockAgent-${stamp}-macos-${arch}.zip"
   echo "==> Zip $zip_path"
   (
-    cd "$ROOT/dist"
+    cd "$SIGNING_DIR"
     ditto -c -k --sequesterRsrc --keepParent "StockAgent.app" "$zip_path"
   )
 fi
@@ -78,7 +94,7 @@ StockAgent macOS 一键安装
 
 推荐（自动下载最新版，并处理未签名 / Gatekeeper 拦截）：
 
-  curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/main/packaging/install_mac.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/v0.0.3/packaging/install_mac.sh | bash
 
 使用本目录中的脚本 / 安装包：
 
@@ -110,7 +126,8 @@ cat > "$ARTIFACT_DIR/build-info.json" <<EOF
 EOF
 
 echo
-echo "Built: $APP"
+echo "Built: $PYINSTALLER_APP"
+echo "Signed app packaged from: $SIGNING_DIR"
 echo "Artifacts: $ARTIFACT_DIR"
 ls -lah "$ARTIFACT_DIR" || true
 echo "Install: ./dist/artifacts/install_mac.sh <zip|dmg|app>"

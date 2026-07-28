@@ -95,6 +95,32 @@ export function setupHiDpiCanvas(canvas, cssHeight = 360) {
   return { ctx, width, height, dpr };
 }
 
+export function findNearestPointIndex(points, date) {
+  if (!date || !points?.length) return -1;
+  const exact = points.findIndex((point) => point.date === date);
+  if (exact >= 0) return exact;
+  let best = -1;
+  for (let i = 0; i < points.length; i += 1) {
+    if (points[i].date <= date) best = i;
+    else break;
+  }
+  return best;
+}
+
+export function buyEventMarkers(buys, { useBuyPrice = false } = {}) {
+  return (buys || [])
+    .filter((item) => item?.date && item.symbol)
+    .map((item) => ({
+      key: "buy",
+      date: item.date,
+      label: "买",
+      value: useBuyPrice && item.price > 0 ? Number(item.price) : null,
+      shares: item.shares,
+      price: item.price,
+      note: item.note || "",
+    }));
+}
+
 export function drawPriceChart(canvas, tooltip, points, markers, currency, error) {
   const { ctx, width, height } = setupHiDpiCanvas(canvas, 360);
   const colors = themeChartColors();
@@ -104,6 +130,7 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
   const gridColor = resolveCssColor("--chart-grid", colors.grid);
   const inkColor = resolveCssColor("--ink", "#222");
   const surfaceColor = resolveCssColor("--surface-2", "#fff");
+  const buyColor = resolveCssColor("--accent-strong", lineColor);
 
   canvas.onmousemove = null;
   canvas.onmouseleave = null;
@@ -125,7 +152,18 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
   }
 
   const values = points.map((point) => point.close);
-  const markerValues = markers.map((item) => item.value).filter((value) => value != null && !Number.isNaN(Number(value)));
+  const lineMarkers = (markers || []).filter((item) => item && item.date == null && item.value != null && !Number.isNaN(Number(item.value)));
+  const eventMarkers = (markers || []).filter((item) => item && item.date);
+  const markerValues = [
+    ...lineMarkers.map((item) => Number(item.value)),
+    ...eventMarkers
+      .map((item) => {
+        if (item.value != null && !Number.isNaN(Number(item.value))) return Number(item.value);
+        const index = findNearestPointIndex(points, item.date);
+        return index >= 0 ? points[index].close : null;
+      })
+      .filter((value) => value != null),
+  ];
   const dataMin = Math.min(...values, ...markerValues);
   const dataMax = Math.max(...values, ...markerValues);
   const padX = { left: 64, right: 18 };
@@ -137,7 +175,7 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
   const ma = movingAverage(values, maWindow);
   const dateTicks = pickDateTicks(points, width < 520 ? 3 : 5);
   const markerPalette = {
-    buy: resolveCssColor("--accent-strong", lineColor),
+    buy: buyColor,
     add: resolveCssColor("--blue", maColor),
     tp: resolveCssColor("--warn", "#c48a1a"),
     sl: resolveCssColor("--danger", "#c44"),
@@ -148,6 +186,33 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
   const xAt = (index) => padX.left + (plotWidth / Math.max(values.length - 1, 1)) * index;
   const yAt = (value) => padY.top + ((scale.max - value) / (scale.max - scale.min || 1)) * plotHeight;
   const chartPoints = values.map((value, index) => [xAt(index), yAt(value)]);
+
+  const resolvedEvents = eventMarkers
+    .map((marker) => {
+      const index = findNearestPointIndex(points, marker.date);
+      if (index < 0) return null;
+      const yValue =
+        marker.value != null && !Number.isNaN(Number(marker.value)) ? Number(marker.value) : points[index].close;
+      return { ...marker, index, x: xAt(index), y: yAt(yValue), yValue };
+    })
+    .filter(Boolean);
+
+  const drawBuyMarker = (event) => {
+    const color = markerPalette[event.key] || buyColor;
+    const size = 7;
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(event.x, event.y - size);
+    ctx.lineTo(event.x - size * 0.85, event.y + size * 0.55);
+    ctx.lineTo(event.x + size * 0.85, event.y + size * 0.55);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = surfaceColor;
+    ctx.lineWidth = 1.25;
+    ctx.stroke();
+    ctx.restore();
+  };
 
   const render = (hoverIndex = null) => {
     ctx.clearRect(0, 0, width, height);
@@ -192,7 +257,7 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
     });
 
     const labelSlots = [];
-    markers.forEach((marker) => {
+    lineMarkers.forEach((marker) => {
       if (marker.value == null || Number.isNaN(Number(marker.value))) return;
       const y = yAt(marker.value);
       const color = markerPalette[marker.key] || labelColor;
@@ -266,6 +331,8 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
     ctx.lineCap = "round";
     ctx.stroke();
 
+    resolvedEvents.forEach(drawBuyMarker);
+
     const [lastX, lastY] = chartPoints[chartPoints.length - 1];
     ctx.fillStyle = lineColor;
     ctx.beginPath();
@@ -280,6 +347,7 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
 
     const point = points[hoverIndex];
     const [hx, hy] = chartPoints[hoverIndex];
+    const buysAtHover = resolvedEvents.filter((event) => event.index === hoverIndex);
     ctx.save();
     ctx.strokeStyle = labelColor;
     ctx.globalAlpha = 0.4;
@@ -302,10 +370,17 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
 
     if (tooltip) {
       const change = ((point.close - points[0].close) / points[0].close) * 100;
+      const buyBits = buysAtHover
+        .map((event) => {
+          const shares = event.shares > 0 ? `${event.shares} 份` : "";
+          const price = event.price > 0 ? money(event.price, currency) : "";
+          return `买入 ${[shares, price].filter(Boolean).join(" · ")}`.trim();
+        })
+        .filter(Boolean);
       tooltip.hidden = false;
       tooltip.innerHTML = `<strong>${money(point.close, currency)}</strong><span>${point.date}</span><span>区间 ${signed(change)}%</span>${
         ma[hoverIndex] != null ? `<span>MA${maWindow} ${money(ma[hoverIndex], currency)}</span>` : ""
-      }`;
+      }${buyBits.map((bit) => `<span>${bit}</span>`).join("")}`;
       const rect = canvas.getBoundingClientRect();
       const tipX = (hx / width) * rect.width;
       const tipY = (hy / height) * rect.height;

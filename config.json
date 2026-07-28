@@ -11,12 +11,30 @@
   },
   "etf": {
     "pool": [
-      { "symbol": "512890", "name": "红利低波ETF" },
-      { "symbol": "510300", "name": "沪深300ETF" },
-      { "symbol": "510500", "name": "中证500ETF" },
-      { "symbol": "159915", "name": "创业板ETF" },
-      { "symbol": "513100", "name": "纳指ETF" },
-      { "symbol": "518880", "name": "黄金ETF" }
+      {
+        "symbol": "512890",
+        "name": "红利低波ETF"
+      },
+      {
+        "symbol": "510300",
+        "name": "沪深300ETF"
+      },
+      {
+        "symbol": "510500",
+        "name": "中证500ETF"
+      },
+      {
+        "symbol": "159915",
+        "name": "创业板ETF"
+      },
+      {
+        "symbol": "513100",
+        "name": "纳指ETF"
+      },
+      {
+        "symbol": "518880",
+        "name": "黄金ETF"
+      }
     ],
     "note": "ETF 池默认种子；实际自选与持仓保存在 workspace.json"
   },

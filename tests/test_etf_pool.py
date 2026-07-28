@@ -72,26 +72,86 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         workspace = workspace_store.normalize_workspace(
             {
                 "etfs": [
-                    {"symbol": "512890", "name": "红利低波ETF", "shares": 1000, "cost": 1.1},
-                    {"symbol": "sh510300", "shares": -5, "cost": "abc"},
+                    {"symbol": "512890", "name": "红利低波ETF", "shares": 1000, "cost": 1.1, "target_weight": 30},
+                    {"symbol": "sh510300", "shares": -5, "cost": "abc", "target_weight": 120},
                     {"symbol": "512890", "name": "重复"},
                     {"symbol": "bad"},
                     "not-a-dict",
-                ]
+                ],
+                "plan": {"name": "测试计划", "amount": 3000, "cadence": "weekly", "day": 9},
             }
         )
         self.assertEqual(len(workspace["etfs"]), 2)
         first, second = workspace["etfs"]
         self.assertEqual(first["symbol"], "512890")
         self.assertEqual(first["shares"], 1000)
+        self.assertEqual(first["target_weight"], 30)
         self.assertEqual(second["symbol"], "510300")
         self.assertEqual(second["shares"], 0)
         self.assertEqual(second["cost"], 0)
-        self.assertEqual(workspace["version"], 2)
+        self.assertEqual(second["target_weight"], 100)
+        self.assertEqual(workspace["version"], 4)
+        self.assertEqual(workspace["plan"]["name"], "测试计划")
+        self.assertEqual(workspace["plan"]["amount"], 3000)
+        self.assertEqual(workspace["plan"]["cadence"], "weekly")
+        self.assertEqual(workspace["plan"]["day"], 7)
+
+    def test_buy_records_are_normalized_deduplicated_and_date_validated(self):
+        workspace = workspace_store.normalize_workspace(
+            {
+                "etfs": [],
+                "buys": [
+                    {"id": "buy-1", "symbol": "sh510300", "date": "2026-07-28", "shares": 10, "price": 4.2},
+                    {"id": "buy-1", "symbol": "510300", "date": "2026-07-28", "shares": 20, "price": 4.1},
+                    {"symbol": "512890", "date": "2026-02-31", "shares": 10, "price": 1.2},
+                ],
+            }
+        )
+        self.assertEqual(workspace["version"], 4)
+        self.assertEqual(len(workspace["buys"]), 1)
+        self.assertEqual(workspace["buys"][0]["symbol"], "510300")
+        self.assertTrue(workspace_store.workspace_has_user_data(workspace))
+
+    def test_legacy_workspace_fills_default_targets(self):
+        workspace = workspace_store.normalize_workspace(
+            {
+                "etfs": [
+                    {"symbol": "512890", "name": "红利低波ETF", "shares": 100, "cost": 1.2},
+                    {"symbol": "510300", "shares": 0, "cost": 0},
+                ]
+            }
+        )
+        by_symbol = {item["symbol"]: item for item in workspace["etfs"]}
+        self.assertEqual(by_symbol["512890"]["target_weight"], 30)
+        self.assertEqual(by_symbol["510300"]["target_weight"], 25)
+        self.assertEqual(workspace["plan"]["cadence"], "monthly")
+
+    def test_normalizes_buy_records(self):
+        workspace = workspace_store.normalize_workspace(
+            {
+                "etfs": [{"symbol": "512890", "target_weight": 100}],
+                "buys": [
+                    {"symbol": "512890", "date": "2026-01-15", "price": 1.2, "shares": 1000, "note": "首笔"},
+                    {"symbol": "bad", "date": "2026-01-15", "price": 1, "shares": 1},
+                    {"symbol": "512890", "date": "bad-date", "price": 1, "shares": 1},
+                    {"symbol": "512890", "date": "2026-02-01", "price": 0, "shares": 500},
+                    {"id": "keep", "symbol": "sh510300", "date": "2025-12-01", "price": 4.5, "shares": 200},
+                ],
+            }
+        )
+        self.assertEqual(len(workspace["buys"]), 2)
+        self.assertEqual(workspace["buys"][0]["date"], "2026-01-15")
+        self.assertEqual(workspace["buys"][0]["symbol"], "512890")
+        self.assertEqual(workspace["buys"][0]["shares"], 1000)
+        self.assertEqual(workspace["buys"][1]["id"], "keep")
+        self.assertEqual(workspace["buys"][1]["symbol"], "510300")
+        self.assertEqual(workspace["version"], 4)
 
     def test_invalid_payload_returns_empty(self):
         workspace = workspace_store.normalize_workspace(None)
         self.assertEqual(workspace["etfs"], [])
+        self.assertEqual(workspace["buys"], [])
+        self.assertEqual(workspace["plan"]["name"], "默认定投计划")
         self.assertFalse(workspace_store.workspace_has_user_data(workspace))
 
 
@@ -116,6 +176,28 @@ class ConfigNormalizationTests(unittest.TestCase):
         self.assertEqual(config["dividend"]["index_code"], "000922")
         # 未覆盖字段保留默认
         self.assertEqual(config["dividend"]["etf_symbol"], "512890")
+
+    def test_custom_analysis_keeps_optional_history_fields_without_valuation(self):
+        config = normalize_config(
+            {
+                "etf": {
+                    "analysis": {
+                        "513500": {
+                            "index_code": "SPX",
+                            "index_name": "标普500",
+                            "danjuan_code": "",
+                            "history_source": "tencent",
+                            "history_symbol": "us.INX",
+                        }
+                    }
+                }
+            }
+        )
+        analysis = config["etf"]["analysis"]["513500"]
+        self.assertEqual(analysis["index_code"], "SPX")
+        self.assertNotIn("danjuan_code", analysis)
+        self.assertEqual(analysis["history_source"], "tencent")
+        self.assertEqual(analysis["history_symbol"], "us.INX")
 
     def test_legacy_blocks_dropped(self):
         config = normalize_config({"ai": {"provider": "deepseek"}, "sec": {"enabled": True}, "catalog": {}})

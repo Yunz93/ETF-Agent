@@ -31,7 +31,7 @@ def create_server(host="127.0.0.1", port=None, dual_stack=False):
 def serve_forever(host="127.0.0.1", port=None, dual_stack=False):
     server = create_server(host=host, port=port, dual_stack=dual_stack)
     bound_host, bound_port = server.server_address[:2]
-    print(f"StockAgent running at http://127.0.0.1:{bound_port} (bound {bound_host}:{bound_port})", flush=True)
+    print(f"ETF Agent running at http://127.0.0.1:{bound_port} (bound {bound_host}:{bound_port})", flush=True)
     print(f"data_dir={DATA_DIR}", flush=True)
     server.serve_forever()
     return server
