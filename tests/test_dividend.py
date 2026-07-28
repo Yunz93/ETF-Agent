@@ -224,7 +224,7 @@ class AnalyzeTests(unittest.TestCase):
         self.assertIn(technicals["boll"]["position"], ("above_upper", "upper_half", "lower_half", "below_lower"))
         self.assertAlmostEqual(payload["spread"]["value"], 4.5 - self.treasury[-1]["yield10y"], places=2)
         self.assertTrue(payload["commentary"])
-        self.assertTrue(payload["commentary"][-1].startswith("结论"))
+        self.assertTrue(payload["commentary"][-1].startswith("盘面观察"))
         self.assertGreaterEqual(payload["backtest"]["samples"], 0)
         chart = payload["chart"]
         self.assertEqual(len(chart["points"]), len(self.index_rows))

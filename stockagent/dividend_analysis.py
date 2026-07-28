@@ -296,13 +296,13 @@ def build_commentary(score_block, technicals, spread_block, valuation_block):
         )
 
     if grade in ("A", "B") and position in ("upper_half", "above_upper"):
-        lines.append("结论：评分虽在可买区间，但短线并不超卖，今天不用着急补；可以等日 K 布林线回落到中轨附近时再分批介入。")
+        lines.append("盘面观察：评分偏乐观，但短线并不超卖，更适合等日 K 回落到布林中轨附近再观察。")
     elif grade in ("A", "B"):
-        lines.append("结论：评分与位置形成共振，可按既定纪律分批买入，不建议一次打满。")
+        lines.append("盘面观察：评分与位置偏友好，性价比支撑较强。")
     elif grade == "C":
-        lines.append("结论：性价比中性，维持原有定投节奏即可，不追高也不清仓。")
+        lines.append("盘面观察：性价比中性，位置不极端。")
     else:
-        lines.append("结论：当前位置性价比一般，管住手，等待更好的位置再补。")
+        lines.append("盘面观察：当前位置性价比一般，短线性价比偏弱。")
     return lines
 
 def build_note_text(payload):
@@ -355,7 +355,7 @@ def build_note_text(payload):
                 f"；历史同评分区间，往后{backtest.get('horizon_days')}天平均收益"
                 f"{backtest.get('avg_return_pct'):+.1f}%，{win_rate_label(backtest.get('win_rate_pct'))}"
             )
-        lines.append(f"-综合评分{score['total']:.0f}分（{score.get('grade')}档，{score.get('action')}）{bt_text}")
+        lines.append(f"-综合评分{score['total']:.0f}分（{score.get('grade')}档，{score.get('action')}；评分仅作诊断，执行以定投策略为准）{bt_text}")
     lines.append("今日盘面：")
     lines.extend(payload.get("commentary") or [])
     lines.append(

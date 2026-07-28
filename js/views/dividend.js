@@ -1,8 +1,7 @@
 import { els, state, appConfig } from "../state.js";
 import { escapeHtml, money, signed } from "../utils.js";
 import { analysisSupported, INDEX_CHART_RANGE_MONTHS, INDEX_CHART_RANGE_LABELS } from "../constants.js";
-import { rebalanceHint, allocatePoolBudget, allocationForSymbol, dcaMultiplier, strategyLabel } from "../strategy.js";
-import { buildPoolHoldingsForAllocation } from "../pool-alloc.js";
+import { getPeriodAdvice, STANCE } from "../period-advice.js";
 import { drawPriceChart, buyEventMarkers } from "../chart.js";
 import { callRenderer, registerRenderers } from "./render.js";
 
@@ -180,7 +179,7 @@ function scoreCardHtml() {
       <div class="dividend-score-main">
         <div class="dividend-grade-mark" aria-hidden="true">${escapeHtml(grade)}</div>
         <div class="dividend-score-copy">
-          <p class="dividend-grade-kicker">${escapeHtml(grade)} 档 · 综合评分</p>
+          <p class="dividend-grade-kicker">${escapeHtml(grade)} 档 · 综合评分（诊断，非本期执行）</p>
           <strong class="dividend-score-total">${score.total == null ? "—" : Math.round(score.total)}</strong>
         </div>
       </div>
@@ -255,108 +254,55 @@ function metricsHtml() {
     .join("");
 }
 
-function commentaryHtml() {
-  const lines = (currentPayload() || {}).commentary || [];
+function currentPeriodAdvice() {
+  const payload = currentPayload() || {};
+  const symbol = state.analysisSymbol || payload.symbol || payload.etf?.symbol || "";
+  return getPeriodAdvice({
+    symbol,
+    preferLive: payload && !payload.error ? payload : null,
+  });
+}
+
+function commentaryHtml(advice) {
+  const raw = (currentPayload() || {}).commentary || [];
+  // 兼容旧缓存：去掉按评分写的买卖结论，统一换成策略执行结论
+  const lines = raw.filter((line) => {
+    const text = String(line || "").trim();
+    return text && !text.startsWith("结论：");
+  });
+  if (advice?.executionLine) lines.push(advice.executionLine);
   if (!lines.length) return '<p class="muted">暂无盘面点评。</p>';
   return `<ol class="dividend-commentary">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol>`;
 }
 
-function portfolioWeight(symbol) {
-  const entry = state.etfs.find((item) => item.symbol === symbol);
-  if (!entry) return { entry: null, actualWeight: null, targetWeight: null };
-  let totalValue = 0;
-  let value = null;
-  state.etfs.forEach((item) => {
-    const quote = state.quotesBySymbol[item.symbol];
-    const price = quote?.price;
-    if (price != null && item.shares > 0) {
-      const v = price * item.shares;
-      totalValue += v;
-      if (item.symbol === symbol) value = v;
-    }
-  });
-  const actualWeight = value != null && totalValue > 0 ? (value / totalValue) * 100 : null;
-  const targetWeight = Number(entry.target_weight) > 0 ? Number(entry.target_weight) : null;
-  return { entry, actualWeight, targetWeight };
-}
-
-function dcaAdviceHtml() {
+function dcaAdviceHtml(advice) {
   const payload = currentPayload() || {};
   const score = payload.score || {};
   const grade = score.grade || "—";
-  const pePct = payload.valuation?.pe_percentile_10y;
   const bias = payload.technicals?.bias_pct;
   const proxy = payload.analysis_mode === "etf_proxy";
-  const plan = state.plan || {};
-  const symbol = state.analysisSymbol || payload.symbol || "";
-  const { entry, actualWeight, targetWeight } = portfolioWeight(symbol);
+  const active = advice || currentPeriodAdvice();
+  const bullets = [...(active.bullets || [])];
+  if (proxy && active.pePct == null) bullets.push("ETF 口径，无 PE 分位");
+  if (bias != null) bullets.push(`年线乖离 ${fmtSigned(bias, 2, "%")}`);
 
-  const grid = dcaMultiplier({
-    strategy: plan.strategy,
-    strategyConfig: plan.strategy_config,
-    pePct,
-    grade,
-  });
-  const pool = allocatePoolBudget({
-    budget: plan.amount,
-    holdings: buildPoolHoldingsForAllocation({ preferLive: currentPayload() }),
-    strategy: plan.strategy,
-    strategyConfig: plan.strategy_config,
-  });
-  const mine = allocationForSymbol(pool, symbol);
-  const myAmount = mine?.amount ?? 0;
-
-  let headline;
-  if (!(plan.amount > 0)) {
-    headline = "先在定投计划设置「全池每期预算」";
-  } else if (pool.deployTotal <= 0) {
-    headline = "本期建议不投，保留现金";
-  } else if (myAmount > 0) {
-    headline = `本期建议投入 ${money(myAmount)}`;
-  } else {
-    headline = "建议不投";
-  }
-
-  const bullets = [];
-  bullets.push(`${strategyLabel(plan.strategy)} · ${grid.band} · ${grid.mult}×`);
-  if (mine && myAmount > 0) {
-    bullets.push(`约占全池部署 ${mine.sharePct.toFixed(0)}%`);
-  } else if (symbol && plan.amount > 0) {
-    const skipped = (pool.skipped || []).find((item) => item.symbol === symbol);
-    bullets.push(skipped ? skipped.reason : "本期未分到额度");
-  }
-
-  if (targetWeight != null) {
-    bullets.push(
-      `目标 ${targetWeight.toFixed(1)}%${actualWeight != null ? ` · 实际 ${actualWeight.toFixed(1)}%` : ""}`,
-    );
-    const rb = rebalanceHint({
-      targetWeight,
-      actualWeight,
-      name: entry?.name || payload.etf_name || symbol,
-    });
-    if (rb) bullets.push(rb);
-  }
-
-  if (pePct != null) {
-    bullets.push(`PE 分位约 ${Math.round(pePct * 100)}%`);
-  } else if (proxy) {
-    bullets.push("ETF 口径，无 PE 分位");
-  }
-  if (bias != null) {
-    bullets.push(`年线乖离 ${fmtSigned(bias, 2, "%")}`);
-  }
+  const tone =
+    active.stance === STANCE.INVEST
+      ? GRADE_TONES[grade] || "grade-c"
+      : active.stance === STANCE.NEED_BUDGET
+        ? "grade-c"
+        : "grade-d";
 
   return `
-    <section class="panel-block dividend-advice ${GRADE_TONES[grade] || "grade-c"}" aria-label="本只定投建议">
+    <section class="panel-block dividend-advice ${tone}" aria-label="本只定投建议">
       <div class="panel-heading">
         <div>
           <p class="eyebrow">This ETF</p>
           <h2 class="section-title">定投建议</h2>
         </div>
-        <span class="dividend-advice-grade">${escapeHtml(grade)} · ${escapeHtml(grid.band)}</span>
+        <span class="dividend-advice-grade">${escapeHtml(active.strategyName)} · ${escapeHtml(active.band)}</span>
       </div>
-      <p class="dividend-advice-headline">${escapeHtml(headline)}</p>
+      <p class="dividend-advice-headline">${escapeHtml(active.headline)}</p>
       <ul class="dividend-advice-list">
         ${bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
       </ul>
@@ -364,43 +310,34 @@ function dcaAdviceHtml() {
   `;
 }
 
-function operationPlan(grade, technicals, pePct) {
-  const plan = state.plan || {};
-  const symbol = state.analysisSymbol || currentPayload()?.symbol || "";
-  const grid = dcaMultiplier({
-    strategy: plan.strategy,
-    strategyConfig: plan.strategy_config,
-    pePct,
-    grade,
-  });
-  const pool = allocatePoolBudget({
-    budget: plan.amount,
-    holdings: buildPoolHoldingsForAllocation({ preferLive: currentPayload() }),
-    strategy: plan.strategy,
-    strategyConfig: plan.strategy_config,
-  });
-  const mine = allocationForSymbol(pool, symbol);
+function operationPlan(advice, technicals) {
+  const active = advice || currentPeriodAdvice();
   const ma250 = technicals?.ma250;
   const bollMid = technicals?.boll?.mid;
-  const triggers = [];
-  if (!(plan.amount > 0)) triggers.push("先设置全池预算");
-  else if (pool.deployTotal <= 0) triggers.push("全池暂缓，留现金");
-  else if (mine && mine.amount > 0) triggers.push(`本只用 ${money(mine.amount)}`);
-  else triggers.push("本只不投");
+  const triggers = [...(active.playbookTriggers || [])];
   if (ma250 != null) triggers.push(`年线 ${fmt(ma250, 2)}`);
   if (bollMid != null) triggers.push(`布林中轨 ${fmt(bollMid, 2)}`);
 
   return [
-    { label: "策略", value: strategyLabel(plan.strategy) },
-    { label: "倍率", value: `${grid.mult}×` },
-    { label: "全池预算", value: plan.amount > 0 ? money(plan.amount) : "未设置" },
-    { label: "全池部署", value: plan.amount > 0 ? `${money(pool.deployTotal)}（留现金 ${money(pool.cashKeep)}）` : "—" },
-    { label: "本只建议", value: mine ? money(mine.amount) : grid.mult <= 0 ? "不投" : "—" },
+    { label: "策略", value: active.strategyName },
+    { label: "本期结论", value: active.headline },
+    { label: "倍率", value: `${active.mult}× · ${active.band}` },
+    {
+      label: "全池部署",
+      value:
+        active.stance === STANCE.NEED_BUDGET
+          ? "未设置预算"
+          : `${money(active.pool.deployTotal)}（留现金 ${money(active.pool.cashKeep)}）`,
+    },
+    {
+      label: "本只建议",
+      value: active.stance === STANCE.INVEST ? money(active.amount) : "不投",
+    },
     { label: "执行要点", value: triggers.join("；") },
   ];
 }
 
-function holdingsPanel(symbol, price) {
+function holdingsPanel(symbol, price, advice) {
   const entry = state.etfs.find((item) => item.symbol === symbol);
   if (!entry || !(entry.shares > 0)) {
     return `
@@ -415,9 +352,9 @@ function holdingsPanel(symbol, price) {
   const pnl = value != null && costValue != null ? value - costValue : null;
   const pnlPct = pnl != null && costValue ? (pnl / costValue) * 100 : null;
   const vsCost = price != null && cost != null ? ((price - cost) / cost) * 100 : null;
-  // 简单加仓参考：成本下方 3% / 5% 作为分批参考价
   const add1 = cost != null ? cost * 0.97 : null;
   const add2 = cost != null ? cost * 0.95 : null;
+  const canAdd = advice?.canAdd === true;
   const rows = [
     ["目标仓位", entry.target_weight > 0 ? `${Number(entry.target_weight).toFixed(1)}%` : "未设置"],
     ["持有份额", entry.shares.toLocaleString("zh-CN")],
@@ -427,6 +364,14 @@ function holdingsPanel(symbol, price) {
     ["浮盈亏", pnl != null ? `${money(pnl)}（${signed(pnlPct, 1)}%）` : "—"],
     ["相对成本", vsCost != null ? `${signed(vsCost, 2)}%` : "—"],
   ];
+  let hint;
+  if (!canAdd) {
+    hint = `<p class="muted dividend-holdings-hint">本期策略结论：不加仓（${escapeHtml(advice?.reason || "不投")}）</p>`;
+  } else if (add1 != null) {
+    hint = `<p class="muted dividend-holdings-hint">加仓参考：${add1.toFixed(3)} / ${add2.toFixed(3)}（成本 -3% / -5%）</p>`;
+  } else {
+    hint = `<p class="muted dividend-holdings-hint">补成本价后可生成加仓参考。</p>`;
+  }
   return `
     <div class="dividend-holdings">
       <dl class="dividend-holdings-grid">
@@ -441,22 +386,18 @@ function holdingsPanel(symbol, price) {
           )
           .join("")}
       </dl>
-      ${
-        add1 != null
-          ? `<p class="muted dividend-holdings-hint">加仓参考：${add1.toFixed(3)} / ${add2.toFixed(3)}（成本 -3% / -5%）</p>`
-          : `<p class="muted dividend-holdings-hint">补成本价后可生成加仓参考。</p>`
-      }
+      ${hint}
     </div>
   `;
 }
 
-function auxPanelHtml() {
+function auxPanelHtml(advice) {
   const payload = currentPayload() || {};
-  const grade = payload.score?.grade || "—";
   const technicals = payload.technicals || {};
   const price = payload.etf?.price != null ? payload.etf.price : payload.index?.close;
   const symbol = state.analysisSymbol || payload.symbol || payload.etf?.symbol || "";
-  const steps = operationPlan(grade, technicals, payload.valuation?.pe_percentile_10y);
+  const active = advice || currentPeriodAdvice();
+  const steps = operationPlan(active, technicals);
 
   return `
     <section class="panel-block dividend-aux" aria-label="操作清单与持仓对照">
@@ -482,7 +423,7 @@ function auxPanelHtml() {
         <p class="eyebrow">Holdings</p>
         <h3 class="section-title">持仓对照</h3>
       </div>
-      ${holdingsPanel(symbol, price)}
+      ${holdingsPanel(symbol, price, active)}
     </section>
   `;
 }
@@ -546,16 +487,17 @@ function paintDividend() {
   }
 
   els.dividendContent.hidden = false;
+  const advice = currentPeriodAdvice();
   els.dividendContent.innerHTML = `
     ${errorsHtml()}
     <div class="dividend-hero">
       <div class="dividend-hero-main">
         ${scoreCardHtml()}
-        ${dcaAdviceHtml()}
+        ${dcaAdviceHtml(advice)}
       </div>
       <div class="dividend-hero-aside">
         <div class="metric-grid dividend-metrics">${metricsHtml()}</div>
-        ${auxPanelHtml()}
+        ${auxPanelHtml(advice)}
       </div>
     </div>
     <section class="panel-block dividend-chart-block">
@@ -586,9 +528,9 @@ function paintDividend() {
           <p class="eyebrow">Tape</p>
           <h2 class="section-title">今日盘面</h2>
         </div>
-        <span class="muted">规则点评</span>
+        <span class="muted">规则点评 · 执行跟策略</span>
       </div>
-      ${commentaryHtml()}
+      ${commentaryHtml(advice)}
     </section>
     <section class="panel-block dividend-sources">
       <p class="eyebrow">Sources</p>
