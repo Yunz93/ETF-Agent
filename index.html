@@ -117,7 +117,7 @@
           <section class="plan-section" aria-label="计划参数">
             <div class="plan-section-heading">
               <h3 class="plan-section-title">1. 计划参数</h3>
-              <p class="muted">整池每期总预算</p>
+              <p class="muted">整池每期总预算与定投策略</p>
             </div>
             <form id="dcaPlanForm" class="plan-config-strip" autocomplete="off">
               <label>
@@ -144,7 +144,30 @@
                 <span>备注</span>
                 <input id="planNote" type="text" placeholder="可选" maxlength="120" />
               </label>
+              <label class="plan-strategy-field">
+                <span>定投策略</span>
+                <select id="planStrategy">
+                  <option value="fixed">定额定投</option>
+                  <option value="valuation" selected>估值定投</option>
+                  <option value="grade">评分定投</option>
+                  <option value="rebalance">再平衡定投</option>
+                  <option value="custom">自定义策略</option>
+                </select>
+              </label>
+              <p id="planStrategyHint" class="plan-strategy-hint muted">按 PE 近十年分位调节倍率，偏贵留现金</p>
             </form>
+            <div id="planStrategyCustom" class="plan-strategy-custom" hidden>
+              <div class="plan-strategy-custom-heading">
+                <h4 class="plan-strategy-custom-title">自定义倍率网格</h4>
+                <label class="plan-strategy-check">
+                  <input id="planUseRebalance" type="checkbox" checked />
+                  <span>叠加再平衡倾斜</span>
+                </label>
+              </div>
+              <div id="planPeBands" class="plan-pe-bands" aria-label="PE 分位区间"></div>
+              <div id="planGradeMult" class="plan-grade-mult" aria-label="评分倍率兜底"></div>
+              <p class="muted plan-strategy-custom-note">无 PE 分位时按评分倍率；末档上限固定为 100%。</p>
+            </div>
           </section>
 
           <section class="plan-section" aria-label="组合概览">

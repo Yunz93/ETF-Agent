@@ -4,9 +4,11 @@
 import datetime
 import json
 
-from .defaults import DEFAULT_TARGET_WEIGHTS, DEFAULT_WORKSPACE
+from .defaults import DEFAULT_STRATEGY_CONFIG, DEFAULT_TARGET_WEIGHTS, DEFAULT_WORKSPACE
 from .paths import WORKSPACE_LOCK, WORKSPACE_PATH
 from .symbols import as_of
+
+STRATEGY_IDS = ("fixed", "valuation", "grade", "rebalance", "custom")
 
 
 def empty_workspace():
@@ -55,10 +57,71 @@ def normalize_etf_entry(item):
     }
 
 
+def _clamp_mult(value, fallback=1.0):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    if number < 0:
+        return float(fallback)
+    return round(min(5.0, number), 2)
+
+
+def _clamp_pct(value, fallback):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return int(fallback)
+    return int(min(100, max(1, round(number))))
+
+
+def normalize_strategy_config(payload):
+    base = json.loads(json.dumps(DEFAULT_STRATEGY_CONFIG))
+    if not isinstance(payload, dict):
+        return base
+
+    raw_bands = payload.get("pe_bands")
+    pe_bands = []
+    if isinstance(raw_bands, list) and raw_bands:
+        for index, band in enumerate(raw_bands[:8]):
+            if not isinstance(band, dict):
+                continue
+            fallback = base["pe_bands"][min(index, len(base["pe_bands"]) - 1)]
+            max_pct = _clamp_pct(band.get("max_pct", band.get("maxPct")), fallback["max_pct"])
+            mult = _clamp_mult(band.get("mult"), fallback["mult"])
+            label = str(band.get("label") or fallback["label"]).strip() or fallback["label"]
+            pe_bands.append({"max_pct": max_pct, "mult": mult, "label": label})
+        pe_bands.sort(key=lambda row: row["max_pct"])
+        if pe_bands:
+            pe_bands[-1]["max_pct"] = 100
+    if not pe_bands:
+        pe_bands = base["pe_bands"]
+
+    raw_grade = payload.get("grade_mult") if isinstance(payload.get("grade_mult"), dict) else {}
+    grade_mult = {}
+    for key in ("A", "B", "C", "D", "E"):
+        grade_mult[key] = _clamp_mult(raw_grade.get(key), base["grade_mult"][key])
+
+    use_rebalance = payload.get("use_rebalance", True)
+    if use_rebalance in (0, "0", "false", "False", False):
+        use_rebalance = False
+    else:
+        use_rebalance = True
+
+    return {
+        "pe_bands": pe_bands,
+        "grade_mult": grade_mult,
+        "use_rebalance": use_rebalance,
+    }
+
+
 def normalize_plan(payload):
     base = dict(DEFAULT_WORKSPACE["plan"])
     if not isinstance(payload, dict):
-        return base
+        return {
+            **base,
+            "strategy_config": normalize_strategy_config(base.get("strategy_config")),
+        }
     name = str(payload.get("name") or base["name"]).strip() or base["name"]
     cadence = str(payload.get("cadence") or base["cadence"]).strip().lower()
     if cadence not in ("weekly", "biweekly", "monthly"):
@@ -71,12 +134,20 @@ def normalize_plan(payload):
         day = min(28, max(1, day))
     else:
         day = min(7, max(1, day))
+    strategy = str(payload.get("strategy") or base.get("strategy") or "valuation").strip().lower()
+    if strategy not in STRATEGY_IDS:
+        strategy = "valuation"
+    raw_config = payload.get("strategy_config")
+    if raw_config is None:
+        raw_config = payload.get("strategyConfig")
     return {
         "name": name,
         "amount": _positive_number(payload.get("amount")) or 0,
         "cadence": cadence,
         "day": day,
         "note": str(payload.get("note") or "").strip(),
+        "strategy": strategy,
+        "strategy_config": normalize_strategy_config(raw_config),
     }
 
 

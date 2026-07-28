@@ -1,7 +1,7 @@
 import { PLAN_CADENCE_LABELS } from "./constants.js";
 import { state } from "./state.js";
 import { escapeAttr, escapeHtml, money } from "./utils.js";
-import { allocatePoolBudget } from "./strategy.js";
+import { allocatePoolBudget, strategyLabel } from "./strategy.js";
 
 function cacheKey(symbol) {
   return symbol || "__default__";
@@ -45,7 +45,13 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
   const cadenceLabel = PLAN_CADENCE_LABELS[plan.cadence] || "每月";
   const dayLabel = plan.cadence === "monthly" ? `${plan.day || 1} 号` : `周${plan.day || 1}`;
   const holdings = buildPoolHoldingsForAllocation();
-  const pool = allocatePoolBudget({ budget: plan.amount, holdings });
+  const pool = allocatePoolBudget({
+    budget: plan.amount,
+    holdings,
+    strategy: plan.strategy,
+    strategyConfig: plan.strategy_config,
+  });
+  const strategyName = strategyLabel(plan.strategy);
 
   if (!(plan.amount > 0) || !holdings.length) {
     return `
@@ -83,7 +89,7 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
         <div>
           <p class="eyebrow">Pool</p>
           <h2 class="section-title">全池本期分配</h2>
-          <p class="muted">${escapeHtml(plan.name || "定投计划")} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}</p>
+          <p class="muted">${escapeHtml(plan.name || "定投计划")} · ${escapeHtml(strategyName)} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}</p>
         </div>
       </div>
       <div class="pool-alloc-summary">

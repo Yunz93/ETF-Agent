@@ -33,6 +33,28 @@ test("plan normalization clamps execution day by cadence", () => {
   assert.equal(normalizePlan({ amount: -1 }).amount, 0);
 });
 
+test("plan normalization defaults strategy to valuation and accepts custom config", () => {
+  const legacy = normalizePlan({ name: "旧计划", amount: 1000 });
+  assert.equal(legacy.strategy, "valuation");
+  assert.equal(legacy.strategy_config.pe_bands.length, 5);
+
+  const custom = normalizePlan({
+    strategy: "custom",
+    strategy_config: {
+      pe_bands: [
+        { max_pct: 30, mult: 2, label: "低" },
+        { max_pct: 100, mult: 0.2, label: "高" },
+      ],
+      grade_mult: { A: 2, B: 1, C: 1, D: 0.2, E: 0 },
+      use_rebalance: false,
+    },
+  });
+  assert.equal(custom.strategy, "custom");
+  assert.equal(custom.strategy_config.pe_bands[0].max_pct, 30);
+  assert.equal(custom.strategy_config.use_rebalance, false);
+  assert.equal(normalizePlan({ strategy: "nope" }).strategy, "valuation");
+});
+
 test("buy normalization deduplicates records and rejects impossible dates", () => {
   const buys = normalizeBuys([
     { id: "buy-1", symbol: "sh510300", date: "2026-07-28", shares: 10, price: 4.2 },

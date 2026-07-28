@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   allocatePoolBudget,
   allocationForSymbol,
+  dcaMultiplier,
+  normalizeStrategyConfig,
   rebalanceHint,
   valuationDcaMultiplier,
 } from "../js/strategy.js";
@@ -14,6 +16,66 @@ test("valuation grid follows PE percentile boundaries", () => {
   assert.equal(valuationDcaMultiplier({ pePct: 0.6 }).mult, 1);
   assert.equal(valuationDcaMultiplier({ pePct: 0.8 }).mult, 0.5);
   assert.equal(valuationDcaMultiplier({ pePct: 0.81 }).mult, 0);
+});
+
+test("fixed strategy always uses 1x and deploys full budget by target weight", () => {
+  const result = allocatePoolBudget({
+    budget: 2000,
+    strategy: "fixed",
+    holdings: [
+      { symbol: "510300", targetWeight: 60, pePct: 0.9 },
+      { symbol: "512890", targetWeight: 40, pePct: 0.9 },
+    ],
+  });
+  assert.equal(result.deployTotal, 2000);
+  assert.equal(result.cashKeep, 0);
+  assert.equal(allocationForSymbol(result, "510300")?.amount, 1200);
+  assert.equal(allocationForSymbol(result, "512890")?.amount, 800);
+});
+
+test("grade strategy ignores PE and uses score bands", () => {
+  assert.equal(dcaMultiplier({ strategy: "grade", pePct: 0.9, grade: "A" }).mult, 1.5);
+  assert.equal(dcaMultiplier({ strategy: "grade", pePct: 0.1, grade: "E" }).mult, 0);
+});
+
+test("rebalance strategy prefers underweight holdings", () => {
+  const result = allocatePoolBudget({
+    budget: 1000,
+    strategy: "rebalance",
+    holdings: [
+      { symbol: "510300", targetWeight: 50, actualWeight: 70 },
+      { symbol: "512890", targetWeight: 50, actualWeight: 30 },
+    ],
+  });
+  assert.equal(result.deployTotal, 1000);
+  assert.equal(allocationForSymbol(result, "512890")?.amount, 1000);
+  assert.equal(result.skipped.length, 1);
+  assert.equal(result.skipped[0].symbol, "510300");
+});
+
+test("custom strategy uses editable PE bands", () => {
+  const config = normalizeStrategyConfig({
+    pe_bands: [
+      { max_pct: 50, mult: 2, label: "便宜" },
+      { max_pct: 100, mult: 0, label: "贵" },
+    ],
+    use_rebalance: false,
+  });
+  assert.equal(dcaMultiplier({ strategy: "custom", strategyConfig: config, pePct: 0.4 }).mult, 2);
+  assert.equal(dcaMultiplier({ strategy: "custom", strategyConfig: config, pePct: 0.7 }).mult, 0);
+
+  const result = allocatePoolBudget({
+    budget: 2000,
+    strategy: "custom",
+    strategyConfig: config,
+    holdings: [
+      { symbol: "510300", targetWeight: 50, pePct: 0.4 },
+      { symbol: "512890", targetWeight: 50, pePct: 0.7 },
+    ],
+  });
+  assert.equal(result.deployTotal, 2000);
+  assert.equal(allocationForSymbol(result, "510300")?.amount, 2000);
+  assert.equal(result.skipped[0].symbol, "512890");
 });
 
 test("allocation preserves budget and leaves cash when the pool is expensive", () => {

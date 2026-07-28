@@ -1960,6 +1960,18 @@ button:active {
   grid-column: auto;
 }
 
+.plan-config-strip label.plan-strategy-field {
+  grid-column: 1 / 3;
+}
+
+.plan-strategy-hint {
+  grid-column: 3 / -1;
+  margin: 0;
+  align-self: center;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
 .plan-config-strip label span {
   font-size: 11px;
   letter-spacing: 0.02em;
@@ -1978,6 +1990,114 @@ button:active {
   font-size: 13px;
 }
 
+.plan-strategy-custom {
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--panel-shadow);
+}
+
+.plan-strategy-custom-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 0 0 12px;
+}
+
+.plan-strategy-custom-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.plan-strategy-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.plan-strategy-check input {
+  width: auto;
+  margin: 0;
+}
+
+.plan-pe-bands {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.plan-pe-head,
+.plan-pe-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.7fr) minmax(72px, 0.7fr) minmax(0, 1.4fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.plan-pe-head {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.plan-pe-row input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.plan-pe-row input[readonly] {
+  opacity: 0.7;
+}
+
+.plan-grade-mult {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.plan-grade-mult label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.plan-grade-mult label span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.plan-grade-mult input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.plan-strategy-custom-note {
+  margin: 0;
+  font-size: 12px;
+}
+
 #etfMetrics.metric-grid {
   margin-bottom: 12px;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -1988,8 +2108,14 @@ button:active {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .plan-config-strip label.grow {
+  .plan-config-strip label.grow,
+  .plan-config-strip label.plan-strategy-field,
+  .plan-strategy-hint {
     grid-column: 1 / -1;
+  }
+
+  .plan-grade-mult {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   #etfMetrics.metric-grid {
@@ -2000,6 +2126,10 @@ button:active {
 @media (max-width: 720px) {
   .plan-config-strip {
     grid-template-columns: 1fr;
+  }
+
+  .plan-grade-mult {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   #etfMetrics.metric-grid {

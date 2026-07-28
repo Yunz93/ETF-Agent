@@ -18,11 +18,14 @@ export function bindEvents() {
     renderEtfPool({ refresh: true });
   });
 
-  els.dcaPlanForm?.addEventListener("change", () => {
+  const persistPlan = () => {
     readPlanFormIntoState();
     persistWorkspace();
     renderEtfPool();
-  });
+  };
+
+  els.dcaPlanForm?.addEventListener("change", persistPlan);
+  els.planStrategyCustom?.addEventListener("change", persistPlan);
 
   els.etfForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
