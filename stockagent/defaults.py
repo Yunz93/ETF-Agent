@@ -116,6 +116,18 @@ ETF_ANALYSIS_FIELDS = (
     "history_symbol",
 )
 
+DEFAULT_STRATEGY_CONFIG = {
+    "pe_bands": [
+        {"max_pct": 20, "mult": 1.5, "label": "低估区"},
+        {"max_pct": 40, "mult": 1.2, "label": "偏低区"},
+        {"max_pct": 60, "mult": 1.0, "label": "正常区"},
+        {"max_pct": 80, "mult": 0.5, "label": "偏高区"},
+        {"max_pct": 100, "mult": 0, "label": "高估区"},
+    ],
+    "grade_mult": {"A": 1.5, "B": 1.2, "C": 1.0, "D": 0.5, "E": 0},
+    "use_rebalance": True,
+}
+
 DEFAULT_WORKSPACE = {
     "version": 4,
     "updated_at": None,
@@ -127,6 +139,8 @@ DEFAULT_WORKSPACE = {
         "cadence": "monthly",
         "day": 1,
         "note": "",
+        "strategy": "valuation",
+        "strategy_config": DEFAULT_STRATEGY_CONFIG,
     },
     "prefs": {},
 }

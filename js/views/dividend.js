@@ -1,7 +1,7 @@
 import { els, state, appConfig } from "../state.js";
 import { escapeHtml, money, signed } from "../utils.js";
 import { analysisSupported, INDEX_CHART_RANGE_MONTHS, INDEX_CHART_RANGE_LABELS } from "../constants.js";
-import { valuationDcaMultiplier, rebalanceHint, allocatePoolBudget, allocationForSymbol } from "../strategy.js";
+import { rebalanceHint, allocatePoolBudget, allocationForSymbol, dcaMultiplier, strategyLabel } from "../strategy.js";
 import { buildPoolHoldingsForAllocation } from "../pool-alloc.js";
 import { drawPriceChart, buyEventMarkers } from "../chart.js";
 import { callRenderer, registerRenderers } from "./render.js";
@@ -291,10 +291,17 @@ function dcaAdviceHtml() {
   const symbol = state.analysisSymbol || payload.symbol || "";
   const { entry, actualWeight, targetWeight } = portfolioWeight(symbol);
 
-  const grid = valuationDcaMultiplier({ pePct, grade });
+  const grid = dcaMultiplier({
+    strategy: plan.strategy,
+    strategyConfig: plan.strategy_config,
+    pePct,
+    grade,
+  });
   const pool = allocatePoolBudget({
     budget: plan.amount,
     holdings: buildPoolHoldingsForAllocation({ preferLive: currentPayload() }),
+    strategy: plan.strategy,
+    strategyConfig: plan.strategy_config,
   });
   const mine = allocationForSymbol(pool, symbol);
   const myAmount = mine?.amount ?? 0;
@@ -311,7 +318,7 @@ function dcaAdviceHtml() {
   }
 
   const bullets = [];
-  bullets.push(`${grid.band} · ${grid.mult}×`);
+  bullets.push(`${strategyLabel(plan.strategy)} · ${grid.band} · ${grid.mult}×`);
   if (mine && myAmount > 0) {
     bullets.push(`约占全池部署 ${mine.sharePct.toFixed(0)}%`);
   } else if (symbol && plan.amount > 0) {
@@ -360,10 +367,17 @@ function dcaAdviceHtml() {
 function operationPlan(grade, technicals, pePct) {
   const plan = state.plan || {};
   const symbol = state.analysisSymbol || currentPayload()?.symbol || "";
-  const grid = valuationDcaMultiplier({ pePct, grade });
+  const grid = dcaMultiplier({
+    strategy: plan.strategy,
+    strategyConfig: plan.strategy_config,
+    pePct,
+    grade,
+  });
   const pool = allocatePoolBudget({
     budget: plan.amount,
     holdings: buildPoolHoldingsForAllocation({ preferLive: currentPayload() }),
+    strategy: plan.strategy,
+    strategyConfig: plan.strategy_config,
   });
   const mine = allocationForSymbol(pool, symbol);
   const ma250 = technicals?.ma250;
@@ -377,7 +391,8 @@ function operationPlan(grade, technicals, pePct) {
   if (bollMid != null) triggers.push(`布林中轨 ${fmt(bollMid, 2)}`);
 
   return [
-    { label: "估值倍率", value: `${grid.mult}×` },
+    { label: "策略", value: strategyLabel(plan.strategy) },
+    { label: "倍率", value: `${grid.mult}×` },
     { label: "全池预算", value: plan.amount > 0 ? money(plan.amount) : "未设置" },
     { label: "全池部署", value: plan.amount > 0 ? `${money(pool.deployTotal)}（留现金 ${money(pool.cashKeep)}）` : "—" },
     { label: "本只建议", value: mine ? money(mine.amount) : grid.mult <= 0 ? "不投" : "—" },
