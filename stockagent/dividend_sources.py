@@ -50,13 +50,13 @@ def _market_prefixed_index(index_code):
     prefix = "sz" if code.startswith("399") else "sh"
     return f"{prefix}{code}"
 
-def fetch_sina_index_history(index_code, start_date="20140101"):
+def fetch_sina_index_history(index_code, start_date="20140101", market_symbol=None):
     """新浪财经指数日 K（覆盖深证指数如创业板 399006）。无每日 PE。"""
     try:
         start = datetime.datetime.strptime(start_date, "%Y%m%d").date()
     except ValueError:
         start = datetime.date(2014, 1, 1)
-    symbol = _market_prefixed_index(index_code)
+    symbol = str(market_symbol or _market_prefixed_index(index_code)).strip()
     url = (
         "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?"
         + urllib.parse.urlencode({"symbol": symbol, "scale": "240", "ma": "no", "datalen": "5000"})
@@ -109,7 +109,9 @@ def fetch_tencent_index_history(index_code, start_date="20140101", limit=2000, m
         + urllib.parse.urlencode({"param": f"{symbol},day,,,{int(limit)},qfq"})
     )
     payload = http_get_json(url, headers=_browser_headers("https://finance.qq.com/"), timeout=30)
-    day_rows = (((payload.get("data") or {}).get(symbol) or {}).get("day")) or []
+    node = (payload.get("data") or {}).get(symbol) or {}
+    # 指数返回 "day"；个股 / ETF 的前复权请求返回 "qfqday"
+    day_rows = node.get("qfqday") or node.get("day") or []
     if not day_rows:
         raise RuntimeError(f"腾讯未返回 {index_code} 历史数据")
     history = []
@@ -153,7 +155,7 @@ def fetch_etf_as_index_history(symbol, start_date="20140101"):
     except Exception as exc:
         errors.append(f"tencent: {exc}")
     try:
-        return fetch_sina_index_history(code, start_date=start_date), "新浪财经"
+        return fetch_sina_index_history(code, start_date=start_date, market_symbol=market_symbol), "新浪财经"
     except Exception as exc:
         errors.append(f"sina: {exc}")
     raise RuntimeError("；".join(errors) or f"无法获取 {code} ETF 历史行情")
