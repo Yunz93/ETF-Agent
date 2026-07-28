@@ -354,6 +354,18 @@ class AnalysisRoutingTests(unittest.TestCase):
         gold = dividend.resolve_analysis_settings("159937", name="黄金ETF博时")
         self.assertEqual(gold.get("asset_class"), "commodity")
 
+    def test_missing_danjuan_note(self):
+        with_pe = dividend.missing_danjuan_note(True)
+        self.assertIn("蛋卷暂未收录", with_pe)
+        self.assertIn("自算近 10 年分位", with_pe)
+        without_pe = dividend.missing_danjuan_note(False)
+        self.assertIn("无每日 PE", without_pe)
+        self.assertIn("技术面为主", without_pe)
+        # A500 是当前唯一 danjuan 缺失的内置指数映射（蛋卷仅收录 63 个指数，无 000510）
+        a500 = dividend.resolve_analysis_settings("563360")
+        self.assertEqual(a500.get("danjuan_code"), "")
+        self.assertEqual(a500.get("history_source"), "csindex")
+
     def test_market_prefixed_index(self):
         self.assertEqual(dividend._market_prefixed_index("399006"), "sz399006")
         self.assertEqual(dividend._market_prefixed_index("000300"), "sh000300")

@@ -24,6 +24,15 @@ DIVIDEND_CACHE = {}
 def clear_dividend_cache():
     DIVIDEND_CACHE.clear()
 
+def missing_danjuan_note(has_daily_pe):
+    """蛋卷未收录该指数（如中证A500）时的降级说明。"""
+    if has_daily_pe:
+        return (
+            "蛋卷暂未收录该指数：PE 采用指数源每日序列并自算近 10 年分位；"
+            "股息率缺失，股债利差与 PB 暂缺"
+        )
+    return "蛋卷暂未收录该指数，且指数源无每日 PE：估值与股债利差暂缺，本页以行情技术面为主"
+
 def get_dividend_dashboard(refresh=False, symbol=None):
     """日度决策仪表盘。
 
@@ -91,7 +100,8 @@ def get_dividend_dashboard(refresh=False, symbol=None):
     elif proxy:
         errors["valuation"] = proxy_valuation_note(settings.get("etf_name") or etf_name)
     else:
-        errors["valuation"] = "未配置蛋卷估值代码，改用指数源 PE 序列"
+        has_daily_pe = any(row.get("pe") is not None for row in index_rows[-30:])
+        errors["valuation"] = missing_danjuan_note(has_daily_pe)
 
     if valuation and valuation.get("pe") is not None:
         fill_missing_pe(index_rows, valuation.get("pe"))
