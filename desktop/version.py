@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.0.3"
+__version__ = "0.1.0"
 APP_NAME = "StockAgent"
 DISPLAY_NAME = "ETF Agent"
 BUNDLE_ID = "com.stockagent.desktop"
