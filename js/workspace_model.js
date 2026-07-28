@@ -1,4 +1,8 @@
 import { DEFAULT_TARGET_WEIGHTS } from "./constants.js";
+import {
+  normalizeStrategyConfig,
+  normalizeStrategyId,
+} from "./strategy.js";
 
 export function clampWeight(value) {
   const number = Number(value);
@@ -13,8 +17,15 @@ export function normalizePlan(plan) {
     cadence: "monthly",
     day: 1,
     note: "",
+    strategy: "valuation",
+    strategy_config: normalizeStrategyConfig(null),
   };
-  if (!plan || typeof plan !== "object") return { ...base };
+  if (!plan || typeof plan !== "object") {
+    return {
+      ...base,
+      strategy_config: normalizeStrategyConfig(null),
+    };
+  }
   let cadence = String(plan.cadence || base.cadence).toLowerCase();
   if (!["weekly", "biweekly", "monthly"].includes(cadence)) cadence = base.cadence;
   let day = Number.parseInt(plan.day, 10);
@@ -28,6 +39,8 @@ export function normalizePlan(plan) {
     cadence,
     day,
     note: String(plan.note || "").trim(),
+    strategy: normalizeStrategyId(plan.strategy),
+    strategy_config: normalizeStrategyConfig(plan.strategy_config ?? plan.strategyConfig),
   };
 }
 

@@ -95,6 +95,37 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(workspace["plan"]["amount"], 3000)
         self.assertEqual(workspace["plan"]["cadence"], "weekly")
         self.assertEqual(workspace["plan"]["day"], 7)
+        self.assertEqual(workspace["plan"]["strategy"], "valuation")
+        self.assertEqual(len(workspace["plan"]["strategy_config"]["pe_bands"]), 5)
+
+    def test_plan_strategy_presets_and_custom_config(self):
+        workspace = workspace_store.normalize_workspace(
+            {
+                "plan": {
+                    "strategy": "custom",
+                    "strategy_config": {
+                        "pe_bands": [
+                            {"max_pct": 25, "mult": 2, "label": "低"},
+                            {"max_pct": 90, "mult": 0.3, "label": "高"},
+                        ],
+                        "grade_mult": {"A": 2, "E": 0},
+                        "use_rebalance": False,
+                    },
+                }
+            }
+        )
+        plan = workspace["plan"]
+        self.assertEqual(plan["strategy"], "custom")
+        self.assertEqual(plan["strategy_config"]["pe_bands"][0]["max_pct"], 25)
+        self.assertEqual(plan["strategy_config"]["pe_bands"][-1]["max_pct"], 100)
+        self.assertEqual(plan["strategy_config"]["grade_mult"]["A"], 2.0)
+        self.assertEqual(plan["strategy_config"]["grade_mult"]["C"], 1.0)
+        self.assertFalse(plan["strategy_config"]["use_rebalance"])
+
+        fixed = workspace_store.normalize_plan({"strategy": "fixed"})
+        self.assertEqual(fixed["strategy"], "fixed")
+        bogus = workspace_store.normalize_plan({"strategy": "magic"})
+        self.assertEqual(bogus["strategy"], "valuation")
 
     def test_buy_records_are_normalized_deduplicated_and_date_validated(self):
         workspace = workspace_store.normalize_workspace(

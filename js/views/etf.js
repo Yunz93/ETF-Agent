@@ -6,6 +6,13 @@ import { setSourceStatus } from "../navigation.js";
 import { persistWorkspace } from "../workspace.js";
 import { poolAllocationHtml } from "../pool-alloc.js";
 import { openAnalysis, registerRenderers } from "./render.js";
+import {
+  DEFAULT_STRATEGY_CONFIG,
+  normalizeStrategyConfig,
+  normalizeStrategyId,
+  strategyLabel,
+  strategySummary,
+} from "../strategy.js";
 
 let quotesPromise = null;
 
@@ -181,6 +188,59 @@ function portfolioTotals() {
   return { totalValue, totalCost, held, targetSum };
 }
 
+function syncCustomStrategyForm(config) {
+  const cfg = normalizeStrategyConfig(config);
+  if (els.planUseRebalance) els.planUseRebalance.checked = cfg.use_rebalance !== false;
+  if (els.planPeBands) {
+    els.planPeBands.innerHTML = `
+      <div class="plan-pe-head"><span>上限 %</span><span>倍率</span><span>名称</span></div>
+      ${cfg.pe_bands
+        .map(
+          (band, index) => `
+        <div class="plan-pe-row" data-band-index="${index}">
+          <input class="js-pe-max" type="number" min="1" max="100" step="1" value="${band.max_pct}" ${
+            index === cfg.pe_bands.length - 1 ? "readonly" : ""
+          } aria-label="区间上限百分比" />
+          <input class="js-pe-mult" type="number" min="0" max="5" step="0.1" value="${band.mult}" aria-label="定投倍率" />
+          <input class="js-pe-label" type="text" maxlength="12" value="${escapeAttr(band.label)}" aria-label="区间名称" />
+        </div>`,
+        )
+        .join("")}
+    `;
+  }
+  if (els.planGradeMult) {
+    els.planGradeMult.innerHTML = ["A", "B", "C", "D", "E"]
+      .map(
+        (grade) => `
+        <label>
+          <span>评分 ${grade}</span>
+          <input class="js-grade-mult" data-grade="${grade}" type="number" min="0" max="5" step="0.1" value="${cfg.grade_mult[grade]}" />
+        </label>`,
+      )
+      .join("");
+  }
+}
+
+function readCustomStrategyConfigFromForm() {
+  const pe_bands = [];
+  els.planPeBands?.querySelectorAll(".plan-pe-row").forEach((row) => {
+    pe_bands.push({
+      max_pct: Number(row.querySelector(".js-pe-max")?.value),
+      mult: Number(row.querySelector(".js-pe-mult")?.value),
+      label: String(row.querySelector(".js-pe-label")?.value || "").trim(),
+    });
+  });
+  const grade_mult = {};
+  els.planGradeMult?.querySelectorAll(".js-grade-mult").forEach((input) => {
+    grade_mult[input.dataset.grade] = Number(input.value);
+  });
+  return normalizeStrategyConfig({
+    pe_bands: pe_bands.length ? pe_bands : DEFAULT_STRATEGY_CONFIG.pe_bands,
+    grade_mult: Object.keys(grade_mult).length ? grade_mult : DEFAULT_STRATEGY_CONFIG.grade_mult,
+    use_rebalance: els.planUseRebalance?.checked !== false,
+  });
+}
+
 function syncPlanForm() {
   const plan = state.plan || {};
   if (els.planName) els.planName.value = plan.name || "";
@@ -194,6 +254,11 @@ function syncPlanForm() {
   if (els.planDayHint) {
     els.planDayHint.textContent = plan.cadence === "monthly" ? "执行日（号）" : "执行日（周几 1–7）";
   }
+  const strategy = normalizeStrategyId(plan.strategy);
+  if (els.planStrategy) els.planStrategy.value = strategy;
+  if (els.planStrategyHint) els.planStrategyHint.textContent = strategySummary(strategy);
+  if (els.planStrategyCustom) els.planStrategyCustom.hidden = strategy !== "custom";
+  syncCustomStrategyForm(plan.strategy_config);
 }
 
 export function readPlanFormIntoState() {
@@ -204,12 +269,18 @@ export function readPlanFormIntoState() {
   if (cadence === "monthly") day = Math.min(28, Math.max(1, day));
   else day = Math.min(7, Math.max(1, day));
   const amount = Number(els.planAmount?.value);
+  const strategy = normalizeStrategyId(els.planStrategy?.value);
+  const previousConfig = state.plan.strategy_config;
+  const strategy_config =
+    strategy === "custom" ? readCustomStrategyConfigFromForm() : normalizeStrategyConfig(previousConfig);
   state.plan = {
     name: String(els.planName?.value || "").trim() || "默认定投计划",
     amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
     cadence,
     day,
     note: String(els.planNote?.value || "").trim(),
+    strategy,
+    strategy_config,
   };
   if (els.planDay) {
     els.planDay.max = cadence === "monthly" ? "28" : "7";
@@ -218,6 +289,8 @@ export function readPlanFormIntoState() {
   if (els.planDayHint) {
     els.planDayHint.textContent = cadence === "monthly" ? "执行日（号）" : "执行日（周几 1–7）";
   }
+  if (els.planStrategyHint) els.planStrategyHint.textContent = strategySummary(strategy);
+  if (els.planStrategyCustom) els.planStrategyCustom.hidden = strategy !== "custom";
 }
 
 function renderMetrics() {
@@ -229,22 +302,13 @@ function renderMetrics() {
   const cadenceLabel = PLAN_CADENCE_LABELS[plan.cadence] || "每月";
   const dayLabel = plan.cadence === "monthly" ? `${plan.day || 1} 号` : `周${plan.day || 1}`;
   const targetClass = Math.abs(targetSum - 100) < 0.05 ? "" : targetSum > 100.05 ? "down" : "up";
-  let maxDrift = null;
-  if (totalValue > 0) {
-    state.etfs.forEach((entry) => {
-      const { value } = entryMetrics(entry);
-      const actual = value != null ? (value / totalValue) * 100 : 0;
-      const drift = actual - (Number(entry.target_weight) || 0);
-      if (maxDrift == null || Math.abs(drift) > Math.abs(maxDrift)) maxDrift = drift;
-    });
-  }
   const cards = [
     ["全池预算", plan.amount > 0 ? `${money(plan.amount)} · ${cadenceLabel}${dayLabel}` : `${cadenceLabel}${dayLabel}`],
+    ["定投策略", strategyLabel(plan.strategy)],
     ["计划内 ETF", `${state.etfs.length} 只 · 持仓 ${held}`],
     ["目标合计", `<span class="${targetClass}">${targetSum.toFixed(1)}%</span>`],
     ["组合市值", totalValue ? money(totalValue) : "—"],
     ["浮盈亏", pnl != null ? `${money(pnl)}（${signed(pnlPct, 1)}%）` : "—"],
-    ["最大偏离", maxDrift != null ? `${signed(maxDrift, 1)} pp` : "—"],
   ];
   els.etfMetrics.innerHTML = cards
     .map(
