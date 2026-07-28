@@ -82,7 +82,7 @@ stockagent/               # 后端包（纯标准库）
 js/                       # 前端 ES modules（index.html → js/main.js）
   main.js / state.js / constants.js / utils.js / chart.js
   navigation.js / events.js / workspace.js / workspace_model.js
-  strategy.js / pool-alloc.js
+  strategy.js / pool-alloc.js / period-advice.js
   settings.js
   views/                  # dividend / etf / render
 desktop/ packaging/ tests/

@@ -68,11 +68,11 @@ export const DEFAULT_STRATEGY_CONFIG = Object.freeze({
 });
 
 const GRADE_HINTS = Object.freeze({
-  A: "综合评分偏乐观，可加大本期投入",
-  B: "较好买入区间，可按计划略增",
-  C: "中性区间，维持定额",
-  D: "偏贵或偏弱，减额定投",
-  E: "建议暂停新增",
+  A: "综合评分偏乐观",
+  B: "综合评分较好",
+  C: "综合评分中性",
+  D: "综合评分偏弱",
+  E: "综合评分过热",
 });
 
 export function normalizeStrategyId(value) {

@@ -82,6 +82,7 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
   const noteParts = [];
   if (pool.note) noteParts.push(pool.note);
   if (missingN > 0) noteParts.push(`${missingN} 只未分析，暂按中性`);
+  noteParts.unshift(`${strategyName}策略`);
 
   return `
     <section class="panel-block pool-alloc-block" aria-label="全池本期分配">
