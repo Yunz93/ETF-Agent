@@ -25,3 +25,20 @@ def http_get_text(url, headers=None, timeout=45, encoding="utf-8"):
 
 def http_get_json(url, headers=None, timeout=45):
     return json.loads(http_get_text(url, headers=headers, timeout=timeout))
+
+
+def http_post_json(url, payload, headers=None, timeout=45):
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method="POST",
+        headers={
+            "User-Agent": YAHOO_UA,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            **(headers or {}),
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8", errors="replace"))

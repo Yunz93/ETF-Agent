@@ -10,6 +10,7 @@ import {
   allocationForSymbol,
   dcaMultiplier,
   normalizeStrategyId,
+  POSITION_TOLERANCE_PP,
   strategyLabel,
 } from "./strategy.js";
 import { buildPoolHoldingsForAllocation } from "./pool-alloc.js";
@@ -20,20 +21,6 @@ export const STANCE = Object.freeze({
   INVEST: "invest",
   SKIP: "skip",
 });
-
-function weightContext({ targetWeight, actualWeight } = {}) {
-  if (targetWeight == null) return null;
-  const targetText = `目标 ${Number(targetWeight).toFixed(1)}%`;
-  if (actualWeight == null) return targetText;
-  const drift = actualWeight - targetWeight;
-  if (Math.abs(drift) < 5) {
-    return `${targetText} · 实际 ${actualWeight.toFixed(1)}%`;
-  }
-  if (drift > 0) {
-    return `${targetText} · 实际 ${actualWeight.toFixed(1)}%（高出 ${drift.toFixed(1)} pp）`;
-  }
-  return `${targetText} · 实际 ${actualWeight.toFixed(1)}%（低于 ${Math.abs(drift).toFixed(1)} pp）`;
-}
 
 /**
  * @param {{ symbol?: string, preferLive?: object|null, plan?: object, holdings?: array }} [opts]
@@ -89,7 +76,7 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
     reason = skipped?.reason || "本期未分到额度";
   }
 
-  const bullets = [`${strategyName} · ${grid.band} · ${grid.mult}×`];
+  const bullets = [`定投倍率 ${grid.mult}×`];
   if (stance === STANCE.INVEST && mine) {
     bullets.push(`约占全池部署 ${mine.sharePct.toFixed(0)}%`);
   } else if (stance === STANCE.SKIP || stance === STANCE.HOLD_CASH) {
@@ -97,25 +84,29 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
   } else if (stance === STANCE.NEED_BUDGET) {
     bullets.push(reason);
   }
-
-  const weightLine = weightContext({
-    targetWeight: holding?.targetWeight > 0 ? holding.targetWeight : null,
-    actualWeight: holding?.actualWeight,
-  });
-  if (weightLine) bullets.push(weightLine);
-
-  if (holding?.pePct != null && Number.isFinite(Number(holding.pePct))) {
-    bullets.push(`PE 分位约 ${Math.round(Number(holding.pePct) * 100)}%`);
-  }
-
-  const executionLine =
-    stance === STANCE.NEED_BUDGET
-      ? `本期执行：先设置全池预算（${strategyName}）`
-      : stance === STANCE.HOLD_CASH
-        ? `本期执行：全池不投，留现金（${strategyName} · ${grid.band}）`
-        : stance === STANCE.INVEST
-          ? `本期执行：投入 ${money(amount)}（${strategyName} · ${grid.band} · ${grid.mult}×）`
-          : `本期执行：本只不投（${strategyName} · ${reason}）`;
+  const targetWeight =
+    holding?.targetWeight != null && Number.isFinite(Number(holding.targetWeight))
+      ? Number(holding.targetWeight)
+      : null;
+  const actualWeight =
+    holding?.actualWeight != null && Number.isFinite(Number(holding.actualWeight))
+      ? Number(holding.actualWeight)
+      : null;
+  const position = holding
+    ? {
+        targetWeight,
+        actualWeight,
+        drift:
+          targetWeight != null && actualWeight != null
+            ? Math.round((actualWeight - targetWeight) * 10_000) / 10_000
+            : null,
+        maxWeight: targetWeight != null ? targetWeight + POSITION_TOLERANCE_PP : null,
+        blocked:
+          targetWeight != null &&
+          actualWeight != null &&
+          actualWeight > targetWeight + POSITION_TOLERANCE_PP,
+      }
+    : null;
 
   return {
     symbol,
@@ -134,15 +125,7 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
     mine,
     skipped,
     bullets,
-    executionLine,
+    position,
     canAdd: stance === STANCE.INVEST,
-    playbookTriggers:
-      stance === STANCE.NEED_BUDGET
-        ? ["先设置全池预算"]
-        : stance === STANCE.HOLD_CASH
-          ? ["全池暂缓，留现金"]
-          : stance === STANCE.INVEST
-            ? [`本只用 ${money(amount)}`]
-            : ["本只不投"],
   };
 }

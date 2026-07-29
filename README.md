@@ -22,6 +22,11 @@
   - 持有份额与成本价内联编辑，自动算市值 / 浮盈亏 / 仓位占比
   - 点名称或「走势」查看历史 K 线（1M / 3M / 6M / 1Y / 5Y，成本线标记）
 - **设置**：管理 ETF 池和自定义指数映射（估值源可选）；工作区导出 / 导入备份
+- **AI 建议校正**
+  - 支持 DeepSeek 与 OpenAI，在现有规则建议之上复核估值、技术面、仓位与数据质量
+  - 模型只生成校正提案；低置信度、数据降级、仓位超限、总预算与最高 1.5 倍增量由本地代码强制约束
+  - 同时展示规则剩余额度、AI 提案、风控裁决和校正后额度；可选择本期采用校正或保持规则
+  - 不自动下单，不修改长期定投策略、持仓或交易记录
 - 固定合规声明：仅供研究参考，不构成投资建议
 
 ## 本地运行
@@ -42,6 +47,23 @@ npm run test:js
 ```
 
 不要直接打开 `index.html`。页面需要通过 `server.py` 调用真实数据接口，后端不可用时会明确显示"行情不可用"，不会用样例价格冒充真实行情。
+
+### 配置 AI 校正
+
+在「设置 → AI 建议校正」中选择 DeepSeek 或 OpenAI、保存 API Key 并测试连接。macOS
+桌面版把密钥写入系统钥匙串，不写入 `config.json`、工作区或日志。
+
+浏览器开发模式也可以在启动前设置环境变量：
+
+```bash
+export DEEPSEEK_API_KEY="..."
+# 或
+export OPENAI_API_KEY="..."
+python3 server.py
+```
+
+默认模型为 DeepSeek `deepseek-v4-flash`、OpenAI `gpt-5.6-luna`，可以在设置页调整。
+AI 校正只在用户点击时调用，同一数据快照默认缓存 30 分钟。
 
 ### macOS 桌面模式
 
@@ -80,6 +102,7 @@ stockagent/               # 后端包（纯标准库）
   dividend_registry.py / dividend_sources.py
   dividend_analysis.py / dividend_service.py
   health.py / handler.py / serve.py
+  ai_service.py / ai_providers.py / secret_store.py
 js/                       # 前端 ES modules（index.html → js/main.js）
   main.js / state.js / constants.js / utils.js / chart.js
   navigation.js / events.js / workspace.js / workspace_model.js
@@ -101,6 +124,10 @@ desktop/ packaging/ tests/
 - `GET /api/history?symbol=512890&range=1y`：历史收盘价（Yahoo chart 主源，腾讯 / 东方财富 K 线依次兜底；1m / 3m / 6m / 1y / 5y）
 - `GET/PUT /api/workspace`：ETF 池持久化到项目根目录 `workspace.json`（浏览器 localStorage 仅作缓存与离线兜底）
 - `GET/POST /api/config`：数据源配置（`config.json`；`etf.analysis` 可配置指数代码、可选蛋卷代码与历史行情来源）
+- `GET /api/ai/status`：AI 提供商、模型与密钥配置状态（不返回密钥）
+- `POST /api/ai/credentials`：macOS 钥匙串密钥保存 / 删除
+- `POST /api/ai/test`：测试当前提供商连接
+- `POST /api/ai/review-recommendation`：生成结构化 AI 校正并执行本地风控裁决
 - `GET /api/health`：ETF 行情新鲜度（含 A 股午休/休市判定）、腾讯 vs 东方财富价格交叉校验、红利低波三个数据源连通性
 
 行情字段包含 `source_url`、`as_of`、`market_timestamp`、`provider`；盘中 `live` 要求延迟 ≤ 15 分钟，休市期间标记 `recent_close`。

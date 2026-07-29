@@ -25,16 +25,22 @@ export const PLAN_CADENCE_LABELS = {
   monthly: "每月",
 };
 
-/** 指数走势可见区间（相对最新交易日往前推） */
-export const INDEX_CHART_RANGE_MONTHS = {
-  "6m": 6,
-  "1y": 12,
-  "3y": 36,
-  "5y": 60,
+/** ETF 走势可见区间（相对最新交易日往前推） */
+export const INDEX_CHART_RANGE_WINDOWS = {
+  "1w": { days: 7 },
+  "1m": { months: 1 },
+  "3m": { months: 3 },
+  "6m": { months: 6 },
+  "1y": { months: 12 },
+  "3y": { months: 36 },
+  "5y": { months: 60 },
   max: null,
 };
 
 export const INDEX_CHART_RANGE_LABELS = {
+  "1w": "1周",
+  "1m": "1月",
+  "3m": "3月",
   "6m": "6M",
   "1y": "1Y",
   "3y": "3Y",
@@ -45,6 +51,7 @@ export const INDEX_CHART_RANGE_LABELS = {
 export const THEME_KEY = "stockagent.theme";
 export const SIDEBAR_KEY = "stockagent.sidebar";
 export const SIDEBAR_COLLAPSE_MIN = 1181;
+export const MOBILE_SIDEBAR_MAX = 780;
 export const WORKSPACE_CACHE_KEY = "stockagent.workspace.cache";
 export const WORKSPACE_SYNC_DEBOUNCE_MS = 500;
 export const ETF_QUOTE_TTL_MS = 60_000;

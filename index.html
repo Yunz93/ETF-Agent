@@ -30,18 +30,21 @@
   <body>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
     <div class="app-shell">
-      <aside class="sidebar" aria-label="工作区导航">
+      <aside id="appSidebar" class="sidebar" aria-label="工作区导航">
         <div class="brand">
           <div class="brand-mark" aria-hidden="true">EA</div>
           <div class="brand-text">
             <p>ETF Agent</p>
             <span>定投工作台</span>
           </div>
+          <button id="mobileSidebarClose" class="mobile-sidebar-close ghost-button" type="button" aria-label="关闭导航">
+            <span aria-hidden="true">×</span>
+          </button>
         </div>
 
         <div class="sidebar-pool">
           <div class="sidebar-pool-heading">
-            <p class="eyebrow">DCA Plan</p>
+            <p>定投计划</p>
             <span class="muted" id="sidebarPoolCount">0</span>
           </div>
           <nav id="sidebarEtfList" class="sidebar-etf-list" aria-label="定投计划 ETF"></nav>
@@ -70,12 +73,33 @@
         </div>
       </aside>
 
+      <button
+        id="sidebarBackdrop"
+        class="sidebar-backdrop"
+        type="button"
+        aria-label="关闭导航"
+        aria-hidden="true"
+        tabindex="-1"
+      ></button>
+
       <main id="main-content" class="workspace" tabindex="-1">
         <header class="topbar">
-          <div>
-            <h1 id="pageTitle">ETF Agent</h1>
-            <div class="session-strip" aria-label="数据状态摘要">
-              <span><i class="status-dot"></i><strong id="topSourceStatus">行情连接中</strong></span>
+          <div class="topbar-main">
+            <button
+              id="mobileSidebarToggle"
+              class="mobile-sidebar-toggle ghost-button"
+              type="button"
+              aria-label="打开导航"
+              aria-controls="appSidebar"
+              aria-expanded="false"
+            >
+              <span aria-hidden="true">☰</span>
+            </button>
+            <div>
+              <h1 id="pageTitle">ETF Agent</h1>
+              <div class="session-strip" aria-label="数据状态摘要">
+                <span><i class="status-dot"></i><strong id="topSourceStatus">行情连接中</strong></span>
+              </div>
             </div>
           </div>
           <div class="topbar-actions">
@@ -88,8 +112,7 @@
         <section id="dividendView" class="view">
           <div class="panel-heading dividend-heading">
             <div>
-              <p class="eyebrow" id="dividendEyebrow">Analysis</p>
-              <h2 class="section-title" id="dividendSectionTitle">指数 · 今日位置</h2>
+              <h2 class="section-title" id="dividendSectionTitle">指数</h2>
               <p class="muted dividend-lede" id="dividendLede">看档位、估值分位与年线位置。</p>
             </div>
             <div class="inline-actions">
@@ -103,23 +126,94 @@
         <section id="etfView" class="view active">
           <div class="panel-heading">
             <div>
-              <p class="eyebrow">Home</p>
-              <h2 class="section-title">定投计划</h2>
-              <p class="muted dividend-lede">全池分配 · 持仓 · 买入记录</p>
+              <p class="muted dividend-lede">按任务查看计划、持仓与交易记录</p>
             </div>
             <div class="inline-actions">
               <button id="etfRefresh" class="ghost-button compact" type="button">刷新行情</button>
             </div>
           </div>
 
-          <div id="poolAllocPanel" class="pool-alloc-home"></div>
+          <div class="etf-tabs" role="tablist" aria-label="定投计划模块">
+            <button
+              id="etfTabOverview"
+              class="etf-tab active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="etfPanelOverview"
+              data-etf-tab="overview"
+            >
+              概览
+            </button>
+            <button
+              id="etfTabPlan"
+              class="etf-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="etfPanelPlan"
+              tabindex="-1"
+              data-etf-tab="plan"
+            >
+              计划设置
+            </button>
+            <button
+              id="etfTabHoldings"
+              class="etf-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="etfPanelHoldings"
+              tabindex="-1"
+              data-etf-tab="holdings"
+            >
+              持仓管理
+            </button>
+            <button
+              id="etfTabBuys"
+              class="etf-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="etfPanelBuys"
+              tabindex="-1"
+              data-etf-tab="buys"
+            >
+              交易记录
+            </button>
+          </div>
 
-          <section class="plan-section" aria-label="计划参数">
-            <div class="plan-section-heading">
-              <h3 class="plan-section-title">1. 计划参数</h3>
-              <p class="muted">整池每期总预算与定投策略</p>
-            </div>
-            <form id="dcaPlanForm" class="plan-config-strip" autocomplete="off">
+          <div
+            id="etfPanelOverview"
+            class="etf-tab-panel"
+            role="tabpanel"
+            aria-labelledby="etfTabOverview"
+            data-etf-panel="overview"
+          >
+            <div id="poolAllocPanel" class="pool-alloc-home"></div>
+            <section class="plan-section" aria-label="组合概览">
+              <div class="plan-section-heading">
+                <h3 class="plan-section-title">组合概览</h3>
+                <p class="muted">目标合计宜 ≈ 100%</p>
+              </div>
+              <div class="metric-grid" id="etfMetrics"></div>
+            </section>
+          </div>
+
+          <div
+            id="etfPanelPlan"
+            class="etf-tab-panel"
+            role="tabpanel"
+            aria-labelledby="etfTabPlan"
+            data-etf-panel="plan"
+            hidden
+          >
+            <section class="plan-section" aria-label="计划参数">
+              <div class="plan-section-heading">
+                <h3 class="plan-section-title">计划参数</h3>
+                <p class="muted">整池每期总预算与定投策略</p>
+              </div>
+              <form id="dcaPlanForm" class="plan-config-strip" autocomplete="off">
               <label>
                 <span>计划名称</span>
                 <input id="planName" type="text" placeholder="例如 家庭主账户" maxlength="40" />
@@ -155,8 +249,8 @@
                 </select>
               </label>
               <p id="planStrategyHint" class="plan-strategy-hint muted">按 PE 近十年分位调节倍率，偏贵留现金</p>
-            </form>
-            <div id="planStrategyCustom" class="plan-strategy-custom" hidden>
+              </form>
+              <div id="planStrategyCustom" class="plan-strategy-custom" hidden>
               <div class="plan-strategy-custom-heading">
                 <h4 class="plan-strategy-custom-title">自定义倍率网格</h4>
                 <label class="plan-strategy-check">
@@ -167,20 +261,21 @@
               <div id="planPeBands" class="plan-pe-bands" aria-label="PE 分位区间"></div>
               <div id="planGradeMult" class="plan-grade-mult" aria-label="评分倍率兜底"></div>
               <p class="muted plan-strategy-custom-note">无 PE 分位时按评分倍率；末档上限固定为 100%。</p>
-            </div>
-          </section>
+              </div>
+            </section>
+          </div>
 
-          <section class="plan-section" aria-label="组合概览">
+          <div
+            id="etfPanelHoldings"
+            class="etf-tab-panel"
+            role="tabpanel"
+            aria-labelledby="etfTabHoldings"
+            data-etf-panel="holdings"
+            hidden
+          >
+            <section class="plan-section" aria-label="持仓明细">
             <div class="plan-section-heading">
-              <h3 class="plan-section-title">2. 组合概览</h3>
-              <p class="muted">目标合计宜 ≈ 100%</p>
-            </div>
-            <div class="metric-grid" id="etfMetrics"></div>
-          </section>
-
-          <section class="plan-section" aria-label="持仓明细">
-            <div class="plan-section-heading">
-              <h3 class="plan-section-title">3. 持仓明细</h3>
+              <h3 class="plan-section-title">持仓明细</h3>
               <p class="muted">拖拽排序 · 点名称分析</p>
             </div>
             <form id="etfForm" class="add-symbol-strip" autocomplete="off">
@@ -226,59 +321,9 @@
               </table>
             </div>
             <div id="etfEmpty" class="empty-state" hidden>暂无 ETF，用上方表单添加。</div>
-          </section>
+            </section>
 
-          <section class="plan-section" aria-label="买入记录">
-            <div class="plan-section-heading">
-              <h3 class="plan-section-title">4. 买入记录</h3>
-              <p class="muted">分析页走势图显示买入点</p>
-            </div>
-            <form id="buyForm" class="add-symbol-strip" autocomplete="off">
-              <label>
-                <span>ETF</span>
-                <select id="buySymbol" required>
-                  <option value="">选择品种</option>
-                </select>
-              </label>
-              <label>
-                <span>买入日期</span>
-                <input id="buyDate" type="date" required />
-              </label>
-              <label>
-                <span>买入价</span>
-                <input id="buyPrice" type="number" min="0" step="any" placeholder="1.234" required />
-              </label>
-              <label>
-                <span>份额</span>
-                <input id="buyShares" type="number" min="0" step="any" placeholder="1000" required />
-              </label>
-              <label class="grow">
-                <span>备注</span>
-                <input id="buyNote" type="text" placeholder="可选" maxlength="80" />
-              </label>
-              <button class="primary-button" type="submit">添加买入</button>
-              <p id="buyFormStatus" class="muted" role="status"></p>
-            </form>
-            <div class="table-wrap">
-              <table class="stock-table buy-table">
-                <thead>
-                  <tr>
-                    <th>日期</th>
-                    <th>ETF</th>
-                    <th class="num">买入价</th>
-                    <th class="num">份额</th>
-                    <th class="num">金额</th>
-                    <th>备注</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody id="buyRows"></tbody>
-              </table>
-            </div>
-            <div id="buyEmpty" class="empty-state" hidden>暂无买入记录。</div>
-          </section>
-
-          <section id="etfChartPanel" class="panel-block etf-chart-panel" hidden>
+            <section id="etfChartPanel" class="panel-block etf-chart-panel" hidden>
             <div class="panel-heading">
               <div>
                 <h3 class="section-title" id="etfChartTitle">走势</h3>
@@ -296,26 +341,98 @@
               <canvas id="etfChart" width="960" height="360" aria-label="ETF 走势图"></canvas>
               <div class="price-tooltip" id="etfChartTooltip" hidden></div>
             </div>
-          </section>
+            </section>
+          </div>
+
+          <div
+            id="etfPanelBuys"
+            class="etf-tab-panel"
+            role="tabpanel"
+            aria-labelledby="etfTabBuys"
+            data-etf-panel="buys"
+            hidden
+          >
+            <section class="plan-section" aria-label="交易记录">
+            <div class="plan-section-heading">
+              <h3 class="plan-section-title">交易记录</h3>
+              <p class="muted">用于复盘成本与走势图买卖点</p>
+            </div>
+            <form id="buyForm" class="add-symbol-strip" autocomplete="off">
+              <label>
+                <span>类型</span>
+                <select id="tradeType">
+                  <option value="buy">买入</option>
+                  <option value="sell">卖出</option>
+                </select>
+              </label>
+              <label>
+                <span>ETF</span>
+                <select id="buySymbol" required>
+                  <option value="">选择品种</option>
+                </select>
+              </label>
+              <label>
+                <span>交易日期</span>
+                <input id="buyDate" type="date" required />
+              </label>
+              <label>
+                <span>成交价</span>
+                <input id="buyPrice" type="number" min="0" step="any" placeholder="1.234" required />
+              </label>
+              <label>
+                <span>份额</span>
+                <input id="buyShares" type="number" min="0" step="any" placeholder="1000" required />
+              </label>
+              <label class="grow">
+                <span>备注</span>
+                <input id="buyNote" type="text" placeholder="可选" maxlength="80" />
+              </label>
+              <div class="buy-form-actions">
+                <button id="buySubmit" class="primary-button" type="submit">添加买入</button>
+                <button id="buyCancelEdit" class="ghost-button" type="button" hidden>取消修改</button>
+              </div>
+              <p id="buyFormStatus" class="muted" role="status"></p>
+            </form>
+            <div class="buy-list-toolbar">
+              <label for="buyFilterSymbol">筛选 ETF</label>
+              <select id="buyFilterSymbol">
+                <option value="">全部 ETF</option>
+              </select>
+              <select id="buyFilterType" aria-label="筛选交易类型">
+                <option value="">全部类型</option>
+                <option value="buy">仅买入</option>
+                <option value="sell">仅卖出</option>
+              </select>
+              <span id="buyFilterCount" class="muted" aria-live="polite"></span>
+            </div>
+            <div class="table-wrap">
+              <table class="stock-table buy-table">
+                <thead>
+                  <tr>
+                    <th>日期</th>
+                    <th>类型</th>
+                    <th>ETF</th>
+                    <th class="num">成交价</th>
+                    <th class="num">份额</th>
+                    <th class="num">金额</th>
+                    <th>备注</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="buyRows"></tbody>
+              </table>
+            </div>
+            <div id="buyEmpty" class="empty-state" hidden>暂无交易记录。</div>
+            </section>
+          </div>
         </section>
 
         <section id="settingsView" class="view">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">Settings</p>
-              <h2 class="section-title">设置</h2>
-              <p class="muted dividend-lede">分析默认与工作区同步</p>
-            </div>
-          </div>
           <div class="settings-layout">
             <section class="settings-card">
               <div class="panel-heading settings-heading">
-                <div>
-                  <p class="eyebrow">Analysis</p>
-                  <h2 class="section-title">分析默认</h2>
-                </div>
+                <h2 class="section-title">数据刷新</h2>
                 <div class="settings-actions">
-                  <button id="resetConfig" class="ghost-button compact" type="button">重载</button>
                   <button id="saveConfig" class="primary-button compact" type="button">保存</button>
                 </div>
               </div>
@@ -324,10 +441,7 @@
             </section>
             <section class="settings-card">
               <div class="panel-heading settings-heading">
-                <div>
-                  <p class="eyebrow">Workspace</p>
-                  <h2 class="section-title">工作区</h2>
-                </div>
+                <h2 class="section-title">工作区</h2>
                 <div class="settings-actions">
                   <button id="syncWorkspaceNow" class="ghost-button compact" type="button">同步</button>
                   <button id="exportWorkspace" class="ghost-button compact" type="button">导出</button>
@@ -335,7 +449,6 @@
                   <input id="importWorkspaceFile" type="file" accept="application/json,.json" hidden />
                 </div>
               </div>
-              <p class="muted settings-note">写入 <code>workspace.json</code></p>
               <p id="workspaceStatus" class="settings-status muted" role="status">尚未同步</p>
             </section>
           </div>
@@ -343,6 +456,6 @@
       </main>
     </div>
 
-    <script type="module" src="./js/main.js?v=20260728g"></script>
+    <script type="module" src="./js/main.js?v=20260729c"></script>
   </body>
 </html>

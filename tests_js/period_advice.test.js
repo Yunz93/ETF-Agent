@@ -8,7 +8,7 @@ test("period advice invests when strategy allocation assigns amount", () => {
     symbol: "512890",
     plan: { amount: 2000, strategy: "fixed" },
     holdings: [
-      { symbol: "512890", name: "红利低波", targetWeight: 40, pePct: 0.9, grade: "E" },
+      { symbol: "512890", name: "红利低波", targetWeight: 40, actualWeight: 44.9, pePct: 0.9, grade: "E" },
       { symbol: "563360", name: "A500", targetWeight: 60, pePct: 0.9, grade: "E" },
     ],
   });
@@ -16,7 +16,29 @@ test("period advice invests when strategy allocation assigns amount", () => {
   assert.equal(advice.amount, 800);
   assert.match(advice.headline, /本期建议投入/);
   assert.equal(advice.canAdd, true);
-  assert.match(advice.executionLine, /本期执行：投入/);
+  assert.deepEqual(advice.bullets, ["定投倍率 1×", "约占全池部署 40%"]);
+  assert.deepEqual(advice.position, {
+    targetWeight: 40,
+    actualWeight: 44.9,
+    drift: 4.9,
+    maxWeight: 45,
+    blocked: false,
+  });
+});
+
+test("period advice blocks new money above the position ceiling", () => {
+  const advice = getPeriodAdvice({
+    symbol: "512890",
+    plan: { amount: 2000, strategy: "fixed" },
+    holdings: [
+      { symbol: "512890", name: "红利低波", targetWeight: 40, actualWeight: 45.1 },
+      { symbol: "563360", name: "A500", targetWeight: 60, actualWeight: 54.9 },
+    ],
+  });
+  assert.equal(advice.stance, STANCE.SKIP);
+  assert.equal(advice.amount, 0);
+  assert.match(advice.reason, /仓位高于目标/);
+  assert.equal(advice.position.blocked, true);
 });
 
 test("period advice holds cash when valuation pauses the whole pool", () => {
@@ -32,7 +54,7 @@ test("period advice holds cash when valuation pauses the whole pool", () => {
   assert.equal(advice.amount, 0);
   assert.equal(advice.canAdd, false);
   assert.match(advice.headline, /不投/);
-  assert.match(advice.executionLine, /全池不投/);
+  assert.match(advice.bullets.join(" "), /留现金/);
 });
 
 test("period advice skips one name without inventing a buy when others deploy", () => {
@@ -53,7 +75,7 @@ test("period advice skips one name without inventing a buy when others deploy", 
   assert.equal(advice.stance, STANCE.SKIP);
   assert.equal(advice.amount, 0);
   assert.equal(advice.canAdd, false);
-  assert.match(advice.executionLine, /本只不投/);
+  assert.match(advice.headline, /本只不投/);
 });
 
 test("period advice asks for budget before inventing amounts", () => {

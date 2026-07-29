@@ -70,7 +70,7 @@ export function normalizeWorkspaceEntries(items = []) {
   return etfs;
 }
 
-export function normalizeBuys(items = []) {
+export function normalizeTrades(items = [], kind = "buy") {
   const seen = new Set();
   const buys = [];
   for (const item of items) {
@@ -94,7 +94,7 @@ export function normalizeBuys(items = []) {
     const shares = Number(item.shares);
     const price = Number(item.price);
     if (!(shares > 0) || !(price > 0)) continue;
-    const id = String(item.id || "").trim() || `buy_${symbol}_${date}_${Math.round(shares)}_${Math.round(price * 10000)}`;
+    const id = String(item.id || "").trim() || `${kind}_${symbol}_${date}_${Math.round(shares)}_${Math.round(price * 10000)}`;
     if (seen.has(id)) continue;
     seen.add(id);
     buys.push({
@@ -108,6 +108,24 @@ export function normalizeBuys(items = []) {
   }
   buys.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.id.localeCompare(b.id)));
   return buys;
+}
+
+export function normalizeBuys(items = []) {
+  return normalizeTrades(items, "buy");
+}
+
+export function normalizeSells(items = []) {
+  return normalizeTrades(items, "sell");
+}
+
+export function upsertBuy(items, record) {
+  if (!record?.id) return normalizeBuys(items);
+  return normalizeBuys([record, ...(items || []).filter((item) => item?.id !== record.id)]);
+}
+
+export function upsertSell(items, record) {
+  if (!record?.id) return normalizeSells(items);
+  return normalizeSells([record, ...(items || []).filter((item) => item?.id !== record.id)]);
 }
 
 export function chooseWorkspaceSource(remote, local) {

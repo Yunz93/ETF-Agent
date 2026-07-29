@@ -1,6 +1,8 @@
 """Pure scoring, backtest, commentary, and payload assembly."""
 
 import datetime
+import math
+import statistics
 import time
 
 from .dividend_constants import (
@@ -18,6 +20,25 @@ from .symbols import as_of
 
 def clamp(value, low=0.0, high=100.0):
     return max(low, min(high, value))
+
+
+def annualized_tracking_error(etf_rows, index_rows, lookback=252):
+    """同日收盘收益差的年化标准差，返回百分比。"""
+    etf_by_date = {row.get("date"): row.get("close") for row in etf_rows or [] if row.get("date")}
+    index_by_date = {row.get("date"): row.get("close") for row in index_rows or [] if row.get("date")}
+    dates = sorted(set(etf_by_date) & set(index_by_date))
+    differences = []
+    for previous, current in zip(dates, dates[1:]):
+        try:
+            etf_return = float(etf_by_date[current]) / float(etf_by_date[previous]) - 1
+            index_return = float(index_by_date[current]) / float(index_by_date[previous]) - 1
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        differences.append(etf_return - index_return)
+    differences = differences[-lookback:]
+    if len(differences) < 30:
+        return None
+    return round(statistics.stdev(differences) * math.sqrt(252) * 100, 3)
 
 def spread_anchor_score(spread):
     """股债利差绝对水平锚点分（利差越厚越值得买）。"""
@@ -365,7 +386,7 @@ def build_note_text(payload):
     lines.append("#红利低波#红利#高股息#股债性价比#资产配置#A股#投资笔记#中证红利低波")
     return "\n".join(lines)
 
-def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_quote=None, settings=None):
+def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_quote=None, settings=None, chart_rows=None):
     """把原始数据组装成完整仪表盘 payload（纯函数，离线可测）。"""
     settings = settings or dividend_settings()
     valuation = valuation or {}
@@ -471,8 +492,12 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
     # ---- 盘面点评 ----
     commentary = build_commentary(score_block, technicals, spread_block, valuation_block)
 
-    # 前端按区间切片；保留足够长度以支持 5Y / 全部
-    chart_rows = index_rows[-3000:] if len(index_rows) > 3000 else index_rows
+    # 决策指标仍按跟踪指数计算，走势图单独使用 ETF 实际价格。
+    chart_source_rows = chart_rows or index_rows
+    chart_source_rows = chart_source_rows[-3000:] if len(chart_source_rows) > 3000 else chart_source_rows
+    chart_closes = [row["close"] for row in chart_source_rows]
+    chart_ma250 = sma(chart_closes, 250)
+    chart_boll = bollinger(chart_closes, 20, 2.0)
     payload = {
         "name": settings.get("index_name", "红利低波"),
         "index_name": settings.get("index_name", "红利低波"),
@@ -495,14 +520,17 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
         "backtest": backtest,
         "commentary": commentary,
         "chart": {
-            "points": [{"date": row["date"], "close": row["close"]} for row in chart_rows],
-            "available_from": chart_rows[0]["date"] if chart_rows else None,
-            "available_to": chart_rows[-1]["date"] if chart_rows else None,
+            "name": settings.get("etf_name"),
+            "symbol": settings.get("etf_symbol"),
+            "price_basis": "etf",
+            "points": [{"date": row["date"], "close": row["close"]} for row in chart_source_rows],
+            "available_from": chart_source_rows[0]["date"] if chart_source_rows else None,
+            "available_to": chart_source_rows[-1]["date"] if chart_source_rows else None,
             "markers": {
-                "ma250": technicals["ma250"],
-                "boll_mid": technicals["boll"]["mid"] if technicals["boll"] else None,
-                "boll_upper": technicals["boll"]["upper"] if technicals["boll"] else None,
-                "boll_lower": technicals["boll"]["lower"] if technicals["boll"] else None,
+                "ma250": round(chart_ma250, 3) if chart_ma250 is not None else None,
+                "boll_mid": round(chart_boll["mid"], 3) if chart_boll else None,
+                "boll_upper": round(chart_boll["upper"], 3) if chart_boll else None,
+                "boll_lower": round(chart_boll["lower"], 3) if chart_boll else None,
             },
         },
         "disclaimer": DISCLAIMER,

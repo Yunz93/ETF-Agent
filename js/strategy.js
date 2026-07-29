@@ -67,6 +67,8 @@ export const DEFAULT_STRATEGY_CONFIG = Object.freeze({
   use_rebalance: true,
 });
 
+export const POSITION_TOLERANCE_PP = 5;
+
 const GRADE_HINTS = Object.freeze({
   A: "综合评分偏乐观",
   B: "综合评分较好",
@@ -225,6 +227,11 @@ function rebalanceFactor(targetWeight, actualWeight, enabled) {
   if (drift > 5) return 0.65;
   if (drift < -5) return 1.25;
   return 1;
+}
+
+function positionAllowed(targetWeight, actualWeight) {
+  if (targetWeight == null || actualWeight == null) return true;
+  return actualWeight <= targetWeight + POSITION_TOLERANCE_PP;
 }
 
 function emptyAllocation(totalBudget) {
@@ -405,8 +412,9 @@ export function allocatePoolBudget({
       pePct: item.pePct,
       grade: item.grade,
     });
+    const allowed = positionAllowed(target, actual);
     const reb = rebalanceFactor(target, actual, useReb);
-    const score = (target / 100) * grid.mult * reb;
+    const score = allowed ? (target / 100) * grid.mult * reb : 0;
     return {
       symbol: item.symbol,
       name: item.name || item.symbol,
@@ -414,6 +422,7 @@ export function allocatePoolBudget({
       actualWeight: actual,
       analyzed: item.analyzed !== false,
       ...grid,
+      positionBlocked: !allowed,
       reb,
       score,
     };
@@ -426,7 +435,11 @@ export function allocatePoolBudget({
       symbol: row.symbol,
       name: row.name,
       band: row.band,
-      reason: row.mult <= 0 ? "当期不建议新增" : "吸引力不足",
+      reason: row.positionBlocked
+        ? `当前仓位高于目标 ${POSITION_TOLERANCE_PP} pp 上限`
+        : row.mult <= 0
+          ? "当期不建议新增"
+          : "吸引力不足",
     }));
 
   return finalizeEligible({

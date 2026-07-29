@@ -38,6 +38,8 @@
   --chart-grid: rgba(30, 34, 45, 0.07);
   --chart-line: oklch(56% 0.19 258);
   --chart-label: oklch(46% 0.01 260);
+  --buy-marker: oklch(65% 0.19 48);
+  --sell-marker: oklch(55% 0.2 28);
   --sidebar-width: 224px;
   --font-sans: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", -apple-system, sans-serif;
   --font-display: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", -apple-system, sans-serif;
@@ -80,6 +82,8 @@
   --chart-grid: rgba(255, 255, 255, 0.07);
   --chart-line: oklch(66% 0.16 258);
   --chart-label: oklch(70% 0.008 260);
+  --buy-marker: oklch(78% 0.15 65);
+  --sell-marker: oklch(72% 0.17 25);
 }
 
 * {
@@ -158,6 +162,19 @@ html[data-sidebar="collapsed"] {
   flex-direction: column;
   gap: 20px;
   transition: padding 180ms var(--ease-out);
+}
+
+.mobile-sidebar-toggle,
+.mobile-sidebar-close,
+.sidebar-backdrop {
+  display: none;
+}
+
+.topbar-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
 .brand {
@@ -256,7 +273,6 @@ html[data-sidebar="collapsed"] .sidebar-toggle-icon {
 
 .brand p,
 .brand span,
-.eyebrow,
 h1,
 h2,
 h3,
@@ -270,15 +286,6 @@ p {
   font-weight: 700;
   letter-spacing: -0.02em;
   font-size: 15px;
-}
-
-.eyebrow {
-  margin: 0 0 4px;
-  color: var(--faint);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .brand span,
@@ -308,7 +315,7 @@ p {
   padding: 0 4px;
 }
 
-.sidebar-pool-heading .eyebrow {
+.sidebar-pool-heading p {
   margin: 0;
 }
 
@@ -750,6 +757,50 @@ input::placeholder {
   color: var(--faint);
 }
 
+input[type="checkbox"] {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--surface-2) 45%, transparent);
+  cursor: pointer;
+}
+
+input[type="checkbox"]::after {
+  width: 8px;
+  height: 4px;
+  border: solid var(--accent-on);
+  border-width: 0 0 2px 2px;
+  content: "";
+  opacity: 0;
+  transform: translateY(-1px) rotate(-45deg) scale(0.7);
+  transition: opacity 120ms var(--ease-out), transform 120ms var(--ease-out);
+}
+
+input[type="checkbox"]:checked {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+  box-shadow: none;
+}
+
+input[type="checkbox"]:checked::after {
+  opacity: 1;
+  transform: translateY(-1px) rotate(-45deg) scale(1);
+}
+
+input[type="checkbox"]:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 .view {
   display: none;
 }
@@ -896,7 +947,10 @@ td {
   gap: 8px;
 }
 
-.settings-note,
+.settings-actions .compact {
+  min-height: 40px;
+}
+
 .settings-status {
   margin: 0 0 12px;
 }
@@ -921,62 +975,21 @@ td {
   gap: 12px;
 }
 
-.config-group {
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-
-.config-group h3 {
-  margin: 0 0 6px;
-  font-family: var(--font-display);
-  font-size: 0.95rem;
-}
-
-.config-group-advanced {
-  opacity: 0.92;
-  padding-top: 12px;
-  margin-top: 8px;
-  border-top: 1px dashed var(--line);
-}
-
-.config-group-advanced h3 {
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.config-group > p.muted {
-  margin: 0 0 12px;
-  font-size: 12.5px;
-}
-
-.config-group {
+.settings-control-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px 14px;
 }
 
-.config-group > h3,
-.config-group > p {
-  grid-column: 1 / -1;
-}
-
-.config-group label span {
+.settings-control-grid label > span:first-child {
   display: block;
   margin-bottom: 4px;
   color: var(--muted);
   font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   font-weight: 600;
 }
 
-.config-group input[type="text"],
-.config-group input[type="url"],
-.config-group input[type="number"],
-.config-group input[type="password"],
-.config-group select {
+.settings-control-grid select {
   width: 100%;
   min-height: 36px;
   padding: 6px 10px;
@@ -985,6 +998,32 @@ td {
   background: var(--surface-2);
   color: var(--ink);
   font: inherit;
+}
+
+.config-toggle-control {
+  display: flex !important;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  margin: 0 !important;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink) !important;
+  font-size: 13px !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  cursor: pointer;
+}
+
+.config-toggle-control input {
+  width: 18px;
+  height: 18px;
+}
+
+.config-toggle-control strong {
+  font-weight: 500;
 }
 
 .evidence-grid,
@@ -1091,6 +1130,66 @@ canvas {
   min-height: 42px;
 }
 
+.buy-form-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+}
+
+.buy-list-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0 10px;
+}
+
+.buy-list-toolbar label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.buy-list-toolbar select {
+  width: min(280px, 100%);
+  min-height: 40px;
+}
+
+.buy-list-toolbar .muted {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.buy-row-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.buy-table tr.is-editing td {
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+}
+
+.trade-type {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trade-type.buy {
+  background: color-mix(in oklab, var(--buy-marker) 16%, transparent);
+  color: var(--buy-marker);
+}
+
+.trade-type.sell {
+  background: color-mix(in oklab, var(--sell-marker) 15%, transparent);
+  color: var(--sell-marker);
+}
+
 .add-symbol-strip p[role="status"] {
   flex: 1 0 100%;
   margin: 0;
@@ -1104,6 +1203,27 @@ canvas {
 
   .add-symbol-strip .primary-button {
     width: 100%;
+  }
+
+  .buy-form-actions {
+    width: 100%;
+  }
+
+  .buy-form-actions .primary-button {
+    width: auto;
+  }
+
+  .buy-list-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .buy-list-toolbar select {
+    width: 100%;
+  }
+
+  .buy-list-toolbar .muted {
+    margin-left: 0;
   }
 }
 
@@ -1261,12 +1381,10 @@ button:active {
 }
 
 @media (max-width: 780px) {
-  .workspace,
-  .sidebar {
+  .workspace {
     padding: 16px;
   }
 
-  .topbar,
   .panel-heading,
   .report-top,
   .detail-subheader {
@@ -1274,14 +1392,118 @@ button:active {
     flex-direction: column;
   }
 
-  .topbar-actions {
+  .dividend-chart-block .range-segment {
     align-self: stretch;
-    flex-direction: column;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .dividend-chart-block .range-segment::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dividend-chart-block .segment-button {
+    flex: 0 0 auto;
+  }
+
+  .topbar {
+    align-items: center;
+    flex-direction: row;
+    gap: 10px;
+  }
+
+  .topbar-main {
+    flex: 1 1 auto;
+  }
+
+  .topbar-actions {
+    align-self: center;
+    flex: 0 0 auto;
   }
 
   .topbar-actions > .market-segment,
   .topbar-actions > .theme-toggle {
-    align-self: flex-end;
+    align-self: center;
+  }
+
+  .mobile-sidebar-toggle,
+  .mobile-sidebar-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 42px;
+    min-height: 42px;
+    padding: 0;
+    touch-action: manipulation;
+  }
+
+  .mobile-sidebar-close {
+    margin-left: auto;
+    font-size: 24px;
+  }
+
+  .sidebar {
+    position: fixed;
+    z-index: 50;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(86vw, 320px);
+    height: 100dvh;
+    padding: max(18px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+    border-right: 1px solid var(--line);
+    transform: translateX(-102%);
+    visibility: hidden;
+    transition-property: transform;
+    transition-duration: 180ms;
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    overscroll-behavior: contain;
+  }
+
+  .sidebar-pool {
+    flex: 1 1 auto;
+    max-height: none;
+  }
+
+  .sidebar-footer {
+    margin-top: auto;
+  }
+
+  .nav-stack-footer {
+    grid-auto-flow: row;
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    z-index: 49;
+    inset: 0;
+    padding: 0;
+    border: 0;
+    background: oklch(8% 0.01 255 / 0.72);
+    opacity: 0;
+    pointer-events: none;
+    transition-property: opacity;
+    transition-duration: 160ms;
+    transition-timing-function: ease-out;
+  }
+
+  html[data-mobile-sidebar="open"] .sidebar {
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  html[data-mobile-sidebar="open"] .sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  html[data-mobile-sidebar="open"] body {
+    overflow: hidden;
   }
 
   .control-strip,
@@ -1305,7 +1527,7 @@ button:active {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .config-group {
+  .settings-control-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1329,6 +1551,13 @@ button:active {
 
   .table-wrap {
     max-height: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebar-backdrop {
+    transition: none;
   }
 }
 
@@ -1420,74 +1649,40 @@ button:active {
   display: grid;
   grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.4fr);
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .dividend-hero-main,
 .dividend-hero-aside {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: contents;
   min-width: 0;
 }
 
-.dividend-advice {
+.dividend-hero-main > .dividend-score-card {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.dividend-hero-aside > .dividend-metrics {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.dividend-hero-main > .dividend-advice {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.dividend-hero-aside > .dividend-holdings-card {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.dividend-advice,
+.dividend-holdings-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.dividend-aux {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.dividend-playbook {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.dividend-playbook li {
-  display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: 10px;
-  align-items: start;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--line);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.dividend-playbook li:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
-}
-
-.dividend-playbook span {
-  color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  font-weight: 600;
-  padding-top: 2px;
-}
-
-.dividend-playbook strong {
-  font-weight: 650;
-}
-
-.dividend-aux-divider {
-  padding-top: 4px;
-  border-top: 1px solid var(--line);
-}
-
-.dividend-aux-divider .section-title {
-  font-size: 15px;
 }
 
 .dividend-holdings-grid {
@@ -1523,6 +1718,182 @@ button:active {
   margin: 10px 0 0;
   font-size: 12.5px;
   line-height: 1.5;
+}
+
+.dividend-add-plan {
+  margin-top: 4px;
+}
+
+.decision-execution {
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in oklab, var(--grade-tone, var(--accent)) 32%, var(--line));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--grade-tone, var(--accent)) 6%, var(--surface-2));
+}
+
+.decision-execution-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.decision-execution-head strong {
+  font-family: var(--font-display);
+  font-size: 15px;
+}
+
+.decision-execution-head span,
+.decision-confidence {
+  flex: 0 0 auto;
+  color: var(--grade-tone, var(--accent));
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.decision-execution-grid,
+.decision-quality-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px 14px;
+  margin: 0;
+}
+
+.decision-execution-grid div,
+.decision-quality-grid div {
+  min-width: 0;
+}
+
+.decision-execution-grid dt,
+.decision-quality-grid dt {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.decision-execution-grid dd,
+.decision-quality-grid dd {
+  margin: 2px 0 0;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.decision-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.decision-detail-card {
+  min-width: 0;
+}
+
+.decision-quality-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.decision-quality-grid div {
+  padding-bottom: 9px;
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 72%, transparent);
+}
+
+.decision-missing {
+  color: var(--muted);
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.decision-confidence {
+  color: var(--up);
+}
+
+.decision-confidence.is-degraded {
+  color: var(--warn);
+}
+
+.decision-card-note {
+  margin: 12px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.dividend-add-plan-foot {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.dividend-add-levels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.dividend-add-level {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--surface-2) 76%, transparent);
+}
+
+.dividend-add-level.is-triggered {
+  border-color: color-mix(in oklab, var(--up) 55%, var(--line));
+  background: color-mix(in oklab, var(--up) 8%, var(--surface-2));
+}
+
+.dividend-add-level-top,
+.dividend-add-level dl div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dividend-add-level-top > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dividend-add-trigger {
+  display: grid;
+  gap: 1px;
+  margin: 10px 0;
+}
+
+.dividend-add-trigger small,
+.dividend-add-level dt {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.dividend-add-trigger strong {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.dividend-add-level dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.dividend-add-level dd {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
 }
 
 .dividend-advice-grade {
@@ -1778,8 +2149,9 @@ button:active {
 
 .dividend-metrics {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-content: start;
-  height: auto;
+  grid-auto-rows: 1fr;
+  align-content: stretch;
+  height: 100%;
 }
 
 .dividend-metrics .metric-card {
@@ -1894,15 +2266,120 @@ button:active {
 
 @media (max-width: 1100px) {
   .dividend-hero {
-    grid-template-columns: 1fr;
+    display: block;
+  }
+
+  .dividend-hero-main,
+  .dividend-hero-aside {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .dividend-hero-aside {
+    margin-top: 12px;
   }
 
   .dividend-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: auto;
+    align-content: start;
+    height: auto;
+  }
+
+  .decision-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .dividend-add-levels {
+    grid-template-columns: 1fr;
+  }
+
+  .decision-execution-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .decision-execution-grid,
+  .decision-quality-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 /* ---- 定投计划分区 ---- */
+
+.etf-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 18px;
+  padding: 4px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  scrollbar-width: none;
+}
+
+.etf-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.etf-tab {
+  flex: 1 0 auto;
+  min-width: 112px;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition-property: color, background-color, transform;
+  transition-duration: 140ms;
+  transition-timing-function: var(--ease-out);
+}
+
+.etf-tab.active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--panel-shadow);
+}
+
+.etf-tab:active {
+  transform: scale(0.96);
+}
+
+.etf-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .etf-tab:not(.active):hover {
+    color: var(--ink);
+    background: color-mix(in oklab, var(--surface) 60%, transparent);
+  }
+}
+
+.etf-tab-panel {
+  min-width: 0;
+}
+
+.etf-tab-panel[hidden] {
+  display: none;
+}
+
+.etf-tab-panel > .plan-section:last-child,
+.etf-tab-panel > .pool-alloc-home:last-child {
+  margin-bottom: 0;
+}
 
 .plan-section {
   margin: 0 0 22px;
@@ -2101,7 +2578,7 @@ button:active {
 
 #etfMetrics.metric-grid {
   margin-bottom: 12px;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 @media (max-width: 1180px) {
@@ -2120,11 +2597,26 @@ button:active {
   }
 
   #etfMetrics.metric-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 720px) {
+  .etf-tabs {
+    margin-right: -16px;
+    margin-left: -16px;
+    padding-right: 16px;
+    padding-left: 16px;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  .etf-tab {
+    flex: 0 0 auto;
+    min-width: 104px;
+  }
+
   .plan-config-strip {
     grid-template-columns: 1fr;
   }
@@ -2261,6 +2753,241 @@ button:active {
 
 .settings-card .section-title {
   margin-top: 0;
+}
+
+.settings-ai {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-ai-heading,
+.settings-secret-row,
+.ai-review-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-ai-heading {
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.settings-ai-heading p {
+  margin: 4px 0 0;
+}
+
+.settings-secret-row {
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-secret-row label {
+  flex: 1 1 280px;
+}
+
+.settings-secret-row label span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-secret-row input,
+.settings-ai input[type="text"] {
+  width: 100%;
+}
+
+.settings-ai-status {
+  margin: 10px 0 0;
+}
+
+.ai-review-card {
+  position: relative;
+  overflow: hidden;
+  padding: 22px 24px;
+  border-color: color-mix(in oklab, var(--accent) 34%, var(--line));
+  background:
+    linear-gradient(
+      105deg,
+      color-mix(in oklab, var(--accent) 8%, var(--surface-2)) 0,
+      var(--surface-2) 42%
+    );
+}
+
+.ai-review-card::before {
+  position: absolute;
+  inset: 20px auto 20px 0;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+  content: "";
+}
+
+.ai-review-card > .panel-heading {
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+
+.ai-review-card > .panel-heading > div {
+  min-width: 0;
+  max-width: 760px;
+}
+
+.ai-review-card > .panel-heading .section-title {
+  font-size: 20px;
+}
+
+.ai-review-card > .panel-heading .muted {
+  margin: 5px 0 0;
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+.ai-review-card > .panel-heading button {
+  flex: 0 0 auto;
+  min-width: 112px;
+  white-space: nowrap;
+}
+
+.ai-review-card.is-disabled {
+  border-color: var(--line);
+  background: color-mix(in oklab, var(--surface-2) 96%, var(--accent));
+}
+
+.ai-review-card.is-disabled::before {
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+
+.ai-review-card.is-disabled > .panel-heading {
+  margin-bottom: 12px;
+}
+
+.ai-review-card.is-disabled > p {
+  max-width: 760px;
+  margin: 0;
+  line-height: 1.7;
+}
+
+.ai-review-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  margin: 16px 0 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--line);
+}
+
+.ai-review-summary > div {
+  min-width: 0;
+  padding: 14px 16px;
+  background: var(--surface-2);
+}
+
+.ai-review-summary span,
+.ai-review-summary strong {
+  display: block;
+}
+
+.ai-review-summary span {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+}
+
+.ai-review-headline {
+  max-width: 920px;
+  margin: 18px 0;
+  font-family: var(--font-display);
+  font-size: clamp(17px, 1.6vw, 22px);
+  font-weight: 700;
+  line-height: 1.45;
+  letter-spacing: -0.015em;
+  text-wrap: pretty;
+}
+
+.ai-review-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.ai-review-details > div {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in oklab, var(--line) 78%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--surface) 55%, transparent);
+}
+
+.ai-review-details h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.ai-review-details ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.ai-review-choice {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.ai-review-choice strong {
+  margin-left: auto;
+}
+
+.ai-review-disclaimer {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .ai-review-card {
+    padding: 18px 16px;
+  }
+
+  .ai-review-card::before {
+    inset-block: 16px;
+  }
+
+  .ai-review-card > .panel-heading {
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  .ai-review-card > .panel-heading button {
+    width: 100%;
+  }
+
+  .ai-review-summary,
+  .ai-review-details {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ai-review-details > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .ai-review-choice strong {
+    width: 100%;
+    margin-left: 0;
+  }
 }
 
 .add-symbol-strip {

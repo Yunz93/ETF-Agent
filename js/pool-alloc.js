@@ -58,7 +58,6 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
       <section class="panel-block pool-alloc-block" aria-label="全池本期分配">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">Pool</p>
             <h2 class="section-title">全池本期分配</h2>
             <p class="muted">先填写预算与目标仓位</p>
           </div>
@@ -88,7 +87,6 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
     <section class="panel-block pool-alloc-block" aria-label="全池本期分配">
       <div class="panel-heading">
         <div>
-          <p class="eyebrow">Pool</p>
           <h2 class="section-title">全池本期分配</h2>
           <p class="muted">${escapeHtml(plan.name || "定投计划")} · ${escapeHtml(strategyName)} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}</p>
         </div>

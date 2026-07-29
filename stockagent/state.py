@@ -9,3 +9,4 @@ CONFIG = json.loads(json.dumps(DEFAULT_CONFIG))
 QUOTE_MARKET_CACHE = {}
 QUOTE_CACHE = {"expires": 0, "payload": None}
 HISTORY_CACHE = {}
+AI_REVIEW_CACHE = {}

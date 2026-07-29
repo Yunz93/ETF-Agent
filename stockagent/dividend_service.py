@@ -2,7 +2,7 @@
 
 import time
 
-from .dividend_analysis import analyze_dividend_data
+from .dividend_analysis import analyze_dividend_data, annualized_tracking_error
 from .dividend_registry import (
     _normalize_etf_symbol,
     proxy_valuation_note,
@@ -12,6 +12,7 @@ from .dividend_registry import (
 from .dividend_sources import (
     fetch_danjuan_valuation,
     fetch_etf_as_index_history,
+    fetch_eastmoney_fund_profile,
     fetch_etf_quote,
     fetch_index_history,
     fetch_treasury_yield_history,
@@ -90,6 +91,13 @@ def get_dividend_dashboard(refresh=False, symbol=None):
             "updated_at": as_of(None),
         }
 
+    etf_history_rows = index_rows if proxy else None
+    if not proxy:
+        try:
+            etf_history_rows, _ = fetch_etf_as_index_history(settings.get("etf_symbol") or requested)
+        except Exception as exc:
+            errors["etf_history"] = f"ETF 历史价格暂不可用，走势图临时使用指数点位：{exc}"
+
     valuation = None
     danjuan_code = str(settings.get("danjuan_code") or "").strip()
     if danjuan_code:
@@ -119,7 +127,28 @@ def get_dividend_dashboard(refresh=False, symbol=None):
         except Exception as exc:
             errors["etf"] = f"ETF 实时行情不可用：{exc}"
 
-    payload = analyze_dividend_data(index_rows, valuation, treasury_rows, etf_quote, settings)
+    if etf_quote is not None:
+        product_quality = dict(etf_quote.get("product_quality") or {})
+        try:
+            profile = fetch_eastmoney_fund_profile(settings.get("etf_symbol") or requested)
+            product_quality.update({key: value for key, value in profile.items() if value is not None})
+        except Exception as exc:
+            errors["fund_profile"] = f"基金规模与费率暂不可用：{exc}"
+        if not proxy and etf_history_rows:
+            tracking_error = annualized_tracking_error(etf_history_rows, index_rows)
+            if tracking_error is not None:
+                product_quality["tracking_error_pct"] = tracking_error
+                product_quality["tracking_error_window"] = "近一年"
+        etf_quote["product_quality"] = product_quality
+
+    payload = analyze_dividend_data(
+        index_rows,
+        valuation,
+        treasury_rows,
+        etf_quote,
+        settings,
+        chart_rows=etf_history_rows,
+    )
     payload["supported"] = True
     payload["symbol"] = settings.get("etf_symbol")
     payload["analysis_mode"] = settings.get("analysis_mode") or "index"
@@ -152,7 +181,12 @@ def get_dividend_dashboard(refresh=False, symbol=None):
         },
         {"name": "蛋卷基金", "url": "https://danjuanfunds.com/dj-valuation-table-detail", "role": "PE/PB/股息率与近10年PE分位"},
         {"name": "东方财富数据中心", "url": "https://data.eastmoney.com/cjsj/zmgzsyl.html", "role": "中国十年期国债收益率"},
-        {"name": "腾讯行情", "url": "https://gu.qq.com/", "role": "跟踪 ETF 实时价"},
+        {"name": "腾讯行情", "url": "https://gu.qq.com/", "role": "ETF 实时价与历史价格"},
+        {
+            "name": "东方财富基金档案",
+            "url": f"https://fundf10.eastmoney.com/jbgk_{settings.get('etf_symbol') or requested}.html",
+            "role": "基金规模、管理费与托管费",
+        },
     ]
 
     ttl = int(settings.get("cache_seconds", 1800))

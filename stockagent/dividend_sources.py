@@ -1,11 +1,12 @@
 """External market-data adapters used by ETF analysis."""
 
 import datetime
+import re
 import time
 import urllib.parse
 
 from .defaults import YAHOO_UA
-from .http_client import http_get_json
+from .http_client import http_get_json, http_get_text
 from .dividend_registry import _normalize_etf_symbol
 
 def _browser_headers(referer):
@@ -292,3 +293,42 @@ def fetch_etf_quote(symbol):
     quote = quote_from_tencent_item(symbol, "A", f"{symbol}{suffix}", item)
     quote["name"] = field_at(item, 1) or symbol
     return quote
+
+
+def fetch_eastmoney_fund_profile(symbol):
+    """基金档案中的规模与年度固定费率。"""
+    symbol = _normalize_etf_symbol(symbol)
+    if not symbol:
+        raise ValueError("ETF 代码无效")
+    url = f"https://fundf10.eastmoney.com/jbgk_{symbol}.html"
+    html = http_get_text(
+        url,
+        headers=_browser_headers("https://fundf10.eastmoney.com/"),
+        timeout=20,
+        encoding="utf-8",
+    )
+
+    def number_after(label):
+        match = re.search(rf"{label}</th><td[^>]*>\s*([0-9.]+)%", html)
+        return float(match.group(1)) if match else None
+
+    size_match = re.search(
+        r"净资产规模</th><td[^>]*>\s*([0-9.]+)亿元（截止至：([^）]+)）",
+        html,
+    )
+    management_fee = number_after("管理费率")
+    custody_fee = number_after("托管费率")
+    service_fee = number_after("销售服务费率")
+    fees = [value for value in (management_fee, custody_fee, service_fee) if value is not None]
+    if not size_match and not fees:
+        raise RuntimeError(f"东方财富基金档案未返回 {symbol} 的规模或费率")
+    return {
+        "fund_size_yi": float(size_match.group(1)) if size_match else None,
+        "fund_size_date": size_match.group(2) if size_match else None,
+        "annual_fee_pct": round(sum(fees), 4) if fees else None,
+        "management_fee_pct": management_fee,
+        "custody_fee_pct": custody_fee,
+        "service_fee_pct": service_fee,
+        "provider": "东方财富基金档案",
+        "source_url": url,
+    }

@@ -406,6 +406,19 @@ def tencent_valuation_fields(market, fields):
 def quote_from_tencent_item(symbol, market, yahoo_symbol, fields):
     market_time = parse_market_timestamp(field_at(fields, 30), market)
     valuation = tencent_valuation_fields(market, fields)
+    product_quality = {}
+    if market == "A" and str(field_at(fields, 61) or "").strip().upper() == "ETF":
+        bid = clean_market_value(field_at(fields, 9))
+        ask = clean_market_value(field_at(fields, 19))
+        midpoint = (bid + ask) / 2 if bid and ask else None
+        spread = ((ask - bid) / midpoint * 100) if midpoint and ask >= bid else None
+        fund_size_yi = valuation["market_cap"] / 100_000_000 if valuation["market_cap"] else None
+        product_quality = {
+            "fund_size_yi": round(fund_size_yi, 2) if fund_size_yi is not None else None,
+            "premium_discount_pct": tencent_numeric(fields, 77),
+            "bid_ask_spread_pct": round(spread, 4) if spread is not None else None,
+            "iopv": tencent_numeric(fields, 78),
+        }
     return {
         "symbol": symbol,
         "market": market,
@@ -428,6 +441,7 @@ def quote_from_tencent_item(symbol, market, yahoo_symbol, fields):
         "provider": quote_settings().get("provider_name", "腾讯行情"),
         "source_url": "https://gu.qq.com/",
         "note": quote_settings().get("note", ""),
+        "product_quality": product_quality,
     }
 
 

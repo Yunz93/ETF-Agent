@@ -70,6 +70,21 @@ class IndicatorTests(unittest.TestCase):
         for i in range(2, len(values)):
             self.assertAlmostEqual(series[i], sum(values[i - 2 : i + 1]) / 3, places=9)
 
+    def test_tracking_error_annualizes_aligned_daily_return_difference(self):
+        dates = [f"2026-06-{day:02d}" for day in range(1, 31)] + [f"2026-07-{day:02d}" for day in range(1, 12)]
+        index_rows = []
+        etf_rows = []
+        index_close = 100.0
+        etf_close = 1.0
+        for position, date in enumerate(dates):
+            index_close *= 1.001
+            etf_close *= 1.001 + (0.0005 if position % 2 else -0.0005)
+            index_rows.append({"date": date, "close": index_close})
+            etf_rows.append({"date": date, "close": etf_close})
+        error = dividend.annualized_tracking_error(etf_rows, index_rows)
+        self.assertIsNotNone(error)
+        self.assertGreater(error, 0)
+
     def test_bollinger_positions(self):
         flat = [10.0] * 19
         self.assertEqual(indicators.bollinger(flat + [10.0], 20)["position"], "upper_half")
@@ -245,6 +260,30 @@ class AnalyzeTests(unittest.TestCase):
         self.assertIn("今日盘面：", note)
         self.assertIn("⚠️ 免责声明", note)
         self.assertIn("#红利低波", note)
+
+    def test_chart_uses_etf_price_rows_and_own_indicators(self):
+        etf_rows = [
+            {
+                **row,
+                "close": row["close"] / 5000,
+                "high": row["high"] / 5000,
+                "low": row["low"] / 5000,
+            }
+            for row in self.index_rows
+        ]
+        payload = dividend.analyze_dividend_data(
+            self.index_rows,
+            self.valuation,
+            self.treasury,
+            None,
+            self.settings,
+            chart_rows=etf_rows,
+        )
+        chart = payload["chart"]
+        self.assertEqual(chart["price_basis"], "etf")
+        self.assertEqual(chart["symbol"], "512890")
+        self.assertEqual(chart["points"][-1]["close"], etf_rows[-1]["close"])
+        self.assertLess(chart["markers"]["ma250"], 10)
 
     def test_analyze_degrades_without_valuation_and_bond(self):
         payload = dividend.analyze_dividend_data(self.index_rows, {}, [], None, self.settings)

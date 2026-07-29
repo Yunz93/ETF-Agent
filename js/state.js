@@ -8,6 +8,8 @@ export const state = {
   etfs: [],
   // 买入记录：[{id, symbol, date, price, shares, note}]
   buys: [],
+  // 卖出记录：[{id, symbol, date, price, shares, note}]
+  sells: [],
   plan: {
     name: "默认定投计划",
     amount: 2000,
@@ -37,6 +39,7 @@ export const state = {
   // 分析页当前 ETF 代码；由侧栏池条目打开
   analysisSymbol: null,
   analysisCache: {}, // symbolKey -> payload
+  aiReviews: {}, // symbol -> { status, result?, error? }
   workspaceSync: {
     status: "idle",
     updatedAt: null,
@@ -58,11 +61,13 @@ export function initEls() {
     topSourceStatus: document.querySelector("#topSourceStatus"),
     themeToggle: document.querySelector("#themeToggle"),
     sidebarToggle: document.querySelector("#sidebarToggle"),
+    mobileSidebarToggle: document.querySelector("#mobileSidebarToggle"),
+    mobileSidebarClose: document.querySelector("#mobileSidebarClose"),
+    sidebarBackdrop: document.querySelector("#sidebarBackdrop"),
 
     dividendStatus: document.querySelector("#dividendStatus"),
     dividendContent: document.querySelector("#dividendContent"),
     dividendRefresh: document.querySelector("#dividendRefresh"),
-    dividendEyebrow: document.querySelector("#dividendEyebrow"),
     dividendSectionTitle: document.querySelector("#dividendSectionTitle"),
     dividendLede: document.querySelector("#dividendLede"),
 
@@ -90,12 +95,18 @@ export function initEls() {
     etfRows: document.querySelector("#etfRows"),
     etfEmpty: document.querySelector("#etfEmpty"),
     buyForm: document.querySelector("#buyForm"),
+    tradeType: document.querySelector("#tradeType"),
     buySymbol: document.querySelector("#buySymbol"),
     buyDate: document.querySelector("#buyDate"),
     buyPrice: document.querySelector("#buyPrice"),
     buyShares: document.querySelector("#buyShares"),
     buyNote: document.querySelector("#buyNote"),
+    buySubmit: document.querySelector("#buySubmit"),
+    buyCancelEdit: document.querySelector("#buyCancelEdit"),
     buyFormStatus: document.querySelector("#buyFormStatus"),
+    buyFilterSymbol: document.querySelector("#buyFilterSymbol"),
+    buyFilterType: document.querySelector("#buyFilterType"),
+    buyFilterCount: document.querySelector("#buyFilterCount"),
     buyRows: document.querySelector("#buyRows"),
     buyEmpty: document.querySelector("#buyEmpty"),
     etfRefresh: document.querySelector("#etfRefresh"),
@@ -110,7 +121,6 @@ export function initEls() {
 
     settingsForm: document.querySelector("#settingsForm"),
     saveConfig: document.querySelector("#saveConfig"),
-    resetConfig: document.querySelector("#resetConfig"),
     settingsStatus: document.querySelector("#settingsStatus"),
     workspaceStatus: document.querySelector("#workspaceStatus"),
     exportWorkspace: document.querySelector("#exportWorkspace"),

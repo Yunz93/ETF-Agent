@@ -5,15 +5,17 @@ import {
   chooseWorkspaceSource,
   clampWeight,
   normalizeBuys,
+  normalizeSells,
   normalizePlan,
   normalizeWorkspaceEntries,
 } from "./workspace_model.js";
 
 export function buildWorkspacePayload() {
   return {
-    version: 4,
+    version: 5,
     etfs: state.etfs,
     buys: state.buys,
+    sells: state.sells,
     plan: state.plan,
     prefs: {},
   };
@@ -31,6 +33,7 @@ function applyWorkspace(payload, source) {
   if (!payload || !Array.isArray(payload.etfs)) return false;
   state.etfs = normalizeWorkspaceEntries(payload.etfs);
   state.buys = normalizeBuys(payload.buys || []);
+  state.sells = normalizeSells(payload.sells || []);
   state.plan = normalizePlan(payload.plan);
   state.workspaceSync.source = source;
   return true;
@@ -47,6 +50,7 @@ function seedDefaultPool() {
     note: "",
   }));
   state.buys = [];
+  state.sells = [];
   state.plan = normalizePlan(null);
   state.workspaceSync.source = "default-pool";
 }
@@ -123,7 +127,7 @@ export function renderWorkspaceStatus() {
     idle: "尚未同步",
     pending: "待同步…",
     syncing: "同步中…",
-    synced: `已同步到 workspace.json${updatedAt ? ` · ${updatedAt}` : ""}`,
+    synced: `已同步${updatedAt ? ` · ${updatedAt}` : ""}`,
     offline: `离线（仅浏览器缓存）${error ? ` · ${error}` : ""}`,
   };
   els.workspaceStatus.textContent = labels[status] || status;

@@ -90,7 +90,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(second["shares"], 0)
         self.assertEqual(second["cost"], 0)
         self.assertEqual(second["target_weight"], 100)
-        self.assertEqual(workspace["version"], 4)
+        self.assertEqual(workspace["version"], 5)
         self.assertEqual(workspace["plan"]["name"], "测试计划")
         self.assertEqual(workspace["plan"]["amount"], 3000)
         self.assertEqual(workspace["plan"]["cadence"], "weekly")
@@ -138,7 +138,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
                 ],
             }
         )
-        self.assertEqual(workspace["version"], 4)
+        self.assertEqual(workspace["version"], 5)
         self.assertEqual(len(workspace["buys"]), 1)
         self.assertEqual(workspace["buys"][0]["symbol"], "510300")
         self.assertTrue(workspace_store.workspace_has_user_data(workspace))
@@ -178,12 +178,24 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(workspace["buys"][0]["shares"], 1000)
         self.assertEqual(workspace["buys"][1]["id"], "keep")
         self.assertEqual(workspace["buys"][1]["symbol"], "510300")
-        self.assertEqual(workspace["version"], 4)
+        self.assertEqual(workspace["version"], 5)
+
+    def test_sell_records_are_normalized_without_affecting_buys(self):
+        workspace = workspace_store.normalize_workspace(
+            {
+                "buys": [{"id": "buy-1", "symbol": "510300", "date": "2026-07-01", "shares": 100, "price": 4.1}],
+                "sells": [{"id": "sell-1", "symbol": "510300", "date": "2026-07-20", "shares": 50, "price": 4.3}],
+            }
+        )
+        self.assertEqual(len(workspace["buys"]), 1)
+        self.assertEqual(len(workspace["sells"]), 1)
+        self.assertEqual(workspace["sells"][0]["id"], "sell-1")
 
     def test_invalid_payload_returns_empty(self):
         workspace = workspace_store.normalize_workspace(None)
         self.assertEqual(workspace["etfs"], [])
         self.assertEqual(workspace["buys"], [])
+        self.assertEqual(workspace["sells"], [])
         self.assertEqual(workspace["plan"]["name"], "默认定投计划")
         self.assertFalse(workspace_store.workspace_has_user_data(workspace))
 
@@ -210,6 +222,39 @@ class ConfigNormalizationTests(unittest.TestCase):
         # 未覆盖字段保留默认
         self.assertEqual(config["dividend"]["etf_symbol"], "512890")
 
+    def test_quote_auto_refresh_is_normalized(self):
+        config = normalize_config(
+            {"quotes": {"auto_refresh_enabled": False, "refresh_interval_seconds": 60}}
+        )
+        self.assertFalse(config["quotes"]["auto_refresh_enabled"])
+        self.assertEqual(config["quotes"]["refresh_interval_seconds"], 60)
+
+        fallback = normalize_config(
+            {"quotes": {"auto_refresh_enabled": True, "refresh_interval_seconds": 5}}
+        )
+        self.assertTrue(fallback["quotes"]["auto_refresh_enabled"])
+        self.assertEqual(fallback["quotes"]["refresh_interval_seconds"], 300)
+
+    def test_etf_product_quality_fields_keep_only_non_negative_numbers(self):
+        config = normalize_config(
+            {
+                "etf": {
+                    "products": {
+                        "512890": {
+                            "fund_size_yi": 82.5,
+                            "annual_fee_pct": "0.6",
+                            "tracking_error_pct": -1,
+                            "unknown": 99,
+                        }
+                    }
+                }
+            }
+        )
+        self.assertEqual(
+            config["etf"]["products"]["512890"],
+            {"fund_size_yi": 82.5, "annual_fee_pct": 0.6},
+        )
+
     def test_custom_analysis_keeps_optional_history_fields_without_valuation(self):
         config = normalize_config(
             {
@@ -232,9 +277,10 @@ class ConfigNormalizationTests(unittest.TestCase):
         self.assertEqual(analysis["history_source"], "tencent")
         self.assertEqual(analysis["history_symbol"], "us.INX")
 
-    def test_legacy_blocks_dropped(self):
+    def test_ai_supported_and_unrelated_legacy_blocks_dropped(self):
         config = normalize_config({"ai": {"provider": "deepseek"}, "sec": {"enabled": True}, "catalog": {}})
-        self.assertNotIn("ai", config)
+        self.assertEqual(config["ai"]["provider"], "deepseek")
+        self.assertFalse(config["ai"]["enabled"])
         self.assertNotIn("sec", config)
         self.assertNotIn("catalog", config)
 

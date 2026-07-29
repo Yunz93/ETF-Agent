@@ -37,8 +37,39 @@ def normalize_config(payload):
     config = json.loads(json.dumps(DEFAULT_CONFIG))
     if isinstance(payload.get("server"), dict):
         config["server"].update(payload["server"])
+    if isinstance(payload.get("ai"), dict):
+        raw_ai = payload["ai"]
+        provider = str(raw_ai.get("provider") or "deepseek").strip().lower()
+        config["ai"]["enabled"] = raw_ai.get("enabled") is True
+        config["ai"]["provider"] = provider if provider in ("deepseek", "openai") else "deepseek"
+        raw_models = raw_ai.get("models") if isinstance(raw_ai.get("models"), dict) else {}
+        for name in ("deepseek", "openai"):
+            model = str(raw_models.get(name) or config["ai"]["models"][name]).strip()
+            if model and len(model) <= 80:
+                config["ai"]["models"][name] = model
+        for field, minimum, maximum in (
+            ("timeout_seconds", 10, 120),
+            ("max_output_tokens", 400, 4000),
+            ("cache_minutes", 0, 1440),
+        ):
+            try:
+                value = int(raw_ai.get(field, config["ai"][field]))
+            except (TypeError, ValueError):
+                value = config["ai"][field]
+            config["ai"][field] = min(maximum, max(minimum, value))
+        try:
+            max_increase = float(raw_ai.get("max_increase_multiplier", 1.5))
+        except (TypeError, ValueError):
+            max_increase = 1.5
+        config["ai"]["max_increase_multiplier"] = min(1.5, max(1.0, max_increase))
     if isinstance(payload.get("quotes"), dict):
         config["quotes"].update(payload["quotes"])
+        config["quotes"]["auto_refresh_enabled"] = payload["quotes"].get("auto_refresh_enabled") is not False
+        try:
+            refresh_seconds = int(payload["quotes"].get("refresh_interval_seconds", 300))
+        except (TypeError, ValueError):
+            refresh_seconds = 300
+        config["quotes"]["refresh_interval_seconds"] = refresh_seconds if refresh_seconds >= 30 else 300
     if isinstance(payload.get("dividend"), dict):
         config["dividend"].update(payload["dividend"])
     if isinstance(payload.get("etf"), dict):
@@ -70,6 +101,24 @@ def normalize_config(payload):
                 if entry.get("index_code"):
                     analysis[symbol] = entry
         config["etf"]["analysis"] = analysis
+        products = {}
+        raw_products = etf.get("products") or {}
+        if isinstance(raw_products, dict):
+            for key, value in raw_products.items():
+                symbol = "".join(ch for ch in str(key or "") if ch.isdigit()).zfill(6)
+                if len(symbol) != 6 or not isinstance(value, dict):
+                    continue
+                entry = {}
+                for field in ETF_PRODUCT_FIELDS:
+                    try:
+                        number = float(value.get(field))
+                    except (TypeError, ValueError):
+                        continue
+                    if number >= 0:
+                        entry[field] = number
+                if entry:
+                    products[symbol] = entry
+        config["etf"]["products"] = products
     if isinstance(payload.get("sources"), dict):
         items = payload["sources"].get("QUOTE")
         if isinstance(items, list):
@@ -87,6 +136,16 @@ def normalize_config(payload):
 
 def public_config(config=None):
     payload = json.loads(json.dumps(config if config is not None else CONFIG))
+    try:
+        from .secret_store import credential_status
+
+        payload.setdefault("ai", {})["credentials"] = {
+            name: credential_status(name) for name in ("deepseek", "openai")
+        }
+    except Exception:
+        payload.setdefault("ai", {})["credentials"] = {
+            name: {"configured": False, "source": None} for name in ("deepseek", "openai")
+        }
     try:
         from .defaults import ETF_ANALYSIS_REGISTRY
         from .dividend import analysis_support_map
@@ -110,6 +169,7 @@ def save_config(payload):
     CONFIG_PATH.write_text(json.dumps(CONFIG, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     QUOTE_CACHE["expires"] = 0
     QUOTE_MARKET_CACHE.clear()
+    AI_REVIEW_CACHE.clear()
     try:
         from .dividend import clear_dividend_cache
 
@@ -129,3 +189,7 @@ def quote_settings():
 
 def etf_settings():
     return CONFIG.get("etf", DEFAULT_CONFIG["etf"])
+
+
+def ai_settings():
+    return CONFIG.get("ai", DEFAULT_CONFIG["ai"])

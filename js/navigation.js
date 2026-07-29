@@ -1,4 +1,4 @@
-import { PAGE_TITLES, SIDEBAR_COLLAPSE_MIN, SIDEBAR_KEY, THEME_KEY } from "./constants.js";
+import { MOBILE_SIDEBAR_MAX, PAGE_TITLES, SIDEBAR_COLLAPSE_MIN, SIDEBAR_KEY, THEME_KEY } from "./constants.js";
 import { appConfig, els, state } from "./state.js";
 import { registerRenderers, renderDividend, renderEtfPool, renderSettings, renderSidebarEtfs, openAnalysis } from "./views/render.js";
 
@@ -21,6 +21,7 @@ export function switchView(view) {
   if (view === "etf") renderEtfPool();
   if (view === "settings") renderSettings();
   renderSidebarEtfs();
+  closeMobileSidebar();
 }
 
 function defaultAnalysisSymbol() {
@@ -42,6 +43,7 @@ export function resolveTheme(stored) {
 export function initSidebar() {
   const stored = localStorage.getItem(SIDEBAR_KEY);
   applySidebar(stored === "collapsed" ? "collapsed" : "expanded", { persist: false });
+  applyMobileSidebar(false);
   syncSidebarForViewport();
 }
 
@@ -51,12 +53,47 @@ export function toggleSidebar() {
 }
 
 export function syncSidebarForViewport() {
+  if (window.innerWidth > MOBILE_SIDEBAR_MAX) {
+    applyMobileSidebar(false);
+  }
   if (window.innerWidth <= SIDEBAR_COLLAPSE_MIN - 1) {
     applySidebar("expanded", { persist: false });
   } else {
     const stored = localStorage.getItem(SIDEBAR_KEY);
     if (stored === "collapsed") applySidebar("collapsed", { persist: false });
   }
+}
+
+function applyMobileSidebar(open, { restoreFocus = false } = {}) {
+  const mobileViewport = window.innerWidth <= MOBILE_SIDEBAR_MAX;
+  const nextOpen = open && mobileViewport;
+  const sidebar = document.querySelector("#appSidebar");
+  if (nextOpen) document.documentElement.dataset.mobileSidebar = "open";
+  else delete document.documentElement.dataset.mobileSidebar;
+  if (sidebar) {
+    sidebar.toggleAttribute("inert", mobileViewport && !nextOpen);
+    if (mobileViewport) sidebar.setAttribute("aria-hidden", String(!nextOpen));
+    else sidebar.removeAttribute("aria-hidden");
+  }
+  if (els.mobileSidebarToggle) {
+    els.mobileSidebarToggle.setAttribute("aria-expanded", String(nextOpen));
+    els.mobileSidebarToggle.setAttribute("aria-label", nextOpen ? "关闭导航" : "打开导航");
+  }
+  if (els.sidebarBackdrop) {
+    els.sidebarBackdrop.setAttribute("aria-hidden", String(!nextOpen));
+    els.sidebarBackdrop.tabIndex = nextOpen ? 0 : -1;
+  }
+  if (nextOpen) els.mobileSidebarClose?.focus();
+  if (!nextOpen && restoreFocus) els.mobileSidebarToggle?.focus();
+}
+
+export function closeMobileSidebar({ restoreFocus = false } = {}) {
+  applyMobileSidebar(false, { restoreFocus });
+}
+
+export function toggleMobileSidebar() {
+  const open = document.documentElement.dataset.mobileSidebar === "open";
+  applyMobileSidebar(!open, { restoreFocus: open });
 }
 
 export function applySidebar(next, { persist = true } = {}) {

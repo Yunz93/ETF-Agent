@@ -151,7 +151,7 @@ def normalize_plan(payload):
     }
 
 
-def normalize_buy_entry(item):
+def normalize_trade_entry(item, kind="buy"):
     if not isinstance(item, dict):
         return None
     digits = "".join(ch for ch in str(item.get("symbol") or "") if ch.isdigit())
@@ -172,17 +172,25 @@ def normalize_buy_entry(item):
     price = _positive_number(item.get("price"))
     if shares <= 0 or price <= 0:
         return None
-    buy_id = str(item.get("id") or "").strip()
-    if not buy_id:
-        buy_id = f"buy_{symbol}_{date}_{int(shares)}_{int(price * 10000)}"
+    trade_id = str(item.get("id") or "").strip()
+    if not trade_id:
+        trade_id = f"{kind}_{symbol}_{date}_{int(shares)}_{int(price * 10000)}"
     return {
-        "id": buy_id,
+        "id": trade_id,
         "symbol": symbol,
         "date": date,
         "price": round(price, 6),
         "shares": round(shares, 4),
         "note": str(item.get("note") or "").strip(),
     }
+
+
+def normalize_buy_entry(item):
+    return normalize_trade_entry(item, "buy")
+
+
+def normalize_sell_entry(item):
+    return normalize_trade_entry(item, "sell")
 
 
 def normalize_workspace(payload):
@@ -224,10 +232,21 @@ def normalize_workspace(payload):
     buys.sort(key=lambda row: (row["date"], row["symbol"], row["id"]), reverse=True)
     workspace["buys"] = buys
 
+    sells = []
+    seen_sell_ids = set()
+    for item in payload.get("sells") or []:
+        entry = normalize_sell_entry(item)
+        if not entry or entry["id"] in seen_sell_ids:
+            continue
+        seen_sell_ids.add(entry["id"])
+        sells.append(entry)
+    sells.sort(key=lambda row: (row["date"], row["symbol"], row["id"]), reverse=True)
+    workspace["sells"] = sells
+
     if isinstance(payload.get("prefs"), dict):
         workspace["prefs"] = payload["prefs"]
 
-    workspace["version"] = 4
+    workspace["version"] = 5
     workspace["updated_at"] = payload.get("updated_at") or as_of(None)
     return workspace
 
@@ -235,7 +254,7 @@ def normalize_workspace(payload):
 def workspace_has_user_data(workspace):
     if not isinstance(workspace, dict):
         return False
-    return bool(workspace.get("etfs") or workspace.get("buys"))
+    return bool(workspace.get("etfs") or workspace.get("buys") or workspace.get("sells"))
 
 
 def get_workspace():

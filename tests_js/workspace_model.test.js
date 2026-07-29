@@ -4,8 +4,11 @@ import assert from "node:assert/strict";
 import {
   chooseWorkspaceSource,
   normalizeBuys,
+  normalizeSells,
   normalizePlan,
   normalizeWorkspaceEntries,
+  upsertBuy,
+  upsertSell,
 } from "../js/workspace_model.js";
 
 test("workspace source prefers server, then local cache, then defaults", () => {
@@ -63,4 +66,28 @@ test("buy normalization deduplicates records and rejects impossible dates", () =
   ]);
   assert.equal(buys.length, 1);
   assert.equal(buys[0].symbol, "510300");
+});
+
+test("buy upsert replaces an existing record without duplicating it", () => {
+  const original = { id: "buy-1", symbol: "510300", date: "2026-07-20", shares: 100, price: 4.1 };
+  const updated = { ...original, symbol: "512890", date: "2026-07-29", shares: 120, price: 1.23 };
+  const buys = upsertBuy([original], updated);
+  assert.equal(buys.length, 1);
+  assert.equal(buys[0].symbol, "512890");
+  assert.equal(buys[0].shares, 120);
+});
+
+test("buy upsert keeps records sorted by date after editing", () => {
+  const older = { id: "buy-1", symbol: "510300", date: "2026-07-20", shares: 100, price: 4.1 };
+  const newer = { id: "buy-2", symbol: "512890", date: "2026-07-25", shares: 100, price: 1.2 };
+  const buys = upsertBuy([newer, older], { ...older, date: "2026-07-29" });
+  assert.deepEqual(buys.map((item) => item.id), ["buy-1", "buy-2"]);
+});
+
+test("sell normalization and upsert stay separate from buy records", () => {
+  const sell = { id: "sell-1", symbol: "510300", date: "2026-07-20", shares: 50, price: 4.3 };
+  assert.equal(normalizeSells([sell]).length, 1);
+  const updated = upsertSell([sell], { ...sell, shares: 40 });
+  assert.equal(updated.length, 1);
+  assert.equal(updated[0].shares, 40);
 });

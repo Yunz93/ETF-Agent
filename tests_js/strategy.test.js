@@ -113,3 +113,17 @@ test("rebalance hint only appears outside the five-point tolerance", () => {
     /高出目标 6.0 pp/,
   );
 });
+
+test("allocation blocks an ETF above the hard position ceiling", () => {
+  const result = allocatePoolBudget({
+    budget: 2000,
+    strategy: "valuation",
+    holdings: [
+      { symbol: "OVER", targetWeight: 40, actualWeight: 45.1, pePct: 0.1 },
+      { symbol: "ROOM", targetWeight: 60, actualWeight: 54.9, pePct: 0.1 },
+    ],
+  });
+  assert.equal(result.allocations.some((item) => item.symbol === "OVER"), false);
+  assert.equal(result.allocations.find((item) => item.symbol === "ROOM")?.amount, result.deployTotal);
+  assert.match(result.skipped.find((item) => item.symbol === "OVER")?.reason || "", /仓位高于目标/);
+});

@@ -2,12 +2,26 @@
   "server": {
     "port": 5174
   },
+  "ai": {
+    "enabled": true,
+    "provider": "deepseek",
+    "models": {
+      "deepseek": "deepseek-v4-flash",
+      "openai": "gpt-5.6-luna"
+    },
+    "timeout_seconds": 60,
+    "max_output_tokens": 1800,
+    "cache_minutes": 30,
+    "max_increase_multiplier": 1.5
+  },
   "quotes": {
     "provider": "tencent",
     "provider_name": "腾讯行情",
     "note": "腾讯公开行情；缺失补齐与整批失败时东方财富兜底",
     "batch_size": 80,
-    "max_age_seconds": 1800
+    "max_age_seconds": 1800,
+    "auto_refresh_enabled": true,
+    "refresh_interval_seconds": 300
   },
   "etf": {
     "pool": [
@@ -40,6 +54,8 @@
         "name": "黄金ETF博时"
       }
     ],
+    "analysis": {},
+    "products": {},
     "note": "定投计划默认 ETF 种子；计划与持仓保存在 workspace.json。完整估值分析见内置 ETF_ANALYSIS_REGISTRY。"
   },
   "dividend": {

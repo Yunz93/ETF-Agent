@@ -121,7 +121,21 @@ export function buyEventMarkers(buys, { useBuyPrice = false } = {}) {
     }));
 }
 
-export function drawPriceChart(canvas, tooltip, points, markers, currency, error) {
+export function sellEventMarkers(sells, { useSellPrice = false } = {}) {
+  return (sells || [])
+    .filter((item) => item?.date && item.symbol)
+    .map((item) => ({
+      key: "sell",
+      date: item.date,
+      label: "卖",
+      value: useSellPrice && item.price > 0 ? Number(item.price) : null,
+      shares: item.shares,
+      price: item.price,
+      note: item.note || "",
+    }));
+}
+
+export function drawPriceChart(canvas, tooltip, points, markers, currency, error, rangeKey = state.priceRange) {
   const { ctx, width, height } = setupHiDpiCanvas(canvas, 360);
   const colors = themeChartColors();
   const lineColor = resolveCssColor("--chart-line", colors.line);
@@ -130,7 +144,8 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
   const gridColor = resolveCssColor("--chart-grid", colors.grid);
   const inkColor = resolveCssColor("--ink", "#222");
   const surfaceColor = resolveCssColor("--surface-2", "#fff");
-  const buyColor = resolveCssColor("--accent-strong", lineColor);
+  const buyColor = resolveCssColor("--buy-marker", resolveCssColor("--warn", lineColor));
+  const sellColor = resolveCssColor("--sell-marker", resolveCssColor("--danger", lineColor));
 
   canvas.onmousemove = null;
   canvas.onmouseleave = null;
@@ -176,6 +191,7 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
   const dateTicks = pickDateTicks(points, width < 520 ? 3 : 5);
   const markerPalette = {
     buy: buyColor,
+    sell: sellColor,
     add: resolveCssColor("--blue", maColor),
     tp: resolveCssColor("--warn", "#c48a1a"),
     sl: resolveCssColor("--danger", "#c44"),
@@ -197,20 +213,66 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
     })
     .filter(Boolean);
 
+  const eventLaneEnds = [];
+  const renderedEvents = [...resolvedEvents.reduce((groups, event) => {
+    const key = `${event.key}:${event.index}`;
+    const current = groups.get(key);
+    if (current) current.count += 1;
+    else groups.set(key, { ...event, count: 1 });
+    return groups;
+  }, new Map()).values()]
+    .sort((a, b) => a.x - b.x)
+    .map((event) => {
+      let lane = eventLaneEnds.findIndex((lastX) => event.x - lastX >= 46);
+      if (lane < 0) lane = eventLaneEnds.length;
+      eventLaneEnds[lane] = event.x;
+      return { ...event, lane };
+    });
+
   const drawBuyMarker = (event) => {
     const color = markerPalette[event.key] || buyColor;
-    const size = 7;
+    const markerRadius = 7;
+    const labelText = event.label || (event.key === "sell" ? "卖" : "买");
+    const label = event.count > 1 ? `${labelText}×${event.count}` : labelText;
+    const labelWidth = event.count > 1 ? 38 : 26;
+    const labelHeight = 22;
+    const labelOffset = 34 + event.lane * 26;
+    const placeAbove = event.y - labelOffset - labelHeight / 2 >= padY.top;
+    const rawLabelY = placeAbove ? event.y - labelOffset : event.y + labelOffset;
+    const labelY = clamp(rawLabelY, padY.top + labelHeight / 2, height - padY.bottom - labelHeight / 2);
+    const stemEndY = placeAbove ? labelY + labelHeight / 2 : labelY - labelHeight / 2;
     ctx.save();
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.72;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(event.x, event.y);
+    ctx.lineTo(event.x, stemEndY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.moveTo(event.x, event.y - size);
-    ctx.lineTo(event.x - size * 0.85, event.y + size * 0.55);
-    ctx.lineTo(event.x + size * 0.85, event.y + size * 0.55);
-    ctx.closePath();
+    ctx.arc(event.x, event.y, markerRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = surfaceColor;
-    ctx.lineWidth = 1.25;
+    ctx.lineWidth = 3;
     ctx.stroke();
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(event.x - labelWidth / 2, labelY - labelHeight / 2, labelWidth, labelHeight, 6);
+    ctx.fill();
+    ctx.strokeStyle = surfaceColor;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = surfaceColor;
+    ctx.font = "600 12px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, event.x, labelY + 0.5);
     ctx.restore();
   };
 
@@ -250,7 +312,7 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
       ctx.fillText(
-        formatChartDate(date, state.priceRange === "1m" || state.priceRange === "3m"),
+        formatChartDate(date, ["1w", "1m", "3m"].includes(rangeKey)),
         x,
         height - padY.bottom + 10,
       );
@@ -331,7 +393,7 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
     ctx.lineCap = "round";
     ctx.stroke();
 
-    resolvedEvents.forEach(drawBuyMarker);
+    renderedEvents.forEach(drawBuyMarker);
 
     const [lastX, lastY] = chartPoints[chartPoints.length - 1];
     ctx.fillStyle = lineColor;
@@ -347,7 +409,7 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
 
     const point = points[hoverIndex];
     const [hx, hy] = chartPoints[hoverIndex];
-    const buysAtHover = resolvedEvents.filter((event) => event.index === hoverIndex);
+    const tradesAtHover = resolvedEvents.filter((event) => event.index === hoverIndex);
     ctx.save();
     ctx.strokeStyle = labelColor;
     ctx.globalAlpha = 0.4;
@@ -370,17 +432,18 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
 
     if (tooltip) {
       const change = ((point.close - points[0].close) / points[0].close) * 100;
-      const buyBits = buysAtHover
+      const tradeBits = tradesAtHover
         .map((event) => {
           const shares = event.shares > 0 ? `${event.shares} 份` : "";
           const price = event.price > 0 ? money(event.price, currency) : "";
-          return `买入 ${[shares, price].filter(Boolean).join(" · ")}`.trim();
+          const action = event.key === "sell" ? "卖出" : "买入";
+          return `${action} ${[shares, price].filter(Boolean).join(" · ")}`.trim();
         })
         .filter(Boolean);
       tooltip.hidden = false;
       tooltip.innerHTML = `<strong>${money(point.close, currency)}</strong><span>${point.date}</span><span>区间 ${signed(change)}%</span>${
         ma[hoverIndex] != null ? `<span>MA${maWindow} ${money(ma[hoverIndex], currency)}</span>` : ""
-      }${buyBits.map((bit) => `<span>${bit}</span>`).join("")}`;
+      }${tradeBits.map((bit) => `<span>${bit}</span>`).join("")}`;
       const rect = canvas.getBoundingClientRect();
       const tipX = (hx / width) * rect.width;
       const tipY = (hy / height) * rect.height;
@@ -424,8 +487,7 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
       window.removeEventListener("resize", canvas._priceChartResize);
       return;
     }
-    drawPriceChart(canvas, tooltip, points, markers, currency, error);
+    drawPriceChart(canvas, tooltip, points, markers, currency, error, rangeKey);
   };
   window.addEventListener("resize", canvas._priceChartResize);
 }
-

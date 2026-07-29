@@ -14,6 +14,9 @@ from .workspace_store import get_workspace, save_workspace
 from .dividend import analysis_support_map, get_dividend_dashboard
 from .quotes import get_etf_quotes, get_price_history, get_single_quote
 from .health import get_data_health, get_runtime_info
+from .ai_providers import AIProviderError
+from .ai_service import ai_status, review_recommendation, test_connection
+from .secret_store import delete_api_key, save_api_key
 
 mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
@@ -74,6 +77,9 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/health":
                 self.send_json(get_data_health())
                 return
+            if parsed.path == "/api/ai/status":
+                self.send_json(ai_status())
+                return
             if parsed.path == "/api/ready":
                 # Lightweight liveness for desktop launch — must not touch markets.
                 index = resolve_static_path("/index.html")
@@ -119,7 +125,31 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/workspace":
                 self.send_json(save_workspace(payload))
                 return
+            if parsed.path == "/api/ai/credentials":
+                provider = payload.get("provider")
+                if payload.get("delete") is True:
+                    status = delete_api_key(provider)
+                else:
+                    status = save_api_key(provider, payload.get("api_key"))
+                self.send_json({"provider": provider, **status})
+                return
+            if parsed.path == "/api/ai/test":
+                self.send_json(test_connection(payload.get("provider")))
+                return
+            if parsed.path == "/api/ai/review-recommendation":
+                self.send_json(
+                    review_recommendation(
+                        payload,
+                        force=payload.get("force") is True,
+                    )
+                )
+                return
             self.send_error(404)
+        except AIProviderError as exc:
+            self.send_json(
+                {"error": str(exc), "code": exc.code},
+                status=exc.status,
+            )
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=500)
 

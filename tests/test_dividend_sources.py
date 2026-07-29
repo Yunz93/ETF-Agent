@@ -125,5 +125,20 @@ class EtfAsIndexHistoryTests(unittest.TestCase):
         self.assertEqual(source, "腾讯行情")
 
 
+class EastmoneyFundProfileTests(unittest.TestCase):
+    def test_reads_scale_and_fixed_annual_fees(self):
+        html = """
+        <th>净资产规模</th><td>315.37亿元（截止至：2026年06月30日）</td>
+        <th>管理费率</th><td>0.15%（每年）</td>
+        <th>托管费率</th><td>0.05%（每年）</td>
+        <th>销售服务费率</th><td>---（每年）</td>
+        """
+        with patch.object(dividend_sources, "http_get_text", return_value=html):
+            profile = dividend_sources.fetch_eastmoney_fund_profile("563360")
+        self.assertEqual(profile["fund_size_yi"], 315.37)
+        self.assertEqual(profile["fund_size_date"], "2026年06月30日")
+        self.assertEqual(profile["annual_fee_pct"], 0.2)
+
+
 if __name__ == "__main__":
     unittest.main()

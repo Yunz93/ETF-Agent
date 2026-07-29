@@ -151,6 +151,14 @@ ETF_ANALYSIS_FIELDS = (
     "history_symbol",
 )
 
+ETF_PRODUCT_FIELDS = (
+    "fund_size_yi",
+    "annual_fee_pct",
+    "tracking_error_pct",
+    "premium_discount_pct",
+    "bid_ask_spread_pct",
+)
+
 DEFAULT_STRATEGY_CONFIG = {
     "pe_bands": [
         {"max_pct": 20, "mult": 1.5, "label": "低估区"},
@@ -164,10 +172,11 @@ DEFAULT_STRATEGY_CONFIG = {
 }
 
 DEFAULT_WORKSPACE = {
-    "version": 4,
+    "version": 5,
     "updated_at": None,
     "etfs": [],
     "buys": [],
+    "sells": [],
     "plan": {
         "name": "默认定投计划",
         "amount": 2000,
@@ -193,16 +202,31 @@ DEFAULT_TARGET_WEIGHTS = {
 
 DEFAULT_CONFIG = {
     "server": {"port": 5174},
+    "ai": {
+        "enabled": False,
+        "provider": "deepseek",
+        "models": {
+            "deepseek": "deepseek-v4-flash",
+            "openai": "gpt-5.6-luna",
+        },
+        "timeout_seconds": 60,
+        "max_output_tokens": 1800,
+        "cache_minutes": 30,
+        "max_increase_multiplier": 1.5,
+    },
     "quotes": {
         "provider": "tencent",
         "provider_name": "腾讯行情",
         "note": "腾讯公开行情；缺失补齐与整批失败时东方财富兜底",
         "batch_size": 80,
         "max_age_seconds": 1800,
+        "auto_refresh_enabled": True,
+        "refresh_interval_seconds": 300,
     },
     "etf": {
         "pool": DEFAULT_ETF_POOL,
         "analysis": {},
+        "products": {},
         "note": "定投计划默认 ETF 种子；计划与持仓保存在 workspace.json。完整估值分析见内置 ETF_ANALYSIS_REGISTRY。",
     },
     "dividend": {

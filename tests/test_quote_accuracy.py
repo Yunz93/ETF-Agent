@@ -27,7 +27,7 @@ import server  # noqa: E402
 
 def _tencent_fields(overrides=None):
     """Build a sparse Tencent qt.gtimg.cn field list with shared price block."""
-    fields = [""] * 70
+    fields = [""] * 90
     fields[3] = "100.5"
     fields[6] = "1000000"
     fields[30] = "20260710103000"
@@ -113,6 +113,15 @@ class QuoteFromTencentItemTests(unittest.TestCase):
         self.assertEqual(quote["week_52_high"], 210.0)
         self.assertEqual(quote["week_52_low"], 150.0)
         self.assertEqual(quote["market_cap"], 1500 * 100_000_000)
+
+    def test_etf_quote_includes_live_product_quality(self):
+        fields = _tencent_fields({9: "1.000", 19: "1.002", 61: "ETF", 77: "-0.15", 78: "1.0015"})
+        quote = server.quote_from_tencent_item("563360", "A", "563360.SS", fields)
+        quality = quote["product_quality"]
+        self.assertEqual(quality["fund_size_yi"], 1500)
+        self.assertEqual(quality["premium_discount_pct"], -0.15)
+        self.assertAlmostEqual(quality["bid_ask_spread_pct"], 0.1998, places=4)
+        self.assertEqual(quality["iopv"], 1.0015)
 
 
 class EastmoneyMappingTests(unittest.TestCase):

@@ -1,20 +1,21 @@
-import { ETF_QUOTE_TTL_MS, PLAN_CADENCE_LABELS, analysisIsFullIndex } from "../constants.js";
+import { ETF_QUOTE_TTL_MS, analysisIsFullIndex } from "../constants.js";
 import { appConfig, els, state } from "../state.js";
 import { escapeAttr, escapeHtml, money, normalizeEtfSymbol, signed } from "../utils.js";
-import { drawPriceChart, buyEventMarkers } from "../chart.js";
+import { drawPriceChart, buyEventMarkers, sellEventMarkers } from "../chart.js";
 import { setSourceStatus } from "../navigation.js";
 import { persistWorkspace } from "../workspace.js";
 import { poolAllocationHtml } from "../pool-alloc.js";
+import { upsertBuy, upsertSell } from "../workspace_model.js";
 import { openAnalysis, registerRenderers } from "./render.js";
 import {
   DEFAULT_STRATEGY_CONFIG,
   normalizeStrategyConfig,
   normalizeStrategyId,
-  strategyLabel,
   strategySummary,
 } from "../strategy.js";
 
 let quotesPromise = null;
+let editingTrade = null;
 
 function poolSymbols() {
   return state.etfs.map((item) => item.symbol);
@@ -298,13 +299,8 @@ function renderMetrics() {
   const { totalValue, totalCost, held, targetSum } = portfolioTotals();
   const pnl = totalCost ? totalValue - totalCost : null;
   const pnlPct = totalCost ? ((totalValue - totalCost) / totalCost) * 100 : null;
-  const plan = state.plan || {};
-  const cadenceLabel = PLAN_CADENCE_LABELS[plan.cadence] || "每月";
-  const dayLabel = plan.cadence === "monthly" ? `${plan.day || 1} 号` : `周${plan.day || 1}`;
   const targetClass = Math.abs(targetSum - 100) < 0.05 ? "" : targetSum > 100.05 ? "down" : "up";
   const cards = [
-    ["全池预算", plan.amount > 0 ? `${money(plan.amount)} · ${cadenceLabel}${dayLabel}` : `${cadenceLabel}${dayLabel}`],
-    ["定投策略", strategyLabel(plan.strategy)],
     ["计划内 ETF", `${state.etfs.length} 只 · 持仓 ${held}`],
     ["目标合计", `<span class="${targetClass}">${targetSum.toFixed(1)}%</span>`],
     ["组合市值", totalValue ? money(totalValue) : "—"],
@@ -453,6 +449,10 @@ export async function selectEtfChart(symbol) {
         (state.buys || []).filter((item) => item.symbol === symbol),
         { useBuyPrice: true },
       ),
+      ...sellEventMarkers(
+        (state.sells || []).filter((item) => item.symbol === symbol),
+        { useSellPrice: true },
+      ),
     );
     drawPriceChart(els.etfChart, els.etfChartTooltip, points, markers, "CNY", payload.error);
     els.etfChartPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -512,8 +512,9 @@ function renderPoolAllocation() {
 }
 
 function renderBuySymbolOptions() {
-  if (!els.buySymbol) return;
-  const current = els.buySymbol.value;
+  if (!els.buySymbol && !els.buyFilterSymbol) return;
+  const current = els.buySymbol?.value || "";
+  const currentFilter = els.buyFilterSymbol?.value || "";
   const options = state.etfs
     .map((entry) => {
       const quote = state.quotesBySymbol[entry.symbol];
@@ -521,40 +522,68 @@ function renderBuySymbolOptions() {
       return `<option value="${escapeAttr(entry.symbol)}">${escapeHtml(name)}（${escapeHtml(entry.symbol)}）</option>`;
     })
     .join("");
-  els.buySymbol.innerHTML = `<option value="">选择品种</option>${options}`;
-  if (current && state.etfs.some((item) => item.symbol === current)) {
-    els.buySymbol.value = current;
+  if (els.buySymbol) {
+    els.buySymbol.innerHTML = `<option value="">选择品种</option>${options}`;
+    if (current && state.etfs.some((item) => item.symbol === current)) {
+      els.buySymbol.value = current;
+    }
+  }
+  if (els.buyFilterSymbol) {
+    els.buyFilterSymbol.innerHTML = `<option value="">全部 ETF</option>${options}`;
+    if (currentFilter && state.etfs.some((item) => item.symbol === currentFilter)) {
+      els.buyFilterSymbol.value = currentFilter;
+    }
   }
 }
 
-function renderBuys() {
+export function renderBuys() {
   if (!els.buyRows) return;
   renderBuySymbolOptions();
-  const buys = state.buys || [];
-  if (els.buyEmpty) els.buyEmpty.hidden = buys.length > 0;
-  if (!buys.length) {
+  const trades = [
+    ...(state.buys || []).map((item) => ({ ...item, type: "buy" })),
+    ...(state.sells || []).map((item) => ({ ...item, type: "sell" })),
+  ].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.id.localeCompare(b.id)));
+  const filterSymbol = els.buyFilterSymbol?.value || "";
+  const filterType = els.buyFilterType?.value || "";
+  const filteredTrades = trades.filter(
+    (trade) => (!filterSymbol || trade.symbol === filterSymbol) && (!filterType || trade.type === filterType),
+  );
+  if (els.buyFilterCount) {
+    const filtered = Boolean(filterSymbol || filterType);
+    els.buyFilterCount.textContent = filtered ? `显示 ${filteredTrades.length} / 共 ${trades.length} 笔` : `共 ${trades.length} 笔`;
+  }
+  if (els.buyEmpty) {
+    els.buyEmpty.hidden = filteredTrades.length > 0;
+    els.buyEmpty.textContent = filterSymbol || filterType ? "当前筛选条件下暂无交易记录。" : "暂无交易记录。";
+  }
+  if (!filteredTrades.length) {
     els.buyRows.innerHTML = "";
     return;
   }
-  els.buyRows.innerHTML = buys
-    .map((buy) => {
-      const entry = state.etfs.find((item) => item.symbol === buy.symbol);
-      const quote = state.quotesBySymbol[buy.symbol];
-      const name = entry?.name || quote?.name || buy.symbol;
-      const amount = buy.price * buy.shares;
+  els.buyRows.innerHTML = filteredTrades
+    .map((trade) => {
+      const entry = state.etfs.find((item) => item.symbol === trade.symbol);
+      const quote = state.quotesBySymbol[trade.symbol];
+      const name = entry?.name || quote?.name || trade.symbol;
+      const amount = trade.price * trade.shares;
+      const editing = editingTrade?.id === trade.id && editingTrade?.type === trade.type;
       return `
-        <tr data-buy-id="${escapeAttr(buy.id)}">
-          <td>${escapeHtml(buy.date)}</td>
+        <tr data-trade-id="${escapeAttr(trade.id)}" class="${editing ? "is-editing" : ""}">
+          <td>${escapeHtml(trade.date)}</td>
+          <td><span class="trade-type ${trade.type}">${trade.type === "sell" ? "卖出" : "买入"}</span></td>
           <td>
-            <button class="link-button etf-name" data-analyze="${escapeAttr(buy.symbol)}" type="button">${escapeHtml(name)}</button>
-            <span class="muted"> ${escapeHtml(buy.symbol)}</span>
+            <button class="link-button etf-name" data-analyze="${escapeAttr(trade.symbol)}" type="button">${escapeHtml(name)}</button>
+            <span class="muted"> ${escapeHtml(trade.symbol)}</span>
           </td>
-          <td class="num">${money(buy.price)}</td>
-          <td class="num">${buy.shares}</td>
+          <td class="num">${money(trade.price)}</td>
+          <td class="num">${trade.shares}</td>
           <td class="num">${money(amount)}</td>
-          <td>${escapeHtml(buy.note || "—")}</td>
+          <td>${escapeHtml(trade.note || "—")}</td>
           <td class="num">
-            <button class="ghost-button compact" type="button" data-remove-buy="${escapeAttr(buy.id)}">删除</button>
+            <span class="buy-row-actions">
+              <button class="ghost-button compact" type="button" data-edit-trade="${escapeAttr(trade.id)}" data-trade-type="${trade.type}">修改</button>
+              <button class="ghost-button compact danger" type="button" data-remove-trade="${escapeAttr(trade.id)}" data-trade-type="${trade.type}">删除</button>
+            </span>
           </td>
         </tr>
       `;
@@ -564,21 +593,59 @@ function renderBuys() {
   els.buyRows.querySelectorAll("[data-analyze]").forEach((button) => {
     button.addEventListener("click", () => openAnalysis(button.dataset.analyze));
   });
-  els.buyRows.querySelectorAll("[data-remove-buy]").forEach((button) => {
+  els.buyRows.querySelectorAll("[data-edit-trade]").forEach((button) => {
+    button.addEventListener("click", () => startBuyEdit(button.dataset.tradeType, button.dataset.editTrade));
+  });
+  els.buyRows.querySelectorAll("[data-remove-trade]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.buys = (state.buys || []).filter((item) => item.id !== button.dataset.removeBuy);
+      const type = button.dataset.tradeType;
+      const id = button.dataset.removeTrade;
+      if (editingTrade?.id === id && editingTrade?.type === type) cancelBuyEdit();
+      if (type === "sell") state.sells = (state.sells || []).filter((item) => item.id !== id);
+      else state.buys = (state.buys || []).filter((item) => item.id !== id);
       persistWorkspace();
       renderBuys();
-      if (els.buyFormStatus) els.buyFormStatus.textContent = "已删除买入记录";
+      if (state.selectedEtf) selectEtfChart(state.selectedEtf);
+      if (els.buyFormStatus) els.buyFormStatus.textContent = `已删除${type === "sell" ? "卖出" : "买入"}记录`;
     });
   });
 }
 
-function newBuyId(symbol, date) {
-  return `buy_${symbol}_${date}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+function startBuyEdit(type, id) {
+  const collection = type === "sell" ? state.sells : state.buys;
+  const trade = (collection || []).find((item) => item.id === id);
+  if (!trade) return;
+  editingTrade = { id: trade.id, type };
+  if (els.tradeType) els.tradeType.value = type;
+  if (els.buySymbol) els.buySymbol.value = trade.symbol;
+  if (els.buyDate) els.buyDate.value = trade.date;
+  if (els.buyPrice) els.buyPrice.value = String(trade.price);
+  if (els.buyShares) els.buyShares.value = String(trade.shares);
+  if (els.buyNote) els.buyNote.value = trade.note || "";
+  if (els.buySubmit) els.buySubmit.textContent = "保存修改";
+  if (els.buyCancelEdit) els.buyCancelEdit.hidden = false;
+  if (els.buyFormStatus) els.buyFormStatus.textContent = `正在修改 ${trade.symbol} ${trade.date} 的${type === "sell" ? "卖出" : "买入"}记录`;
+  renderBuys();
+  els.buyForm?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+export function cancelBuyEdit() {
+  editingTrade = null;
+  if (els.buySubmit) els.buySubmit.textContent = els.tradeType?.value === "sell" ? "添加卖出" : "添加买入";
+  if (els.buyCancelEdit) els.buyCancelEdit.hidden = true;
+  if (els.buyPrice) els.buyPrice.value = "";
+  if (els.buyShares) els.buyShares.value = "";
+  if (els.buyNote) els.buyNote.value = "";
+  if (els.buyFormStatus) els.buyFormStatus.textContent = "";
+  renderBuys();
+}
+
+function newTradeId(type, symbol, date) {
+  return `${type}_${symbol}_${date}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
 export function addBuyRecord() {
+  const type = els.tradeType?.value === "sell" ? "sell" : "buy";
   const symbol = String(els.buySymbol?.value || "").trim();
   const date = String(els.buyDate?.value || "").trim();
   const price = Number(els.buyPrice?.value);
@@ -589,34 +656,45 @@ export function addBuyRecord() {
     return;
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    if (els.buyFormStatus) els.buyFormStatus.textContent = "请填写买入日期";
+    if (els.buyFormStatus) els.buyFormStatus.textContent = "请填写交易日期";
     return;
   }
   if (!(price > 0) || !(shares > 0)) {
-    if (els.buyFormStatus) els.buyFormStatus.textContent = "买入价与份额需大于 0";
+    if (els.buyFormStatus) els.buyFormStatus.textContent = "成交价与份额需大于 0";
     return;
   }
   if (!state.etfs.some((item) => item.symbol === symbol)) {
     if (els.buyFormStatus) els.buyFormStatus.textContent = "该 ETF 不在计划中";
     return;
   }
-  state.buys = [
-    {
-      id: newBuyId(symbol, date),
-      symbol,
-      date,
-      price,
-      shares,
-      note,
-    },
-    ...(state.buys || []),
-  ];
+  const wasEditing = Boolean(editingTrade);
+  if (editingTrade) {
+    if (editingTrade.type === "sell") state.sells = state.sells.filter((item) => item.id !== editingTrade.id);
+    else state.buys = state.buys.filter((item) => item.id !== editingTrade.id);
+  }
+  const record = {
+    id: editingTrade?.id || newTradeId(type, symbol, date),
+    symbol,
+    date,
+    price,
+    shares,
+    note,
+  };
+  if (type === "sell") state.sells = upsertSell(state.sells, record);
+  else state.buys = upsertBuy(state.buys, record);
+  editingTrade = null;
   persistWorkspace();
-  renderBuys();
+  if (els.buySubmit) els.buySubmit.textContent = type === "sell" ? "添加卖出" : "添加买入";
+  if (els.buyCancelEdit) els.buyCancelEdit.hidden = true;
   if (els.buyPrice) els.buyPrice.value = "";
   if (els.buyShares) els.buyShares.value = "";
   if (els.buyNote) els.buyNote.value = "";
-  if (els.buyFormStatus) els.buyFormStatus.textContent = `已记录 ${symbol} ${date} 买入`;
+  renderBuys();
+  if (state.selectedEtf) selectEtfChart(state.selectedEtf);
+  if (els.buyFormStatus) {
+    const label = type === "sell" ? "卖出" : "买入";
+    els.buyFormStatus.textContent = wasEditing ? `已更新 ${symbol} ${date} 的${label}记录` : `已记录 ${symbol} ${date} ${label}`;
+  }
 }
 
 export async function renderEtfPool({ refresh = false } = {}) {
