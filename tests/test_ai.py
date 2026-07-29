@@ -116,7 +116,7 @@ class AIPolicyTests(unittest.TestCase):
         )
         self.assertEqual(policy["accepted_multiplier"], 1)
 
-    def test_unknown_evidence_path_is_rejected(self):
+    def test_unknown_evidence_path_is_removed_and_confidence_is_lowered(self):
         proposal = {
             "action": "keep",
             "amount_multiplier": 1,
@@ -124,8 +124,25 @@ class AIPolicyTests(unittest.TestCase):
             "summary": "维持",
             "evidence": ["analysis.nonexistent"],
         }
-        with self.assertRaises(AIProviderError):
-            _validate_proposal(proposal, {"analysis.valuation.pe"})
+        result = _validate_proposal(proposal, {"analysis.valuation.pe"})
+        self.assertEqual(result["evidence"], [])
+        self.assertEqual(result["confidence"], "low")
+        self.assertIn("不可验证字段", result["data_limitations"][0])
+
+    def test_valid_evidence_survives_when_unknown_path_is_removed(self):
+        proposal = {
+            "action": "increase",
+            "amount_multiplier": 1.5,
+            "confidence": "high",
+            "summary": "估值较低",
+            "evidence": [
+                "analysis.valuation.pe",
+                "analysis.valuation.nonexistent",
+            ],
+        }
+        result = _validate_proposal(proposal, {"analysis.valuation.pe"})
+        self.assertEqual(result["evidence"], ["analysis.valuation.pe"])
+        self.assertEqual(result["confidence"], "low")
 
     def test_position_breach_cannot_increase_amount(self):
         policy = apply_policy(

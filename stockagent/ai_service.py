@@ -156,8 +156,16 @@ def _validate_proposal(raw, allowed_evidence=None):
     valid_evidence = evidence if allowed_evidence is None else [
         item for item in evidence if item in allowed_evidence
     ]
-    if evidence and len(valid_evidence) != len(evidence):
-        raise AIProviderError("大模型引用了输入中不存在的证据", code="invalid_output")
+    invalid_evidence = [item for item in evidence if item not in valid_evidence]
+    data_limitations = _short_list(raw.get("data_limitations"))
+    if invalid_evidence:
+        confidence = "low"
+        data_limitations = _short_list(
+            [
+                *data_limitations,
+                "模型引用了不可验证字段，已忽略并保留规则建议。",
+            ]
+        )
     return {
         "action": action,
         "amount_multiplier": max(0.0, _number(raw.get("amount_multiplier"), 1)),
@@ -168,7 +176,7 @@ def _validate_proposal(raw, allowed_evidence=None):
         "watch_items": _short_list(raw.get("watch_items")),
         "evidence": valid_evidence,
         "conditions_to_reverse": _short_list(raw.get("conditions_to_reverse")),
-        "data_limitations": _short_list(raw.get("data_limitations")),
+        "data_limitations": data_limitations,
     }
 
 
