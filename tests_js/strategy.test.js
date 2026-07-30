@@ -127,3 +127,17 @@ test("allocation blocks an ETF above the hard position ceiling", () => {
   assert.equal(result.allocations.find((item) => item.symbol === "ROOM")?.amount, result.deployTotal);
   assert.match(result.skipped.find((item) => item.symbol === "OVER")?.reason || "", /仓位高于目标/);
 });
+
+test("initial build prefers target gaps while still respecting valuation pause", () => {
+  const paused = allocatePoolBudget({
+    budget: 20000,
+    strategy: "valuation",
+    preferTargetGap: true,
+    holdings: [
+      { symbol: "510300", targetWeight: 60, actualWeight: 10, pePct: 0.9 },
+      { symbol: "512890", targetWeight: 40, actualWeight: 5, pePct: 0.2 },
+    ],
+  });
+  assert.equal(allocationForSymbol(paused, "510300"), null);
+  assert.ok(allocationForSymbol(paused, "512890")?.amount > 0);
+});

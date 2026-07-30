@@ -2,6 +2,7 @@ import { PLAN_CADENCE_LABELS } from "./constants.js";
 import { state } from "./state.js";
 import { escapeAttr, escapeHtml, money } from "./utils.js";
 import { allocatePoolBudget, strategyLabel } from "./strategy.js";
+import { planExecutionContext } from "./decision-support.js";
 
 function cacheKey(symbol) {
   return symbol || "__default__";
@@ -9,20 +10,22 @@ function cacheKey(symbol) {
 
 /** 用持仓 + 分析缓存组装全池分配输入。 */
 export function buildPoolHoldingsForAllocation({ preferLive = null } = {}) {
+  const live = preferLive && !preferLive.error ? preferLive : null;
+  const liveSymbol = live?.symbol || state.analysisSymbol || null;
   let total = 0;
   const valueMap = {};
   state.etfs.forEach((item) => {
     const quote = state.quotesBySymbol[item.symbol];
-    const price = quote?.price;
+    const livePrice =
+      liveSymbol === item.symbol
+        ? live?.etf?.price ?? live?.price
+        : null;
+    const price = livePrice ?? quote?.price;
     if (price != null && item.shares > 0) {
       valueMap[item.symbol] = price * item.shares;
       total += valueMap[item.symbol];
     }
   });
-
-  const live = preferLive && !preferLive.error ? preferLive : null;
-  const liveSymbol = live?.symbol || state.analysisSymbol || null;
-
   return state.etfs.map((entry) => {
     const cached =
       live && liveSymbol === entry.symbol ? live : state.analysisCache[cacheKey(entry.symbol)];
@@ -33,6 +36,7 @@ export function buildPoolHoldingsForAllocation({ preferLive = null } = {}) {
       name: entry.name || cached?.etf_name || entry.symbol,
       targetWeight: Number(entry.target_weight) > 0 ? Number(entry.target_weight) : 0,
       actualWeight,
+      marketValue: valueMap[entry.symbol] ?? 0,
       pePct: analyzed ? cached?.valuation?.pe_percentile_10y : null,
       grade: analyzed ? cached?.score?.grade : null,
       analyzed,
@@ -45,21 +49,23 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
   const cadenceLabel = PLAN_CADENCE_LABELS[plan.cadence] || "每月";
   const dayLabel = plan.cadence === "monthly" ? `${plan.day || 1} 号` : `周${plan.day || 1}`;
   const holdings = buildPoolHoldingsForAllocation();
+  const execution = planExecutionContext({ plan, holdings });
   const pool = allocatePoolBudget({
-    budget: plan.amount,
+    budget: execution.budget,
     holdings,
     strategy: plan.strategy,
     strategyConfig: plan.strategy_config,
+    preferTargetGap: execution.phase === "initial",
   });
   const strategyName = strategyLabel(plan.strategy);
 
-  if (!(plan.amount > 0) || !holdings.length) {
+  if (!(execution.budget > 0) || !holdings.length) {
     return `
       <section class="panel-block pool-alloc-block" aria-label="全池本期分配">
         <div class="panel-heading">
           <div>
             <h2 class="section-title">全池本期分配</h2>
-            <p class="muted">先填写预算与目标仓位</p>
+            <p class="muted">${execution.phase === "initial" ? "建仓目标已完成或尚未配置" : "先填写周期预算与目标仓位"}</p>
           </div>
         </div>
       </section>
@@ -81,18 +87,22 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
   const noteParts = [];
   if (pool.note) noteParts.push(pool.note);
   if (missingN > 0) noteParts.push(`${missingN} 只未分析，暂按中性`);
-  noteParts.unshift(`${strategyName}策略`);
+  noteParts.unshift(`${execution.phaseLabel} · ${strategyName}策略`);
 
   return `
     <section class="panel-block pool-alloc-block" aria-label="全池本期分配">
       <div class="panel-heading">
         <div>
           <h2 class="section-title">全池本期分配</h2>
-          <p class="muted">${escapeHtml(plan.name || "定投计划")} · ${escapeHtml(strategyName)} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}</p>
+            <p class="muted">${
+              execution.phase === "initial"
+                ? `目标 ${money(execution.targetAmount)} · 尚缺 ${money(execution.initialGap)}`
+                : `${escapeHtml(plan.name || "定投计划")} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}`
+            }</p>
         </div>
       </div>
       <div class="pool-alloc-summary">
-        <div class="pool-alloc-metric"><span>全池预算</span><strong>${money(pool.budget)}</strong></div>
+        <div class="pool-alloc-metric"><span>${execution.phase === "initial" ? "建仓缺口" : "本期预算"}</span><strong>${money(pool.budget)}</strong></div>
         <div class="pool-alloc-metric"><span>建议部署</span><strong>${money(pool.deployTotal)}</strong></div>
         <div class="pool-alloc-metric"><span>留现金</span><strong>${money(pool.cashKeep)}</strong></div>
       </div>

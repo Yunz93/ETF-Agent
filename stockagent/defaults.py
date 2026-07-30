@@ -172,7 +172,7 @@ DEFAULT_STRATEGY_CONFIG = {
 }
 
 DEFAULT_WORKSPACE = {
-    "version": 5,
+    "version": 6,
     "updated_at": None,
     "etfs": [],
     "buys": [],
@@ -180,11 +180,21 @@ DEFAULT_WORKSPACE = {
     "plan": {
         "name": "默认定投计划",
         "amount": 2000,
+        "capital_base": 0,
+        "initial_target_pct": 0,
+        "initial_build_completed_at": None,
         "cadence": "monthly",
         "day": 1,
         "note": "",
         "strategy": "valuation",
         "strategy_config": DEFAULT_STRATEGY_CONFIG,
+        "trading_cost": {
+            "min_commission": 5,
+            "commission_rate_pct": 0.03,
+            "max_fee_ratio_pct": 0.25,
+            "lot_size": 100,
+        },
+        "pending_orders": {},
     },
     "prefs": {},
 }

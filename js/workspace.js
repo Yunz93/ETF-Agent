@@ -12,7 +12,7 @@ import {
 
 export function buildWorkspacePayload() {
   return {
-    version: 5,
+    version: 6,
     etfs: state.etfs,
     buys: state.buys,
     sells: state.sells,

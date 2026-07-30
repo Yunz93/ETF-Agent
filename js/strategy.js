@@ -318,6 +318,7 @@ export function allocatePoolBudget({
   holdings = [],
   strategy = "valuation",
   strategyConfig,
+  preferTargetGap = false,
 } = {}) {
   const totalBudget = Number(budget);
   const strategyId = normalizeStrategyId(strategy);
@@ -329,13 +330,13 @@ export function allocatePoolBudget({
   const hasTargets = holdings.some((item) => Number(item.targetWeight) > 0);
   const equal = 100 / n;
   const useReb =
-    strategyId === "fixed" || strategyId === "rebalance"
+    preferTargetGap || strategyId === "fixed" || strategyId === "rebalance"
       ? false
       : strategyId === "custom"
         ? config.use_rebalance
         : true;
 
-  if (strategyId === "rebalance") {
+  if (strategyId === "rebalance" || preferTargetGap) {
     const rows = holdings.map((item) => {
       const target = hasTargets
         ? Number(item.targetWeight) > 0
@@ -347,23 +348,51 @@ export function allocatePoolBudget({
           ? Number(item.actualWeight)
           : null;
       const deficit = actual == null ? target : Math.max(0, target - actual);
+      const grid =
+        preferTargetGap && strategyId !== "rebalance"
+          ? dcaMultiplier({
+              strategy: strategyId,
+              strategyConfig: config,
+              pePct: item.pePct,
+              grade: item.grade,
+            })
+          : { mult: 1, band: deficit > 0 ? "待补仓" : "已达标", hint: "" };
+      const allowed = positionAllowed(target, actual);
+      const score =
+        !allowed || grid.mult <= 0 ? 0 : (deficit > 0 ? deficit : 0) * grid.mult;
       return {
         symbol: item.symbol,
         name: item.name || item.symbol,
         targetWeight: target,
         actualWeight: actual,
         analyzed: item.analyzed !== false,
-        mult: 1,
-        band: deficit > 0 ? "待补仓" : actual == null ? "无持仓权重" : "已达标",
+        mult: grid.mult,
+        band:
+          !allowed
+            ? "超配暂停"
+            : grid.mult <= 0
+              ? grid.band || "当期不建议新增"
+              : deficit > 0
+                ? preferTargetGap
+                  ? `${grid.band || "待补仓"} · 建仓补缺`
+                  : "待补仓"
+                : actual == null
+                  ? "无持仓权重"
+                  : "已达标",
         hint:
-          deficit > 0
-            ? `低于目标 ${(target - (actual ?? 0)).toFixed(1)} pp`
-            : actual == null
-              ? "尚无持仓市值，按目标仓位参与"
-              : "已达或高于目标，本期不补",
+          !allowed
+            ? `当前仓位高于目标 ${POSITION_TOLERANCE_PP} pp 上限`
+            : grid.mult <= 0
+              ? grid.hint || "当期不建议新增"
+              : deficit > 0
+                ? `低于目标 ${(target - (actual ?? 0)).toFixed(1)} pp`
+                : actual == null
+                  ? "尚无持仓市值，按目标仓位参与"
+                  : "已达或高于目标，本期不补",
         reb: 1,
-        score: deficit > 0 ? deficit : 0,
+        score,
         deficit,
+        positionBlocked: !allowed,
       };
     });
 
@@ -371,11 +400,11 @@ export function allocatePoolBudget({
     // 全部达标或无实际权重时：按目标仓位打满（等权兜底）
     if (!eligible.length) {
       eligible = rows
-        .filter((row) => row.targetWeight > 0)
+        .filter((row) => row.targetWeight > 0 && row.mult > 0 && !row.positionBlocked)
         .map((row) => ({
           ...row,
-          score: row.targetWeight,
-          band: "按目标",
+          score: row.targetWeight * row.mult,
+          band: preferTargetGap ? "按目标建仓" : "按目标",
           hint: "无明显低配，按目标仓位分配",
         }));
     }

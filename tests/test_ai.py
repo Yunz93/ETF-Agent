@@ -3,8 +3,9 @@ import json
 import unittest
 from unittest.mock import patch
 
-from stockagent.ai_providers import AIProviderError, _decode_json_text
+from stockagent.ai_providers import AIProviderError, _decode_json_text, _openai_request
 from stockagent.ai_service import (
+    _analysis_snapshot,
     _validate_proposal,
     apply_policy,
     review_recommendation,
@@ -55,6 +56,35 @@ class AIProviderTests(unittest.TestCase):
         with self.assertRaises(AIProviderError) as caught:
             _decode_json_text("not-json")
         self.assertEqual(caught.exception.code, "invalid_output")
+
+    @patch("stockagent.ai_providers.http_post_json")
+    def test_openai_schema_requests_dynamic_analysis_sections(self, post):
+        post.return_value = {
+            "output_text": json.dumps(
+                {
+                    "action": "keep",
+                    "amount_multiplier": 1,
+                    "confidence": "medium",
+                    "summary": "维持规则建议。",
+                    "focus_title": "仓位是当前首要约束",
+                    "analysis_sections": [
+                        {
+                            "title": "仓位先于估值",
+                            "items": ["当前仓位高于目标。"],
+                        }
+                    ],
+                    "watch_items": [],
+                    "evidence": [],
+                    "conditions_to_reverse": [],
+                    "data_limitations": [],
+                }
+            )
+        }
+        _openai_request("key", "model", "prompt", {}, 30, 800)
+        schema = post.call_args.args[1]["text"]["format"]["schema"]
+        self.assertIn("analysis_sections", schema["required"])
+        self.assertIn("focus_title", schema["required"])
+        self.assertNotIn("supporting_factors", schema["required"])
 
     @patch("stockagent.ai_service.get_api_key", return_value="test-secret-key")
     @patch(
@@ -144,6 +174,56 @@ class AIPolicyTests(unittest.TestCase):
         self.assertEqual(result["evidence"], ["analysis.valuation.pe"])
         self.assertEqual(result["confidence"], "low")
 
+    def test_dynamic_analysis_sections_keep_etf_specific_titles(self):
+        result = _validate_proposal(
+            {
+                "action": "keep",
+                "amount_multiplier": 1,
+                "confidence": "high",
+                "summary": "仓位约束比估值更影响本期决策。",
+                "focus_title": "高仓位压过估值优势",
+                "analysis_sections": [
+                    {
+                        "title": "52% 仓位成为首要约束",
+                        "items": ["当前仓位 52%，高于 30% 目标。"],
+                    },
+                    {
+                        "title": "年线附近但不宜继续集中",
+                        "items": ["年线乖离 -0.45%，趋势风险有限。"],
+                    },
+                    {"title": "", "items": ["无标题内容应忽略"]},
+                ],
+                "evidence": ["position.actual_weight"],
+            },
+            {"position.actual_weight"},
+        )
+        self.assertEqual(result["focus_title"], "高仓位压过估值优势")
+        self.assertEqual(
+            [section["title"] for section in result["analysis_sections"]],
+            ["52% 仓位成为首要约束", "年线附近但不宜继续集中"],
+        )
+
+    def test_analysis_snapshot_includes_etf_identity_and_distinguishing_metrics(self):
+        snapshot = _analysis_snapshot(
+            {
+                "symbol": "563360",
+                "index_name": "中证A500",
+                "index_full_name": "中证A500",
+                "etf_name": "A500ETF华泰柏瑞",
+                "etf": {
+                    "symbol_name": "A500ETF华泰柏瑞",
+                    "product_quality": {"tracking_error_pct": 2.46},
+                },
+                "technicals": {
+                    "kdj": {"k": 37, "d": 38, "j": 34},
+                    "kdj_label": "中性区间",
+                },
+            }
+        )
+        self.assertEqual(snapshot["index_name"], "中证A500")
+        self.assertEqual(snapshot["etf"]["product_quality"]["tracking_error_pct"], 2.46)
+        self.assertEqual(snapshot["technicals"]["kdj"]["k"], 37)
+
     def test_position_breach_cannot_increase_amount(self):
         policy = apply_policy(
             {"remaining_amount": 1000},
@@ -157,6 +237,43 @@ class AIPolicyTests(unittest.TestCase):
             {"max_increase_multiplier": 1.5},
         )
         self.assertEqual(policy["accepted_multiplier"], 1)
+
+    def test_initial_build_uses_execution_budget_instead_of_monthly_budget(self):
+        policy = apply_policy(
+            {"remaining_amount": 18000},
+            {
+                "action": "keep",
+                "amount_multiplier": 1,
+                "confidence": "high",
+            },
+            {"may_increase": True},
+            {
+                "plan_budget": 5000,
+                "execution_budget": 20000,
+                "blocked": False,
+                "would_exceed": False,
+            },
+            {"max_increase_multiplier": 1.5},
+        )
+        self.assertEqual(policy["final_amount"], 18000)
+
+    def test_position_snapshot_uses_remaining_initial_gap(self):
+        from stockagent.ai_service import _position_snapshot
+
+        snapshot = _position_snapshot(
+            {"execution_phase": "initial"},
+            {
+                "plan": {
+                    "amount": 5000,
+                    "capital_base": 100000,
+                    "initial_target_pct": 30,
+                },
+                "etfs": [{"symbol": "512890", "shares": 10000, "cost": 1}],
+            },
+            "512890",
+        )
+        self.assertEqual(snapshot["execution_budget"], 20000)
+        self.assertEqual(snapshot["plan_budget"], 5000)
 
     def test_reduce_action_cannot_raise_amount(self):
         policy = apply_policy(
@@ -219,8 +336,17 @@ class AIPolicyTests(unittest.TestCase):
                 "amount_multiplier": 0.7,
                 "confidence": "high",
                 "summary": "仓位接近上限，降低本期投入。",
-                "supporting_factors": ["估值较低"],
-                "risks": ["仓位偏高"],
+                "focus_title": "仓位约束压过低估值",
+                "analysis_sections": [
+                    {
+                        "title": "仓位先于估值",
+                        "items": ["当前仓位 25%，高于 20% 目标。"],
+                    },
+                    {
+                        "title": "低估值仍可保留观察",
+                        "items": ["PE 10，近十年分位 20%。"],
+                    },
+                ],
                 "watch_items": ["观察仓位回落"],
                 "evidence": ["position.actual_weight"],
                 "conditions_to_reverse": ["仓位回到目标附近"],
@@ -246,6 +372,9 @@ class AIPolicyTests(unittest.TestCase):
         )
         self.assertEqual(result["policy_decision"]["accepted_multiplier"], 0.7)
         self.assertEqual(result["final_recommendation"]["amount"], 700)
+        self.assertEqual(result["ai_proposal"]["focus_title"], "仓位约束压过低估值")
+        sent_payload = provider.call_args.args[4]
+        self.assertEqual(sent_payload["output_version"], 2)
         provider.assert_called_once()
 
 

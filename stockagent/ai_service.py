@@ -16,16 +16,22 @@ from .secret_store import credential_status, get_api_key
 from .state import AI_REVIEW_CACHE
 from .workspace_store import get_workspace
 
-SYSTEM_PROMPT = """你是 ETF Agent 的投资建议复核器。只能使用输入 JSON 中的事实，
-不得补充新闻、财报、行情或外部知识。你的任务是校正规则建议中的明显盲点，而不是取代规则引擎。
+SYSTEM_PROMPT = """你是 ETF Agent 的 ETF 分析器。只能使用输入 JSON 中的事实，
+不得补充新闻、财报、行情或外部知识。你的任务是识别这只 ETF 当前最值得决策的矛盾，并分析规则建议中的明显盲点，而不是取代规则引擎。
 证据必须写成输入字段路径，例如 analysis.valuation.pe_percentile_10y。
 数据不足时降低置信度并保持原建议。不要承诺收益，不要给出确定性买卖指令。
+先根据 ETF 名称、跟踪指数、估值、趋势、交易质量、仓位和数据质量判断本只 ETF 的分析重点。
+不同 ETF 不要套用相同段落：只选择 2 至 4 个真正相关的主题，主题标题必须描述本只 ETF 的具体矛盾，
+不得使用“支持因素”“风险分析”“技术面分析”等通用标题。每个主题都要引用输入中的具体数值或状态并解释其决策影响，
+不要只复述“估值较低、技术面中性、注意风险”等可替换到任何 ETF 的空泛句子。
 只返回 JSON 对象，不要添加 Markdown。对象必须包含以下字段：
 action: "keep" | "increase" | "reduce" | "pause"；
-amount_multiplier: 数字；confidence: "low" | "medium" | "high"；summary: 字符串；
-supporting_factors、risks、watch_items、evidence、conditions_to_reverse、data_limitations: 字符串数组。
+amount_multiplier: 数字；confidence: "low" | "medium" | "high"；summary、focus_title: 字符串；
+analysis_sections: 由 2 至 4 个对象组成的数组，每个对象包含 title 和 items，items 为 1 至 3 条字符串；
+watch_items、evidence、conditions_to_reverse、data_limitations: 字符串数组。
 所有字段都必须出现；数组每项不超过 80 个汉字，最多 3 项，没有内容时返回空数组。"""
 
+AI_ANALYSIS_VERSION = 2
 ALLOWED_ACTIONS = {"keep", "increase", "reduce", "pause"}
 ALLOWED_CONFIDENCE = {"low", "medium", "high"}
 def _number(value, default=0.0):
@@ -41,9 +47,27 @@ def _short_list(value, limit=3):
     return [str(item).strip()[:160] for item in value if str(item).strip()][:limit]
 
 
+def _analysis_sections(value, limit=4):
+    if not isinstance(value, list):
+        return []
+    sections = []
+    for raw in value[:limit]:
+        if not isinstance(raw, dict):
+            continue
+        title = str(raw.get("title") or "").strip()[:40]
+        items = _short_list(raw.get("items"))
+        if title and items:
+            sections.append({"title": title, "items": items})
+    return sections
+
+
 def _analysis_snapshot(payload):
     return {
         "symbol": payload.get("symbol") or (payload.get("etf") or {}).get("symbol"),
+        "name": payload.get("name"),
+        "index_name": payload.get("index_name"),
+        "index_full_name": payload.get("index_full_name"),
+        "etf_name": payload.get("etf_name"),
         "analysis_mode": payload.get("analysis_mode"),
         "updated_at": payload.get("updated_at"),
         "etf": {
@@ -56,6 +80,10 @@ def _analysis_snapshot(payload):
                 "as_of",
                 "market_timestamp",
                 "provider",
+                "volume",
+                "bid",
+                "ask",
+                "product_quality",
             )
         },
         "index": {
@@ -64,7 +92,7 @@ def _analysis_snapshot(payload):
         },
         "valuation": {
             key: (payload.get("valuation") or {}).get(key)
-            for key in ("pe", "pb", "dividend_yield_pct", "pe_percentile_10y")
+            for key in ("pe", "pb", "dividend_yield_pct", "pe_percentile_10y", "roe_pct")
         },
         "bond": {"yield10y": (payload.get("bond") or {}).get("yield10y")},
         "spread": {
@@ -73,7 +101,15 @@ def _analysis_snapshot(payload):
         },
         "technicals": {
             key: (payload.get("technicals") or {}).get(key)
-            for key in ("bias_pct", "ma250", "rsi14", "rsi_label", "boll_position")
+            for key in (
+                "bias_pct",
+                "ma250",
+                "rsi14",
+                "rsi_label",
+                "boll",
+                "kdj",
+                "kdj_label",
+            )
         },
         "score": {
             "total": (payload.get("score") or {}).get("total"),
@@ -82,7 +118,14 @@ def _analysis_snapshot(payload):
         },
         "backtest": {
             key: (payload.get("backtest") or {}).get(key)
-            for key in ("samples", "horizon_days", "avg_return_pct", "win_rate_pct", "worst_pct")
+            for key in (
+                "samples",
+                "horizon_days",
+                "avg_return_pct",
+                "win_rate_pct",
+                "worst_pct",
+                "label",
+            )
         },
     }
 
@@ -92,20 +135,31 @@ def _workspace_snapshot(workspace, symbol):
         (item for item in workspace.get("etfs") or [] if item.get("symbol") == symbol),
         {},
     )
+    plan = workspace.get("plan") or {}
     return {
-        "plan_budget": _number((workspace.get("plan") or {}).get("amount")),
-        "plan_strategy": (workspace.get("plan") or {}).get("strategy"),
+        "plan_budget": _number(plan.get("amount")),
+        "capital_base": _number(plan.get("capital_base")),
+        "initial_target_pct": _number(plan.get("initial_target_pct")),
+        "initial_build_completed": bool(plan.get("initial_build_completed_at")),
+        "trading_cost": plan.get("trading_cost") or {},
+        "plan_strategy": plan.get("strategy"),
         "holding": {
             key: holding.get(key) for key in ("symbol", "shares", "cost", "target_weight")
         },
     }
 
 
-def _normalize_baseline(raw, workspace):
+def _normalize_baseline(raw, workspace, execution_budget=None):
     if not isinstance(raw, dict):
         raise AIProviderError("缺少规则基线建议", status=400, code="invalid_request")
     amount = max(0.0, _number(raw.get("amount")))
-    plan_budget = max(0.0, _number((workspace.get("plan") or {}).get("amount")))
+    plan_budget = max(
+        0.0,
+        _number(
+            execution_budget,
+            _number((workspace.get("plan") or {}).get("amount")),
+        ),
+    )
     return {
         "stance": str(raw.get("stance") or "")[:40],
         "headline": str(raw.get("headline") or "")[:160],
@@ -166,11 +220,24 @@ def _validate_proposal(raw, allowed_evidence=None):
                 "模型引用了不可验证字段，已忽略并保留规则建议。",
             ]
         )
+    sections = _analysis_sections(raw.get("analysis_sections"))
+    if not sections:
+        legacy_sections = (
+            ("有利条件", raw.get("supporting_factors")),
+            ("主要约束", raw.get("risks")),
+        )
+        sections = [
+            {"title": title, "items": items}
+            for title, value in legacy_sections
+            if (items := _short_list(value))
+        ]
     return {
         "action": action,
         "amount_multiplier": max(0.0, _number(raw.get("amount_multiplier"), 1)),
         "confidence": confidence,
         "summary": str(raw.get("summary") or "").strip()[:240],
+        "focus_title": str(raw.get("focus_title") or "").strip()[:80],
+        "analysis_sections": sections,
         "supporting_factors": _short_list(raw.get("supporting_factors")),
         "risks": _short_list(raw.get("risks")),
         "watch_items": _short_list(raw.get("watch_items")),
@@ -207,7 +274,10 @@ def apply_policy(baseline, proposal, data_quality, position, settings):
         _number(settings.get("max_increase_multiplier"), 1.5),
     )
     baseline_amount = max(0.0, _number(baseline.get("remaining_amount")))
-    budget = max(0.0, _number(position.get("plan_budget")))
+    budget = max(
+        0.0,
+        _number(position.get("execution_budget"), _number(position.get("plan_budget"))),
+    )
     final_amount = min(budget, baseline_amount * accepted)
     return {
         "status": "accepted" if accepted == requested else "adjusted",
@@ -218,15 +288,39 @@ def apply_policy(baseline, proposal, data_quality, position, settings):
     }
 
 
-def _position_snapshot(raw, workspace):
+def _position_snapshot(raw, workspace, symbol=""):
     source = raw if isinstance(raw, dict) else {}
+    plan = workspace.get("plan") or {}
+    phase = str(source.get("execution_phase") or "recurring")
+    recurring_budget = max(0.0, _number(plan.get("amount")))
+    pending = (plan.get("pending_orders") or {}).get(symbol) or {}
+    recurring_cap = recurring_budget + max(0.0, _number(pending.get("carry")))
+    capital_base = max(0.0, _number(plan.get("capital_base")))
+    initial_target_pct = max(0.0, min(100.0, _number(plan.get("initial_target_pct"))))
+    target_amount = capital_base * initial_target_pct / 100.0
+    current_value = 0.0
+    for item in workspace.get("etfs") or []:
+        shares = max(0.0, _number(item.get("shares")))
+        cost = max(0.0, _number(item.get("cost")))
+        if shares > 0 and cost > 0:
+            current_value += shares * cost
+    initial_gap = max(0.0, target_amount - current_value)
+    allowed_budget = (
+        initial_gap
+        if phase == "initial" and not plan.get("initial_build_completed_at")
+        else recurring_cap
+    )
+    requested_budget = max(0.0, _number(source.get("execution_budget")))
+    execution_budget = min(requested_budget, allowed_budget) if requested_budget else allowed_budget
     return {
         "target_weight": source.get("target_weight"),
         "actual_weight": source.get("actual_weight"),
         "projected_weight": source.get("projected_weight"),
         "blocked": source.get("blocked") is True,
         "would_exceed": source.get("would_exceed") is True,
-        "plan_budget": _number((workspace.get("plan") or {}).get("amount")),
+        "plan_budget": recurring_budget,
+        "execution_phase": phase,
+        "execution_budget": execution_budget,
     }
 
 
@@ -238,7 +332,7 @@ def _cache_key(provider, model, payload):
 def review_recommendation(request_payload, force=False):
     settings = ai_settings()
     if not settings.get("enabled"):
-        raise AIProviderError("请先在设置中启用 AI 校正", status=409, code="disabled")
+        raise AIProviderError("请先在设置中启用 AI 分析", status=409, code="disabled")
     provider = settings.get("provider")
     model = (settings.get("models") or {}).get(provider)
     api_key = get_api_key(provider)
@@ -249,13 +343,18 @@ def review_recommendation(request_payload, force=False):
     if len(symbol) != 6 or not symbol.strip("0"):
         raise AIProviderError("ETF 代码无效", status=400, code="invalid_request")
     workspace = get_workspace()
-    baseline = _normalize_baseline(request_payload.get("baseline"), workspace)
-    position = _position_snapshot(request_payload.get("position"), workspace)
+    position = _position_snapshot(request_payload.get("position"), workspace, symbol)
+    baseline = _normalize_baseline(
+        request_payload.get("baseline"),
+        workspace,
+        position.get("execution_budget"),
+    )
     analysis = get_dividend_dashboard(symbol=symbol)
     if analysis.get("supported") is False or (analysis.get("error") and not analysis.get("score")):
-        raise AIProviderError("当前分析数据不可用，不能执行 AI 校正", status=409, code="data_unavailable")
+        raise AIProviderError("当前分析数据不可用，不能执行 AI 分析", status=409, code="data_unavailable")
     quality = _data_quality(analysis)
     model_input = {
+        "output_version": AI_ANALYSIS_VERSION,
         "analysis": _analysis_snapshot(analysis),
         "baseline": baseline,
         "workspace": _workspace_snapshot(workspace, symbol),
@@ -294,7 +393,7 @@ def review_recommendation(request_payload, force=False):
         "input_as_of": analysis.get("updated_at"),
         "usage": usage,
         "cached": False,
-        "disclaimer": "AI 校正仅供研究参考，不构成投资建议；不会自动下单或修改长期策略。",
+        "disclaimer": "AI 分析仅供研究参考，不构成投资建议；不会自动下单或修改长期策略。",
     }
     cache_seconds = int(settings.get("cache_minutes", 30)) * 60
     if cache_seconds:

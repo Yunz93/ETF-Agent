@@ -58,6 +58,24 @@ test("plan normalization defaults strategy to valuation and accepts custom confi
   assert.equal(normalizePlan({ strategy: "nope" }).strategy, "valuation");
 });
 
+test("plan normalization preserves initial build and trading cost settings", () => {
+  const plan = normalizePlan({
+    amount: 5000,
+    capital_base: 100000,
+    initial_target_pct: 30,
+    trading_cost: {
+      min_commission: 5,
+      commission_rate_pct: 0.025,
+      max_fee_ratio_pct: 0.2,
+      lot_size: 100,
+    },
+  });
+  assert.equal(plan.capital_base, 100000);
+  assert.equal(plan.initial_target_pct, 30);
+  assert.equal(plan.trading_cost.min_commission, 5);
+  assert.equal(plan.trading_cost.max_fee_ratio_pct, 0.2);
+});
+
 test("buy normalization deduplicates records and rejects impossible dates", () => {
   const buys = normalizeBuys([
     { id: "buy-1", symbol: "sh510300", date: "2026-07-28", shares: 10, price: 4.2 },

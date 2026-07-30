@@ -6,13 +6,16 @@ export function setAppConfig(nextConfig) {
 export const state = {
   // 定投计划内 ETF：[{symbol, name, shares, cost, target_weight, note}]
   etfs: [],
-  // 买入记录：[{id, symbol, date, price, shares, note}]
+  // 买入记录：[{id, symbol, date, price, shares, fee, note}]
   buys: [],
-  // 卖出记录：[{id, symbol, date, price, shares, note}]
+  // 卖出记录：[{id, symbol, date, price, shares, fee, note}]
   sells: [],
   plan: {
     name: "默认定投计划",
     amount: 2000,
+    capital_base: 0,
+    initial_target_pct: 0,
+    initial_build_completed_at: null,
     cadence: "monthly",
     day: 1,
     note: "",
@@ -28,6 +31,13 @@ export const state = {
       grade_mult: { A: 1.5, B: 1.2, C: 1.0, D: 0.5, E: 0 },
       use_rebalance: true,
     },
+    trading_cost: {
+      min_commission: 5,
+      commission_rate_pct: 0.03,
+      max_fee_ratio_pct: 0.25,
+      lot_size: 100,
+    },
+    pending_orders: {},
   },
   quotesBySymbol: {},
   quotesMeta: null,
@@ -74,6 +84,14 @@ export function initEls() {
     dcaPlanForm: document.querySelector("#dcaPlanForm"),
     planName: document.querySelector("#planName"),
     planAmount: document.querySelector("#planAmount"),
+    planCapitalBase: document.querySelector("#planCapitalBase"),
+    planInitialTargetPct: document.querySelector("#planInitialTargetPct"),
+    planInitialCompleted: document.querySelector("#planInitialCompleted"),
+    planInitialSummary: document.querySelector("#planInitialSummary"),
+    planMinCommission: document.querySelector("#planMinCommission"),
+    planCommissionRatePct: document.querySelector("#planCommissionRatePct"),
+    planMaxFeeRatioPct: document.querySelector("#planMaxFeeRatioPct"),
+    planLotSize: document.querySelector("#planLotSize"),
     planCadence: document.querySelector("#planCadence"),
     planDay: document.querySelector("#planDay"),
     planNote: document.querySelector("#planNote"),
@@ -100,6 +118,7 @@ export function initEls() {
     buyDate: document.querySelector("#buyDate"),
     buyPrice: document.querySelector("#buyPrice"),
     buyShares: document.querySelector("#buyShares"),
+    buyFee: document.querySelector("#buyFee"),
     buyNote: document.querySelector("#buyNote"),
     buySubmit: document.querySelector("#buySubmit"),
     buyCancelEdit: document.querySelector("#buyCancelEdit"),

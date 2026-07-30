@@ -211,44 +211,98 @@
             <section class="plan-section" aria-label="计划参数">
               <div class="plan-section-heading">
                 <h3 class="plan-section-title">计划参数</h3>
-                <p class="muted">整池每期总预算与定投策略</p>
+                <p class="muted">建仓目标、周期预算与交易成本分别约束</p>
               </div>
               <form id="dcaPlanForm" class="plan-config-strip" autocomplete="off">
-              <label>
-                <span>计划名称</span>
-                <input id="planName" type="text" placeholder="例如 家庭主账户" maxlength="40" />
-              </label>
-              <label>
-                <span>全池每期预算（元）</span>
-                <input id="planAmount" type="number" min="0" step="any" placeholder="2000" />
-              </label>
-              <label>
-                <span>频率</span>
-                <select id="planCadence">
-                  <option value="monthly">每月</option>
-                  <option value="biweekly">每两周</option>
-                  <option value="weekly">每周</option>
-                </select>
-              </label>
-              <label>
-                <span id="planDayHint">执行日（号）</span>
-                <input id="planDay" type="number" min="1" max="28" step="1" placeholder="1" />
-              </label>
-              <label class="grow">
-                <span>备注</span>
-                <input id="planNote" type="text" placeholder="可选" maxlength="120" />
-              </label>
-              <label class="plan-strategy-field">
-                <span>定投策略</span>
-                <select id="planStrategy">
-                  <option value="fixed">定额定投</option>
-                  <option value="valuation" selected>估值定投</option>
-                  <option value="grade">评分定投</option>
-                  <option value="rebalance">再平衡定投</option>
-                  <option value="custom">自定义策略</option>
-                </select>
-              </label>
-              <p id="planStrategyHint" class="plan-strategy-hint muted">按 PE 近十年分位调节倍率，偏贵留现金</p>
+                <div class="plan-config-group plan-config-identity">
+                  <div class="plan-config-group-heading">
+                    <h4>计划信息</h4>
+                  </div>
+                  <label>
+                    <span>计划名称</span>
+                    <input id="planName" type="text" placeholder="例如 家庭主账户" maxlength="40" />
+                  </label>
+                  <label class="grow">
+                    <span>备注</span>
+                    <input id="planNote" type="text" placeholder="可选" maxlength="120" />
+                  </label>
+                </div>
+
+                <div class="plan-config-group">
+                  <div class="plan-config-group-heading">
+                    <h4>初期建仓</h4>
+                    <p id="planInitialSummary" class="muted">填写总资金与目标仓位后计算建仓额度</p>
+                  </div>
+                  <label>
+                    <span>可投资总资金（元）</span>
+                    <input id="planCapitalBase" type="number" min="0" step="any" placeholder="100000" />
+                  </label>
+                  <label>
+                    <span>初期目标仓位 %</span>
+                    <input id="planInitialTargetPct" type="number" min="0" max="100" step="any" placeholder="30" />
+                  </label>
+                  <label class="plan-complete-check">
+                    <input id="planInitialCompleted" type="checkbox" />
+                    <span>建仓已完成</span>
+                  </label>
+                </div>
+
+                <div class="plan-config-group">
+                  <div class="plan-config-group-heading">
+                    <h4>周期定投</h4>
+                    <p class="muted">建仓完成后（或未配置建仓时）作为每期预算上限</p>
+                  </div>
+                  <label>
+                    <span>全池每期预算（元）</span>
+                    <input id="planAmount" type="number" min="0" step="any" placeholder="2000" />
+                  </label>
+                  <label>
+                    <span>频率</span>
+                    <select id="planCadence">
+                      <option value="monthly">每月</option>
+                      <option value="biweekly">每两周</option>
+                      <option value="weekly">每周</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span id="planDayHint">执行日（号）</span>
+                    <input id="planDay" type="number" min="1" max="28" step="1" placeholder="1" />
+                  </label>
+                  <label class="plan-strategy-field">
+                    <span>定投策略</span>
+                    <select id="planStrategy">
+                      <option value="fixed">定额定投</option>
+                      <option value="valuation" selected>估值定投</option>
+                      <option value="grade">评分定投</option>
+                      <option value="rebalance">再平衡定投</option>
+                      <option value="custom">自定义策略</option>
+                    </select>
+                  </label>
+                  <p id="planStrategyHint" class="plan-strategy-hint muted">按 PE 近十年分位调节倍率，偏贵留现金</p>
+                </div>
+
+                <div class="plan-config-group">
+                  <div class="plan-config-group-heading">
+                    <h4>交易成本</h4>
+                    <p class="muted">订单同时满足现金上限、整手与手续费效率</p>
+                  </div>
+                  <label>
+                    <span>最低手续费（元）</span>
+                    <input id="planMinCommission" type="number" min="0" step="0.01" placeholder="5" />
+                  </label>
+                  <label>
+                    <span>佣金费率 %</span>
+                    <input id="planCommissionRatePct" type="number" min="0" max="10" step="0.001" placeholder="0.03" />
+                  </label>
+                  <label>
+                    <span>手续费占比上限 %</span>
+                    <input id="planMaxFeeRatioPct" type="number" min="0" max="100" step="0.01" placeholder="0.25" />
+                  </label>
+                  <label>
+                    <span>最小交易单位（份）</span>
+                    <input id="planLotSize" type="number" min="1" step="1" placeholder="100" />
+                  </label>
+                </div>
               </form>
               <div id="planStrategyCustom" class="plan-strategy-custom" hidden>
               <div class="plan-strategy-custom-heading">
@@ -307,11 +361,12 @@
                     <th>ETF</th>
                     <th class="num">现价</th>
                     <th class="num">涨跌</th>
-                    <th class="num">目标%</th>
-                    <th class="num">实际%</th>
+                    <th class="num">配置%</th>
+                    <th class="num">池内%</th>
+                    <th class="num">总仓%</th>
                     <th class="num">偏离</th>
                     <th class="num">持有份额</th>
-                    <th class="num">成本价</th>
+                    <th class="num">含费成本</th>
                     <th class="num">市值</th>
                     <th class="num">浮盈亏</th>
                     <th></th>
@@ -383,6 +438,10 @@
                 <span>份额</span>
                 <input id="buyShares" type="number" min="0" step="any" placeholder="1000" required />
               </label>
+              <label>
+                <span>手续费</span>
+                <input id="buyFee" type="number" min="0" step="0.01" placeholder="自动计算" />
+              </label>
               <label class="grow">
                 <span>备注</span>
                 <input id="buyNote" type="text" placeholder="可选" maxlength="80" />
@@ -415,6 +474,8 @@
                     <th class="num">成交价</th>
                     <th class="num">份额</th>
                     <th class="num">金额</th>
+                    <th class="num">手续费</th>
+                    <th class="num">现金影响</th>
                     <th>备注</th>
                     <th></th>
                   </tr>

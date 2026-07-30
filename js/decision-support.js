@@ -61,7 +61,10 @@ export function cycleExecution({ plan, buys = [], symbol, recommendedAmount = 0,
   const matching = buys.filter(
     (buy) => buy.symbol === symbol && buy.date >= period.start && buy.date < period.end,
   );
-  const executedAmount = matching.reduce((sum, buy) => sum + Number(buy.price) * Number(buy.shares), 0);
+  const executedAmount = matching.reduce(
+    (sum, buy) => sum + Number(buy.price) * Number(buy.shares) + Math.max(0, Number(buy.fee) || 0),
+    0,
+  );
   const remainingAmount = Math.max(0, Number(recommendedAmount) - executedAmount);
   const lastBuy = buys.find((buy) => buy.symbol === symbol) || null;
   let status = "waiting";
@@ -81,19 +84,196 @@ export function cycleExecution({ plan, buys = [], symbol, recommendedAmount = 0,
   };
 }
 
-export function orderPreview(amount, price, lotSize = 100) {
+export function estimatedTradeFee(amount, tradingCost = {}) {
+  const gross = Math.max(0, Number(amount) || 0);
+  if (!(gross > 0)) return 0;
+  const minCommission = Math.max(0, Number(tradingCost.min_commission) || 0);
+  const rate = Math.max(0, Number(tradingCost.commission_rate_pct) || 0) / 100;
+  return Math.max(minCommission, gross * rate);
+}
+
+export function planExecutionContext({ plan = {}, holdings = [] } = {}) {
+  const capitalBase = Math.max(0, Number(plan.capital_base) || 0);
+  const initialTargetPct = Math.min(100, Math.max(0, Number(plan.initial_target_pct) || 0));
+  const currentValue = holdings.reduce(
+    (sum, item) => sum + Math.max(0, Number(item.marketValue) || 0),
+    0,
+  );
+  const targetAmount = capitalBase * (initialTargetPct / 100);
+  const initialGap = Math.max(0, targetAmount - currentValue);
+  const configured = capitalBase > 0 && initialTargetPct > 0;
+  const reached = configured && initialGap < 0.01;
+  const markedComplete = Boolean(plan.initial_build_completed_at);
+  const phase = configured && !markedComplete && !reached ? "initial" : "recurring";
+  const recurringBudget = Math.max(0, Number(plan.amount) || 0);
+  return {
+    phase,
+    phaseLabel: phase === "initial" ? "初期建仓" : "周期定投",
+    budget: phase === "initial" ? initialGap : recurringBudget,
+    capitalBase,
+    initialTargetPct,
+    targetAmount,
+    currentValue,
+    currentPositionPct: capitalBase > 0 ? (currentValue / capitalBase) * 100 : null,
+    initialGap,
+    configured,
+    reached,
+    markedComplete,
+  };
+}
+
+export function pendingOrderState({
+  plan = {},
+  buys = [],
+  symbol = "",
+  recommendedAmount = 0,
+  now = new Date(),
+} = {}) {
+  const period = planPeriod(plan, now);
+  const existing = plan.pending_orders?.[symbol] || {};
+  const samePeriod = existing.period === period.start;
+  const carry = samePeriod
+    ? Math.max(0, Number(existing.carry) || 0)
+    : Math.max(0, Number(existing.remaining) || 0);
+  const scheduled = Math.max(0, Number(recommendedAmount) || 0);
+  const executed = buys
+    .filter((buy) => buy.symbol === symbol && buy.date >= period.start && buy.date < period.end)
+    .reduce(
+      (sum, buy) => sum + Number(buy.price) * Number(buy.shares) + Math.max(0, Number(buy.fee) || 0),
+      0,
+    );
+  const remaining = Math.max(0, carry + scheduled - executed);
+  const record = {
+    period: period.start,
+    carry: Math.round(carry * 100) / 100,
+    scheduled: Math.round(scheduled * 100) / 100,
+    remaining: Math.round(remaining * 100) / 100,
+  };
+  return {
+    ...record,
+    executed,
+    changed:
+      existing.period !== record.period ||
+      Number(existing.carry) !== record.carry ||
+      Number(existing.scheduled) !== record.scheduled ||
+      Number(existing.remaining) !== record.remaining,
+  };
+}
+
+export function orderPreview(amount, price, options = {}) {
   const budget = Number(amount);
   const quote = Number(price);
+  const tradingCost = typeof options === "number" ? { lot_size: options } : options || {};
+  const allowInefficient = Boolean(tradingCost.allowInefficient);
+  const lotSize = Math.max(1, Math.round(Number(tradingCost.lot_size) || 100));
+  const minCommission = Math.max(0, Number(tradingCost.min_commission) || 0);
+  const maxFeeRatio = Math.max(0, Number(tradingCost.max_fee_ratio_pct) || 0) / 100;
+  const minimumEconomicAmount =
+    minCommission > 0 && maxFeeRatio > 0 ? minCommission / maxFeeRatio : 0;
+  const minimumEfficientShares =
+    minimumEconomicAmount > 0 && quote > 0
+      ? Math.max(lotSize, Math.ceil(minimumEconomicAmount / quote / lotSize) * lotSize)
+      : lotSize;
   if (!(budget > 0) || !(quote > 0)) {
-    return { shares: 0, estimatedAmount: 0, cashRemainder: Math.max(0, budget || 0), lotSize };
+    return {
+      shares: 0,
+      estimatedAmount: 0,
+      fee: 0,
+      totalCash: 0,
+      feeRatioPct: null,
+      cashRemainder: Math.max(0, budget || 0),
+      lotSize,
+      minimumEfficientShares: 0,
+      minimumEconomicAmount,
+      inefficient: false,
+      blockedReason: "invalid",
+    };
   }
-  const shares = Math.floor(budget / quote / lotSize) * lotSize;
-  const estimatedAmount = shares * quote;
+  let affordableShares = Math.floor(Math.max(0, budget - minCommission) / quote / lotSize) * lotSize;
+  while (
+    affordableShares > 0 &&
+    affordableShares * quote + estimatedTradeFee(affordableShares * quote, tradingCost) > budget
+  ) {
+    affordableShares -= lotSize;
+  }
+  const affordableAmount = Math.round(affordableShares * quote * 100) / 100;
+  const affordableFee = estimatedTradeFee(affordableAmount, tradingCost);
+  const affordableFeeRatio = affordableAmount > 0 ? affordableFee / affordableAmount : null;
+  const feeRatioAllowed =
+    maxFeeRatio <= 0 ||
+    (affordableFeeRatio != null && affordableFeeRatio <= maxFeeRatio + 1e-12);
+  const efficient =
+    affordableShares >= minimumEfficientShares && feeRatioAllowed;
+  const shares = efficient || (allowInefficient && affordableShares >= lotSize) ? affordableShares : 0;
+  const estimatedAmount = Math.round(shares * quote * 100) / 100;
+  const fee = Math.round(estimatedTradeFee(estimatedAmount, tradingCost) * 100) / 100;
+  const totalCash = Math.round((estimatedAmount + fee) * 100) / 100;
+  const blockedReason =
+    shares > 0
+      ? null
+      : affordableShares < lotSize
+        ? "insufficient_lot"
+        : affordableShares < minimumEfficientShares
+          ? "fee_inefficient"
+          : !feeRatioAllowed
+            ? "fee_rate_exceeds_limit"
+            : null;
   return {
     shares,
     estimatedAmount,
-    cashRemainder: Math.max(0, budget - estimatedAmount),
+    fee,
+    totalCash,
+    feeRatioPct: estimatedAmount > 0 ? (fee / estimatedAmount) * 100 : null,
+    cashRemainder: Math.round(Math.max(0, budget - totalCash) * 100) / 100,
     lotSize,
+    minimumEfficientShares,
+    minimumEconomicAmount,
+    maxAffordableShares: affordableShares,
+    inefficient: shares > 0 && !efficient,
+    blockedReason,
+  };
+}
+
+/** 按买卖记录推算含手续费的平均成本（移动加权平均）。 */
+export function holdingFromTrades(buys = [], sells = [], symbol = "") {
+  const events = [
+    ...(buys || [])
+      .filter((item) => item?.symbol === symbol)
+      .map((item) => ({ ...item, side: "buy" })),
+    ...(sells || [])
+      .filter((item) => item?.symbol === symbol)
+      .map((item) => ({ ...item, side: "sell" })),
+  ].sort((left, right) => {
+    if (left.date !== right.date) return left.date < right.date ? -1 : 1;
+    return String(left.id || "").localeCompare(String(right.id || ""));
+  });
+  let shares = 0;
+  let costValue = 0;
+  let realizedPnl = 0;
+  for (const event of events) {
+    const qty = Math.max(0, Number(event.shares) || 0);
+    const price = Math.max(0, Number(event.price) || 0);
+    const fee = Math.max(0, Number(event.fee) || 0);
+    if (!(qty > 0) || !(price > 0)) continue;
+    if (event.side === "buy") {
+      costValue += price * qty + fee;
+      shares += qty;
+      continue;
+    }
+    if (!(shares > 0)) continue;
+    const sold = Math.min(shares, qty);
+    const avg = costValue / shares;
+    const proceeds = price * sold - fee * (sold / qty);
+    realizedPnl += proceeds - avg * sold;
+    costValue -= avg * sold;
+    shares -= sold;
+  }
+  const roundedShares = Math.round(shares * 1e4) / 1e4;
+  return {
+    shares: roundedShares,
+    cost: roundedShares > 0 ? Math.round((costValue / roundedShares) * 1e6) / 1e6 : 0,
+    costValue: Math.round(costValue * 100) / 100,
+    realizedPnl: Math.round(realizedPnl * 100) / 100,
   };
 }
 
@@ -180,4 +360,3 @@ export function returnCorrelation(leftPoints = [], rightPoints = []) {
   const denominator = Math.sqrt(leftVariance * rightVariance);
   return denominator > 0 ? { value: covariance / denominator, samples: pairs.length } : null;
 }
-

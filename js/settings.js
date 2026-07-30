@@ -46,8 +46,8 @@ export function renderSettings() {
     <div class="settings-ai">
       <div class="settings-ai-heading">
         <div>
-          <strong>AI 建议校正</strong>
-          <p class="muted">模型提出校正，最终金额仍由本地风控约束。</p>
+          <strong>AI 分析</strong>
+          <p class="muted">模型识别每只 ETF 的关键矛盾，最终金额仍由本地风控约束。</p>
         </div>
         <label class="config-toggle-control">
           <input type="checkbox" data-ai-key="enabled"${ai.enabled ? " checked" : ""} />
@@ -160,7 +160,7 @@ async function testAIConnection() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider }),
   });
-  settingsStatus(response.ok ? "连接成功，可以使用 AI 校正" : `连接失败：${await readApiError(response)}`);
+  settingsStatus(response.ok ? "连接成功，可以使用 AI 分析" : `连接失败：${await readApiError(response)}`);
 }
 
 export async function saveAppConfig({ quiet = false } = {}) {

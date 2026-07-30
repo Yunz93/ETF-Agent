@@ -4,6 +4,54 @@ import {
   normalizeStrategyId,
 } from "./strategy.js";
 
+export const DEFAULT_TRADING_COST = Object.freeze({
+  min_commission: 5,
+  commission_rate_pct: 0.03,
+  max_fee_ratio_pct: 0.25,
+  lot_size: 100,
+});
+
+function nonnegative(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+export function normalizeTradingCost(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    min_commission: nonnegative(source.min_commission, DEFAULT_TRADING_COST.min_commission),
+    commission_rate_pct: Math.min(
+      10,
+      nonnegative(source.commission_rate_pct, DEFAULT_TRADING_COST.commission_rate_pct),
+    ),
+    max_fee_ratio_pct: Math.min(
+      100,
+      nonnegative(source.max_fee_ratio_pct, DEFAULT_TRADING_COST.max_fee_ratio_pct),
+    ),
+    lot_size: Math.min(
+      100000,
+      Math.max(1, Math.round(nonnegative(source.lot_size, DEFAULT_TRADING_COST.lot_size))),
+    ),
+  };
+}
+
+function normalizePendingOrders(value) {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([symbol, row]) => /^\d{6}$/.test(symbol) && row && typeof row === "object")
+      .map(([symbol, row]) => [
+        symbol,
+        {
+          period: /^\d{4}-\d{2}-\d{2}$/.test(String(row.period || "")) ? String(row.period) : "",
+          carry: nonnegative(row.carry),
+          scheduled: nonnegative(row.scheduled),
+          remaining: nonnegative(row.remaining),
+        },
+      ]),
+  );
+}
+
 export function clampWeight(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return 0;
@@ -14,11 +62,16 @@ export function normalizePlan(plan) {
   const base = {
     name: "默认定投计划",
     amount: 2000,
+    capital_base: 0,
+    initial_target_pct: 0,
+    initial_build_completed_at: null,
     cadence: "monthly",
     day: 1,
     note: "",
     strategy: "valuation",
     strategy_config: normalizeStrategyConfig(null),
+    trading_cost: normalizeTradingCost(null),
+    pending_orders: {},
   };
   if (!plan || typeof plan !== "object") {
     return {
@@ -33,14 +86,25 @@ export function normalizePlan(plan) {
   if (cadence === "monthly") day = Math.min(28, Math.max(1, day));
   else day = Math.min(7, Math.max(1, day));
   const amount = Number(plan.amount);
+  const capitalBase = Number(plan.capital_base);
+  const initialTargetPct = Number(plan.initial_target_pct);
   return {
     name: String(plan.name || base.name).trim() || base.name,
     amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
+    capital_base: Number.isFinite(capitalBase) && capitalBase > 0 ? capitalBase : 0,
+    initial_target_pct:
+      Number.isFinite(initialTargetPct) && initialTargetPct > 0
+        ? Math.min(100, initialTargetPct)
+        : 0,
+    initial_build_completed_at:
+      String(plan.initial_build_completed_at || "").trim() || null,
     cadence,
     day,
     note: String(plan.note || "").trim(),
     strategy: normalizeStrategyId(plan.strategy),
     strategy_config: normalizeStrategyConfig(plan.strategy_config ?? plan.strategyConfig),
+    trading_cost: normalizeTradingCost(plan.trading_cost),
+    pending_orders: normalizePendingOrders(plan.pending_orders),
   };
 }
 
@@ -103,6 +167,7 @@ export function normalizeTrades(items = [], kind = "buy") {
       date,
       price: Math.round(price * 1e6) / 1e6,
       shares: Math.round(shares * 1e4) / 1e4,
+      fee: Math.round(nonnegative(item.fee) * 100) / 100,
       note: String(item.note || "").trim(),
     });
   }

@@ -35,6 +35,59 @@ def _clamp_weight(value):
     return round(number, 2)
 
 
+def _nonnegative_number(value, fallback=0):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return round(max(0, number), 6)
+
+
+def normalize_trading_cost(payload):
+    base = dict(DEFAULT_WORKSPACE["plan"]["trading_cost"])
+    source = payload if isinstance(payload, dict) else {}
+    min_commission = _nonnegative_number(
+        source.get("min_commission"), base["min_commission"]
+    )
+    commission_rate_pct = _nonnegative_number(
+        source.get("commission_rate_pct"), base["commission_rate_pct"]
+    )
+    max_fee_ratio_pct = _nonnegative_number(
+        source.get("max_fee_ratio_pct"), base["max_fee_ratio_pct"]
+    )
+    try:
+        lot_size = int(source.get("lot_size", base["lot_size"]))
+    except (TypeError, ValueError):
+        lot_size = base["lot_size"]
+    return {
+        "min_commission": min_commission,
+        "commission_rate_pct": min(10, commission_rate_pct),
+        "max_fee_ratio_pct": min(100, max_fee_ratio_pct),
+        "lot_size": min(100000, max(1, lot_size)),
+    }
+
+
+def normalize_pending_orders(payload):
+    if not isinstance(payload, dict):
+        return {}
+    result = {}
+    for raw_symbol, raw in payload.items():
+        digits = "".join(ch for ch in str(raw_symbol or "") if ch.isdigit())
+        symbol = digits.zfill(6)
+        if len(symbol) != 6 or not digits or not isinstance(raw, dict):
+            continue
+        period = str(raw.get("period") or "").strip()
+        if period and (len(period) != 10 or period[4] != "-" or period[7] != "-"):
+            period = ""
+        result[symbol] = {
+            "period": period,
+            "carry": _nonnegative_number(raw.get("carry")),
+            "scheduled": _nonnegative_number(raw.get("scheduled")),
+            "remaining": _nonnegative_number(raw.get("remaining")),
+        }
+    return result
+
+
 def normalize_etf_entry(item):
     if not isinstance(item, dict):
         return None
@@ -143,11 +196,18 @@ def normalize_plan(payload):
     return {
         "name": name,
         "amount": _positive_number(payload.get("amount")) or 0,
+        "capital_base": _nonnegative_number(payload.get("capital_base")),
+        "initial_target_pct": _clamp_weight(payload.get("initial_target_pct")),
+        "initial_build_completed_at": (
+            str(payload.get("initial_build_completed_at") or "").strip() or None
+        ),
         "cadence": cadence,
         "day": day,
         "note": str(payload.get("note") or "").strip(),
         "strategy": strategy,
         "strategy_config": normalize_strategy_config(raw_config),
+        "trading_cost": normalize_trading_cost(payload.get("trading_cost")),
+        "pending_orders": normalize_pending_orders(payload.get("pending_orders")),
     }
 
 
@@ -181,6 +241,7 @@ def normalize_trade_entry(item, kind="buy"):
         "date": date,
         "price": round(price, 6),
         "shares": round(shares, 4),
+        "fee": round(_nonnegative_number(item.get("fee")), 2),
         "note": str(item.get("note") or "").strip(),
     }
 
@@ -246,7 +307,7 @@ def normalize_workspace(payload):
     if isinstance(payload.get("prefs"), dict):
         workspace["prefs"] = payload["prefs"]
 
-    workspace["version"] = 5
+    workspace["version"] = 6
     workspace["updated_at"] = payload.get("updated_at") or as_of(None)
     return workspace
 

@@ -14,6 +14,7 @@ import {
   strategyLabel,
 } from "./strategy.js";
 import { buildPoolHoldingsForAllocation } from "./pool-alloc.js";
+import { planExecutionContext } from "./decision-support.js";
 
 export const STANCE = Object.freeze({
   NEED_BUDGET: "need_budget",
@@ -30,11 +31,12 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
   const strategy = normalizeStrategyId(activePlan.strategy);
   const strategyName = strategyLabel(strategy);
   const strategyConfig = activePlan.strategy_config;
-  const budget = Number(activePlan.amount);
   const poolHoldings =
     holdings ||
     buildPoolHoldingsForAllocation({ preferLive: preferLive || null });
   const holding = poolHoldings.find((item) => item.symbol === symbol) || null;
+  const execution = planExecutionContext({ plan: activePlan, holdings: poolHoldings });
+  const budget = execution.budget;
 
   const grid = dcaMultiplier({
     strategy,
@@ -48,6 +50,7 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
     holdings: poolHoldings,
     strategy,
     strategyConfig,
+    preferTargetGap: execution.phase === "initial",
   });
   const mine = symbol ? allocationForSymbol(pool, symbol) : null;
   const amount = mine?.amount ?? 0;
@@ -60,19 +63,25 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
   let reason;
   if (!(budget > 0)) {
     stance = STANCE.NEED_BUDGET;
-    headline = "先在定投计划设置「全池每期预算」";
-    reason = "未设置全池预算，无法给出执行金额";
+    headline =
+      execution.phase === "initial"
+        ? "先配置可投资总资金与初期目标仓位"
+        : "先在定投计划设置「全池每期预算」";
+    reason =
+      execution.phase === "initial"
+        ? "缺少建仓目标，无法计算建仓额度"
+        : "未设置全池预算，无法给出执行金额";
   } else if (pool.deployTotal <= 0) {
     stance = STANCE.HOLD_CASH;
     headline = "本期建议不投，保留现金";
     reason = pool.note || skipped?.reason || "当期均偏弱，建议留现金";
   } else if (amount > 0) {
     stance = STANCE.INVEST;
-    headline = `本期建议投入 ${money(amount)}`;
+    headline = `${execution.phase === "initial" ? "建议投入" : "本期建议投入"} ${money(amount)}`;
     reason = mine?.reason || `${grid.band} · ${grid.mult}×`;
   } else {
     stance = STANCE.SKIP;
-    headline = "本期本只不投";
+    headline = "本期不投";
     reason = skipped?.reason || "本期未分到额度";
   }
 
@@ -122,6 +131,7 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
     grade: holding?.grade || null,
     pePct: holding?.pePct ?? null,
     pool,
+    execution,
     mine,
     skipped,
     bullets,

@@ -90,13 +90,14 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(second["shares"], 0)
         self.assertEqual(second["cost"], 0)
         self.assertEqual(second["target_weight"], 100)
-        self.assertEqual(workspace["version"], 5)
+        self.assertEqual(workspace["version"], 6)
         self.assertEqual(workspace["plan"]["name"], "测试计划")
         self.assertEqual(workspace["plan"]["amount"], 3000)
         self.assertEqual(workspace["plan"]["cadence"], "weekly")
         self.assertEqual(workspace["plan"]["day"], 7)
         self.assertEqual(workspace["plan"]["strategy"], "valuation")
         self.assertEqual(len(workspace["plan"]["strategy_config"]["pe_bands"]), 5)
+        self.assertEqual(workspace["plan"]["trading_cost"]["min_commission"], 5)
 
     def test_plan_strategy_presets_and_custom_config(self):
         workspace = workspace_store.normalize_workspace(
@@ -138,7 +139,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
                 ],
             }
         )
-        self.assertEqual(workspace["version"], 5)
+        self.assertEqual(workspace["version"], 6)
         self.assertEqual(len(workspace["buys"]), 1)
         self.assertEqual(workspace["buys"][0]["symbol"], "510300")
         self.assertTrue(workspace_store.workspace_has_user_data(workspace))
@@ -178,7 +179,50 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(workspace["buys"][0]["shares"], 1000)
         self.assertEqual(workspace["buys"][1]["id"], "keep")
         self.assertEqual(workspace["buys"][1]["symbol"], "510300")
-        self.assertEqual(workspace["version"], 5)
+        self.assertEqual(workspace["version"], 6)
+
+    def test_plan_normalizes_initial_build_and_trading_cost(self):
+        plan = workspace_store.normalize_plan(
+            {
+                "amount": 5000,
+                "capital_base": 100000,
+                "initial_target_pct": 30,
+                "trading_cost": {
+                    "min_commission": 5,
+                    "commission_rate_pct": 0.025,
+                    "max_fee_ratio_pct": 0.2,
+                    "lot_size": 100,
+                },
+                "pending_orders": {
+                    "512890": {
+                        "period": "2026-07-01",
+                        "carry": 800,
+                        "scheduled": 1200,
+                        "remaining": 2000,
+                    }
+                },
+            }
+        )
+        self.assertEqual(plan["capital_base"], 100000)
+        self.assertEqual(plan["initial_target_pct"], 30)
+        self.assertEqual(plan["trading_cost"]["commission_rate_pct"], 0.025)
+        self.assertEqual(plan["pending_orders"]["512890"]["remaining"], 2000)
+
+    def test_trade_fee_is_preserved(self):
+        workspace = workspace_store.normalize_workspace(
+            {
+                "buys": [
+                    {
+                        "symbol": "510300",
+                        "date": "2026-07-28",
+                        "shares": 100,
+                        "price": 4.2,
+                        "fee": 5,
+                    }
+                ]
+            }
+        )
+        self.assertEqual(workspace["buys"][0]["fee"], 5)
 
     def test_sell_records_are_normalized_without_affecting_buys(self):
         workspace = workspace_store.normalize_workspace(

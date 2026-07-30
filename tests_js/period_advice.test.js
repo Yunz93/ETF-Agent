@@ -75,7 +75,7 @@ test("period advice skips one name without inventing a buy when others deploy", 
   assert.equal(advice.stance, STANCE.SKIP);
   assert.equal(advice.amount, 0);
   assert.equal(advice.canAdd, false);
-  assert.match(advice.headline, /本只不投/);
+  assert.match(advice.headline, /本期不投/);
 });
 
 test("period advice asks for budget before inventing amounts", () => {
@@ -86,4 +86,28 @@ test("period advice asks for budget before inventing amounts", () => {
   });
   assert.equal(advice.stance, STANCE.NEED_BUDGET);
   assert.match(advice.headline, /全池每期预算/);
+});
+
+test("period advice uses initial build gap instead of recurring budget", () => {
+  const advice = getPeriodAdvice({
+    symbol: "512890",
+    plan: {
+      amount: 5000,
+      capital_base: 100000,
+      initial_target_pct: 30,
+      strategy: "fixed",
+    },
+    holdings: [
+      {
+        symbol: "512890",
+        targetWeight: 100,
+        actualWeight: 100,
+        marketValue: 10000,
+      },
+    ],
+  });
+  assert.equal(advice.execution.phase, "initial");
+  assert.equal(advice.pool.budget, 20000);
+  assert.equal(advice.amount, 20000);
+  assert.match(advice.headline, /建议投入/);
 });

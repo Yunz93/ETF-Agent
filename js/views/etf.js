@@ -5,7 +5,8 @@ import { drawPriceChart, buyEventMarkers, sellEventMarkers } from "../chart.js";
 import { setSourceStatus } from "../navigation.js";
 import { persistWorkspace } from "../workspace.js";
 import { poolAllocationHtml } from "../pool-alloc.js";
-import { upsertBuy, upsertSell } from "../workspace_model.js";
+import { normalizeTradingCost, upsertBuy, upsertSell } from "../workspace_model.js";
+import { estimatedTradeFee, holdingFromTrades, planExecutionContext } from "../decision-support.js";
 import { openAnalysis, registerRenderers } from "./render.js";
 import {
   DEFAULT_STRATEGY_CONFIG,
@@ -244,8 +245,18 @@ function readCustomStrategyConfigFromForm() {
 
 function syncPlanForm() {
   const plan = state.plan || {};
+  const tradingCost = normalizeTradingCost(plan.trading_cost);
   if (els.planName) els.planName.value = plan.name || "";
   if (els.planAmount) els.planAmount.value = plan.amount > 0 ? plan.amount : "";
+  if (els.planCapitalBase) els.planCapitalBase.value = plan.capital_base > 0 ? plan.capital_base : "";
+  if (els.planInitialTargetPct) {
+    els.planInitialTargetPct.value = plan.initial_target_pct > 0 ? plan.initial_target_pct : "";
+  }
+  if (els.planInitialCompleted) els.planInitialCompleted.checked = Boolean(plan.initial_build_completed_at);
+  if (els.planMinCommission) els.planMinCommission.value = tradingCost.min_commission;
+  if (els.planCommissionRatePct) els.planCommissionRatePct.value = tradingCost.commission_rate_pct;
+  if (els.planMaxFeeRatioPct) els.planMaxFeeRatioPct.value = tradingCost.max_fee_ratio_pct;
+  if (els.planLotSize) els.planLotSize.value = tradingCost.lot_size;
   if (els.planCadence) els.planCadence.value = plan.cadence || "monthly";
   if (els.planDay) {
     els.planDay.value = plan.day || 1;
@@ -260,6 +271,28 @@ function syncPlanForm() {
   if (els.planStrategyHint) els.planStrategyHint.textContent = strategySummary(strategy);
   if (els.planStrategyCustom) els.planStrategyCustom.hidden = strategy !== "custom";
   syncCustomStrategyForm(plan.strategy_config);
+  renderInitialSummary();
+}
+
+function currentPlanHoldings() {
+  return state.etfs.map((entry) => {
+    const price = Number(state.quotesBySymbol[entry.symbol]?.price);
+    return {
+      marketValue: price > 0 && entry.shares > 0 ? price * entry.shares : 0,
+    };
+  });
+}
+
+function renderInitialSummary() {
+  if (!els.planInitialSummary) return;
+  const execution = planExecutionContext({ plan: state.plan, holdings: currentPlanHoldings() });
+  if (!execution.configured) {
+    els.planInitialSummary.textContent = "填写总资金与目标仓位后计算建仓额度";
+    return;
+  }
+  const status = execution.markedComplete || execution.reached ? "已完成" : `尚缺 ${money(execution.initialGap)}`;
+  els.planInitialSummary.textContent =
+    `目标 ${money(execution.targetAmount)} · 当前 ${money(execution.currentValue)} · ${status}`;
 }
 
 export function readPlanFormIntoState() {
@@ -270,6 +303,8 @@ export function readPlanFormIntoState() {
   if (cadence === "monthly") day = Math.min(28, Math.max(1, day));
   else day = Math.min(7, Math.max(1, day));
   const amount = Number(els.planAmount?.value);
+  const capitalBase = Number(els.planCapitalBase?.value);
+  const initialTargetPct = Number(els.planInitialTargetPct?.value);
   const strategy = normalizeStrategyId(els.planStrategy?.value);
   const previousConfig = state.plan.strategy_config;
   const strategy_config =
@@ -277,11 +312,26 @@ export function readPlanFormIntoState() {
   state.plan = {
     name: String(els.planName?.value || "").trim() || "默认定投计划",
     amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
+    capital_base: Number.isFinite(capitalBase) && capitalBase > 0 ? capitalBase : 0,
+    initial_target_pct:
+      Number.isFinite(initialTargetPct) && initialTargetPct > 0
+        ? Math.min(100, initialTargetPct)
+        : 0,
+    initial_build_completed_at: els.planInitialCompleted?.checked
+      ? state.plan.initial_build_completed_at || new Date().toISOString()
+      : null,
     cadence,
     day,
     note: String(els.planNote?.value || "").trim(),
     strategy,
     strategy_config,
+    trading_cost: normalizeTradingCost({
+      min_commission: els.planMinCommission?.value,
+      commission_rate_pct: els.planCommissionRatePct?.value,
+      max_fee_ratio_pct: els.planMaxFeeRatioPct?.value,
+      lot_size: els.planLotSize?.value,
+    }),
+    pending_orders: state.plan.pending_orders || {},
   };
   if (els.planDay) {
     els.planDay.max = cadence === "monthly" ? "28" : "7";
@@ -292,6 +342,7 @@ export function readPlanFormIntoState() {
   }
   if (els.planStrategyHint) els.planStrategyHint.textContent = strategySummary(strategy);
   if (els.planStrategyCustom) els.planStrategyCustom.hidden = strategy !== "custom";
+  renderInitialSummary();
 }
 
 function renderMetrics() {
@@ -300,10 +351,16 @@ function renderMetrics() {
   const pnl = totalCost ? totalValue - totalCost : null;
   const pnlPct = totalCost ? ((totalValue - totalCost) / totalCost) * 100 : null;
   const targetClass = Math.abs(targetSum - 100) < 0.05 ? "" : targetSum > 100.05 ? "down" : "up";
+  const capitalBase = Math.max(0, Number(state.plan?.capital_base) || 0);
+  const poolPositionPct = capitalBase > 0 && totalValue > 0 ? (totalValue / capitalBase) * 100 : null;
   const cards = [
     ["计划内 ETF", `${state.etfs.length} 只 · 持仓 ${held}`],
-    ["目标合计", `<span class="${targetClass}">${targetSum.toFixed(1)}%</span>`],
+    ["配置目标合计", `<span class="${targetClass}">${targetSum.toFixed(1)}%</span>`],
     ["组合市值", totalValue ? money(totalValue) : "—"],
+    [
+      "ETF 池总仓位",
+      poolPositionPct != null ? `${poolPositionPct.toFixed(1)}%` : capitalBase > 0 ? "0%" : "需填总资金",
+    ],
     ["浮盈亏", pnl != null ? `${money(pnl)}（${signed(pnlPct, 1)}%）` : "—"],
   ];
   els.etfMetrics.innerHTML = cards
@@ -327,14 +384,16 @@ function renderRows() {
   }
   if (els.etfEmpty) els.etfEmpty.hidden = true;
   const { totalValue } = portfolioTotals();
+  const capitalBase = Math.max(0, Number(state.plan?.capital_base) || 0);
   els.etfRows.innerHTML = state.etfs
     .map((entry) => {
       const { quote, price, value, pnl, pnlPct } = entryMetrics(entry);
       const change = quote?.change_pct;
       const changeClass = change > 0 ? "up" : change < 0 ? "down" : "";
-      const actualWeight = value != null && totalValue ? (value / totalValue) * 100 : null;
+      const poolWeight = value != null && totalValue ? (value / totalValue) * 100 : null;
+      const assetWeight = value != null && capitalBase > 0 ? (value / capitalBase) * 100 : null;
       const target = Number(entry.target_weight) || 0;
-      const drift = actualWeight != null ? actualWeight - target : null;
+      const drift = poolWeight != null ? poolWeight - target : null;
       const driftClass = drift != null ? (drift > 0.5 ? "up" : drift < -0.5 ? "down" : "") : "";
       const selected = state.selectedEtf === entry.symbol;
       const fullIndex = analysisIsFullIndex(appConfig, entry.symbol);
@@ -352,15 +411,16 @@ function renderRows() {
           <td class="num">${price != null ? price.toFixed(3) : "—"}</td>
           <td class="num ${changeClass}">${change != null ? `${signed(change)}%` : "—"}</td>
           <td class="num etf-input-cell">
-            <input type="number" min="0" max="100" step="any" value="${target || ""}" placeholder="0" data-field="target_weight" data-symbol="${escapeAttr(entry.symbol)}" aria-label="目标仓位" />
+            <input type="number" min="0" max="100" step="any" value="${target || ""}" placeholder="0" data-field="target_weight" data-symbol="${escapeAttr(entry.symbol)}" aria-label="配置目标权重" />
           </td>
-          <td class="num">${actualWeight != null ? `${actualWeight.toFixed(1)}%` : "—"}</td>
+          <td class="num" title="池内权重">${poolWeight != null ? `${poolWeight.toFixed(1)}%` : "—"}</td>
+          <td class="num" title="占总资金">${assetWeight != null ? `${assetWeight.toFixed(1)}%` : "—"}</td>
           <td class="num ${driftClass}">${drift != null ? `${signed(drift, 1)}` : "—"}</td>
           <td class="num etf-input-cell">
             <input type="number" min="0" step="any" value="${entry.shares || ""}" placeholder="0" data-field="shares" data-symbol="${escapeAttr(entry.symbol)}" aria-label="持有份额" />
           </td>
           <td class="num etf-input-cell">
-            <input type="number" min="0" step="any" value="${entry.cost || ""}" placeholder="0" data-field="cost" data-symbol="${escapeAttr(entry.symbol)}" aria-label="成本价" />
+            <input type="number" min="0" step="any" value="${entry.cost || ""}" placeholder="0" data-field="cost" data-symbol="${escapeAttr(entry.symbol)}" aria-label="含费成本价" />
           </td>
           <td class="num">${value != null ? money(value) : "—"}</td>
           <td class="num ${pnl > 0 ? "up" : pnl < 0 ? "down" : ""}">${
@@ -566,6 +626,8 @@ export function renderBuys() {
       const quote = state.quotesBySymbol[trade.symbol];
       const name = entry?.name || quote?.name || trade.symbol;
       const amount = trade.price * trade.shares;
+      const fee = Math.max(0, Number(trade.fee) || 0);
+      const cashImpact = trade.type === "sell" ? amount - fee : amount + fee;
       const editing = editingTrade?.id === trade.id && editingTrade?.type === trade.type;
       return `
         <tr data-trade-id="${escapeAttr(trade.id)}" class="${editing ? "is-editing" : ""}">
@@ -578,6 +640,8 @@ export function renderBuys() {
           <td class="num">${money(trade.price)}</td>
           <td class="num">${trade.shares}</td>
           <td class="num">${money(amount)}</td>
+          <td class="num">${money(fee)}</td>
+          <td class="num">${money(cashImpact)}</td>
           <td>${escapeHtml(trade.note || "—")}</td>
           <td class="num">
             <span class="buy-row-actions">
@@ -601,10 +665,16 @@ export function renderBuys() {
       const type = button.dataset.tradeType;
       const id = button.dataset.removeTrade;
       if (editingTrade?.id === id && editingTrade?.type === type) cancelBuyEdit();
+      const collection = type === "sell" ? state.sells : state.buys;
+      const removed = (collection || []).find((item) => item.id === id);
       if (type === "sell") state.sells = (state.sells || []).filter((item) => item.id !== id);
       else state.buys = (state.buys || []).filter((item) => item.id !== id);
+      if (removed?.symbol) syncHoldingFromTrades(removed.symbol);
       persistWorkspace();
       renderBuys();
+      renderMetrics();
+      renderRows();
+      renderSidebarEtfs();
       if (state.selectedEtf) selectEtfChart(state.selectedEtf);
       if (els.buyFormStatus) els.buyFormStatus.textContent = `已删除${type === "sell" ? "卖出" : "买入"}记录`;
     });
@@ -621,6 +691,7 @@ function startBuyEdit(type, id) {
   if (els.buyDate) els.buyDate.value = trade.date;
   if (els.buyPrice) els.buyPrice.value = String(trade.price);
   if (els.buyShares) els.buyShares.value = String(trade.shares);
+  if (els.buyFee) els.buyFee.value = trade.fee > 0 ? String(trade.fee) : "";
   if (els.buyNote) els.buyNote.value = trade.note || "";
   if (els.buySubmit) els.buySubmit.textContent = "保存修改";
   if (els.buyCancelEdit) els.buyCancelEdit.hidden = false;
@@ -635,9 +706,21 @@ export function cancelBuyEdit() {
   if (els.buyCancelEdit) els.buyCancelEdit.hidden = true;
   if (els.buyPrice) els.buyPrice.value = "";
   if (els.buyShares) els.buyShares.value = "";
+  if (els.buyFee) els.buyFee.value = "";
   if (els.buyNote) els.buyNote.value = "";
   if (els.buyFormStatus) els.buyFormStatus.textContent = "";
   renderBuys();
+}
+
+function syncHoldingFromTrades(symbol) {
+  const entry = state.etfs.find((item) => item.symbol === symbol);
+  if (!entry) return;
+  const derived = holdingFromTrades(state.buys, state.sells, symbol);
+  const hasTrades = (state.buys || []).some((item) => item.symbol === symbol)
+    || (state.sells || []).some((item) => item.symbol === symbol);
+  if (!hasTrades) return;
+  entry.shares = derived.shares;
+  entry.cost = derived.cost;
 }
 
 function newTradeId(type, symbol, date) {
@@ -650,6 +733,7 @@ export function addBuyRecord() {
   const date = String(els.buyDate?.value || "").trim();
   const price = Number(els.buyPrice?.value);
   const shares = Number(els.buyShares?.value);
+  const feeInput = Number(els.buyFee?.value);
   const note = String(els.buyNote?.value || "").trim();
   if (!symbol) {
     if (els.buyFormStatus) els.buyFormStatus.textContent = "请选择 ETF";
@@ -668,6 +752,10 @@ export function addBuyRecord() {
     return;
   }
   const wasEditing = Boolean(editingTrade);
+  const previousSymbol = editingTrade
+    ? ((editingTrade.type === "sell" ? state.sells : state.buys).find((item) => item.id === editingTrade.id) || {})
+        .symbol
+    : null;
   if (editingTrade) {
     if (editingTrade.type === "sell") state.sells = state.sells.filter((item) => item.id !== editingTrade.id);
     else state.buys = state.buys.filter((item) => item.id !== editingTrade.id);
@@ -678,22 +766,34 @@ export function addBuyRecord() {
     date,
     price,
     shares,
+    fee:
+      Number.isFinite(feeInput) && feeInput >= 0 && els.buyFee?.value !== ""
+        ? feeInput
+        : estimatedTradeFee(price * shares, state.plan?.trading_cost),
     note,
   };
   if (type === "sell") state.sells = upsertSell(state.sells, record);
   else state.buys = upsertBuy(state.buys, record);
+  syncHoldingFromTrades(symbol);
+  if (previousSymbol && previousSymbol !== symbol) syncHoldingFromTrades(previousSymbol);
   editingTrade = null;
   persistWorkspace();
   if (els.buySubmit) els.buySubmit.textContent = type === "sell" ? "添加卖出" : "添加买入";
   if (els.buyCancelEdit) els.buyCancelEdit.hidden = true;
   if (els.buyPrice) els.buyPrice.value = "";
   if (els.buyShares) els.buyShares.value = "";
+  if (els.buyFee) els.buyFee.value = "";
   if (els.buyNote) els.buyNote.value = "";
   renderBuys();
+  renderMetrics();
+  renderRows();
+  renderSidebarEtfs();
   if (state.selectedEtf) selectEtfChart(state.selectedEtf);
   if (els.buyFormStatus) {
     const label = type === "sell" ? "卖出" : "买入";
-    els.buyFormStatus.textContent = wasEditing ? `已更新 ${symbol} ${date} 的${label}记录` : `已记录 ${symbol} ${date} ${label}`;
+    els.buyFormStatus.textContent = wasEditing
+      ? `已更新 ${symbol} ${date} 的${label}记录，并同步含费成本`
+      : `已记录 ${symbol} ${date} ${label}，并同步含费成本`;
   }
 }
 
@@ -701,6 +801,13 @@ export async function renderEtfPool({ refresh = false } = {}) {
   if (!els.etfRows) return;
   syncPlanForm();
   await refreshQuotes(refresh);
+  const execution = planExecutionContext({ plan: state.plan, holdings: currentPlanHoldings() });
+  if (execution.reached && !state.plan.initial_build_completed_at) {
+    state.plan.initial_build_completed_at = new Date().toISOString();
+    persistWorkspace();
+    if (els.planInitialCompleted) els.planInitialCompleted.checked = true;
+  }
+  renderInitialSummary();
   renderMetrics();
   renderPoolAllocation();
   renderRows();

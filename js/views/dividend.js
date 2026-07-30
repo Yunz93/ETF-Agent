@@ -1,19 +1,22 @@
 import { els, state, appConfig } from "../state.js";
-import { escapeHtml, money, signed } from "../utils.js";
+import { escapeAttr, escapeHtml, money, signed } from "../utils.js";
 import { analysisSupported, INDEX_CHART_RANGE_WINDOWS, INDEX_CHART_RANGE_LABELS } from "../constants.js";
 import { getPeriodAdvice, STANCE } from "../period-advice.js";
 import { drawPriceChart, buyEventMarkers, sellEventMarkers } from "../chart.js";
 import {
   cycleExecution,
   orderPreview,
+  pendingOrderState,
   projectedPosition,
   returnCorrelation,
   riskMetrics,
 } from "../decision-support.js";
 import { callRenderer, registerRenderers } from "./render.js";
+import { persistWorkspace } from "../workspace.js";
 
 const loadingByKey = new Map();
 let indexChartBound = false;
+const forceInefficientBySymbol = new Set();
 
 const GRADE_TONES = { A: "grade-a", B: "grade-b", C: "grade-c", D: "grade-d", E: "grade-e" };
 
@@ -200,7 +203,7 @@ function metricsHtml() {
   const change = etf.price != null ? etf.change_pct : index.change_pct;
   const priceDigits = etf.price != null ? 3 : 2;
   const priceSub = etf.price != null
-    ? `${escapeHtml(etf.symbol_name || etf.name || "ETF")} ${escapeHtml(etf.symbol || "")} · 指数 ${fmt(index.close, 2)}`
+    ? `指数 ${fmt(index.close, 2)}`
     : "指数收盘（中证指数官网）";
   const changeClass = change > 0 ? "up" : change < 0 ? "down" : "";
   const pePct = valuation.pe_percentile_10y;
@@ -271,25 +274,51 @@ function aiListHtml(items, empty = "暂无") {
   return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
 }
 
+function aiAnalysisSectionsHtml(proposal) {
+  const dynamicSections = Array.isArray(proposal.analysis_sections)
+    ? proposal.analysis_sections.filter((section) => section?.title && Array.isArray(section.items) && section.items.length)
+    : [];
+  const fallbackSections = [
+    { title: "有利条件", items: proposal.supporting_factors },
+    { title: "主要约束", items: proposal.risks },
+  ].filter((section) => Array.isArray(section.items) && section.items.length);
+  const sections = dynamicSections.length ? dynamicSections : fallbackSections;
+  if (!sections.length) return "";
+  return `
+    <div class="ai-review-details" data-section-count="${sections.length}">
+      ${sections
+        .map(
+          (section) => `
+            <div>
+              <h3>${escapeHtml(section.title)}</h3>
+              ${aiListHtml(section.items)}
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function aiReviewHtml(advice, context) {
   const enabled = appConfig?.ai?.enabled === true;
   const review = currentAIReview();
   if (!enabled) {
     return `
-      <section class="panel-block ai-review-card is-disabled" aria-label="AI 建议校正">
+      <section class="panel-block ai-review-card is-disabled" aria-label="AI 分析">
         <div class="panel-heading">
-          <div><h2 class="section-title">AI 建议校正</h2></div>
+          <div><h2 class="section-title">AI 分析</h2></div>
           <span class="muted">未启用</span>
         </div>
-        <p class="muted">可在设置中配置 DeepSeek 或 OpenAI。模型只有提案权，最终金额受本地风控约束。</p>
+        <p class="muted ai-review-status">可在设置中配置 DeepSeek 或 OpenAI。模型负责识别关键矛盾，最终金额受本地风控约束。</p>
       </section>
     `;
   }
   if (review?.status === "loading") {
     return `
       <section class="panel-block ai-review-card is-loading" aria-live="polite">
-        <div class="panel-heading"><div><h2 class="section-title">AI 建议校正</h2></div></div>
-        <p class="muted">正在复核规则建议与当前数据，请稍候…</p>
+        <div class="panel-heading"><div><h2 class="section-title">AI 分析</h2></div></div>
+        <p class="muted ai-review-status">正在识别本只 ETF 的关键矛盾，请稍候…</p>
       </section>
     `;
   }
@@ -297,11 +326,11 @@ function aiReviewHtml(advice, context) {
     return `
       <section class="panel-block ai-review-card is-error">
         <div class="panel-heading">
-          <div><h2 class="section-title">AI 建议校正</h2></div>
+          <div><h2 class="section-title">AI 分析</h2></div>
           <button class="ghost-button compact" data-ai-review type="button">重试</button>
         </div>
-        <p class="down">${escapeHtml(review.error)}</p>
-        <p class="muted">规则建议保持有效，AI 失败不会改变本期结论。</p>
+        <p class="down ai-review-status">${escapeHtml(review.error)}</p>
+        <p class="muted ai-review-status">规则建议保持有效，AI 失败不会改变本期结论。</p>
       </section>
     `;
   }
@@ -311,12 +340,12 @@ function aiReviewHtml(advice, context) {
       <section class="panel-block ai-review-card">
         <div class="panel-heading">
           <div>
-            <h2 class="section-title">AI 建议校正</h2>
-            <p class="muted">复核规则盲点，不自动修改持仓或长期策略。</p>
+            <h2 class="section-title">AI 分析</h2>
+            <p class="muted">识别本只 ETF 当前最值得决策的矛盾。</p>
           </div>
-          <button class="primary-button compact" data-ai-review type="button">开始校正</button>
+          <button class="primary-button compact" data-ai-review type="button">开始分析</button>
         </div>
-        <p class="muted">将发送估值、技术面、数据质量、仓位比例和本期规则建议；不发送账户凭证。</p>
+        <p class="muted ai-review-status">将分析跟踪标的、估值、趋势、交易质量、仓位和本期计划；不发送账户凭证。</p>
       </section>
     `;
   }
@@ -333,30 +362,33 @@ function aiReviewHtml(advice, context) {
     pause: "暂停",
   };
   const confidenceLabels = { low: "低", medium: "中", high: "高" };
+  const focusTitle = proposal.focus_title || proposal.summary || "当前决策重点";
+  const watchItems = [...(proposal.watch_items || []), ...(proposal.conditions_to_reverse || [])];
   return `
-    <section class="panel-block ai-review-card" aria-label="AI 建议校正">
+    <section class="panel-block ai-review-card" aria-label="AI 分析">
       <div class="panel-heading">
         <div>
-          <h2 class="section-title">AI 建议校正</h2>
+          <h2 class="section-title">AI 分析</h2>
           <p class="muted">${escapeHtml(result.provider)} · ${escapeHtml(result.model)}${result.cached ? " · 缓存" : ""}</p>
         </div>
-        <button class="ghost-button compact" data-ai-review data-force="true" type="button">重新生成</button>
+        <button class="ghost-button compact" data-ai-review data-force="true" type="button">重新分析</button>
       </div>
       <div class="ai-review-summary">
         <div><span>规则剩余额度</span><strong>${money(baselineAmount)}</strong></div>
-        <div><span>AI 提案</span><strong>${escapeHtml(actionLabels[proposal.action] || proposal.action)} · ${fmt(policy.accepted_multiplier, 2)}×</strong></div>
-        <div><span>校正后额度</span><strong>${money(correctedAmount)}</strong></div>
+        <div><span>AI 判断</span><strong>${escapeHtml(actionLabels[proposal.action] || proposal.action)} · ${fmt(policy.accepted_multiplier, 2)}×</strong></div>
+        <div><span>风控后额度</span><strong>${money(correctedAmount)}</strong></div>
         <div><span>可信度</span><strong>${escapeHtml(confidenceLabels[proposal.confidence] || "—")}</strong></div>
       </div>
-      <p class="ai-review-headline">${escapeHtml(proposal.summary || "模型未提供摘要")}</p>
-      <div class="ai-review-details">
-        <div><h3>支持因素</h3>${aiListHtml(proposal.supporting_factors)}</div>
-        <div><h3>风险</h3>${aiListHtml(proposal.risks)}</div>
-        <div><h3>观察与反转条件</h3>${aiListHtml([...(proposal.watch_items || []), ...(proposal.conditions_to_reverse || [])])}</div>
+      <div class="ai-review-focus">
+        <span>本只重点</span>
+        <strong>${escapeHtml(focusTitle)}</strong>
       </div>
-      <p class="muted">风控裁决：${escapeHtml((policy.reasons || []).join("；"))}</p>
+      <p class="ai-review-headline">${escapeHtml(proposal.summary || "模型未提供摘要")}</p>
+      ${aiAnalysisSectionsHtml(proposal)}
+      ${watchItems.length ? `<div class="ai-review-watch"><strong>后续观察</strong>${aiListHtml(watchItems)}</div>` : ""}
+      <p class="muted">本地风控：${escapeHtml((policy.reasons || []).join("；"))}</p>
       <div class="ai-review-choice" role="group" aria-label="选择本期参考建议">
-        <button class="${useCorrection ? "primary-button" : "ghost-button"} compact" data-ai-choice="corrected" type="button">采用本期校正</button>
+        <button class="${useCorrection ? "primary-button" : "ghost-button"} compact" data-ai-choice="corrected" type="button">采用 AI 分析</button>
         <button class="${useCorrection ? "ghost-button" : "primary-button"} compact" data-ai-choice="baseline" type="button">保持规则建议</button>
         <strong>当前参考：${money(displayedAmount)}</strong>
       </div>
@@ -393,6 +425,8 @@ async function requestAIReview({ force = false } = {}) {
           projected_weight: context.position.projectedWeight,
           blocked: context.position.blocked,
           would_exceed: context.position.wouldExceed,
+          execution_phase: advice.execution?.phase,
+          execution_budget: context.cycle.remainingAmount,
         },
       }),
     });
@@ -410,14 +444,37 @@ function decisionContext(advice) {
   const symbol = state.analysisSymbol || payload.symbol || payload.etf?.symbol || "";
   const entry = state.etfs.find((item) => item.symbol === symbol) || null;
   const price = payload.etf?.price != null ? Number(payload.etf.price) : Number(payload.index?.close);
-  const cycle = cycleExecution({
+  const pending = pendingOrderState({
     plan: state.plan,
     buys: state.buys,
     symbol,
     recommendedAmount: advice?.amount || 0,
   });
+  if (pending?.changed) {
+    state.plan.pending_orders = {
+      ...(state.plan.pending_orders || {}),
+      [symbol]: {
+        period: pending.period,
+        carry: pending.carry,
+        scheduled: pending.scheduled,
+        remaining: pending.remaining,
+      },
+    };
+    persistWorkspace();
+  }
+  const availableAmount = (pending?.carry || 0) + (pending?.scheduled || 0);
+  const cycle = cycleExecution({
+    plan: state.plan,
+    buys: state.buys,
+    symbol,
+    recommendedAmount: availableAmount,
+  });
   const executableAmount = advice?.canAdd ? cycle.remainingAmount : 0;
-  const order = orderPreview(executableAmount, price);
+  const allowInefficient = forceInefficientBySymbol.has(symbol);
+  const order = orderPreview(executableAmount, price, {
+    ...(state.plan?.trading_cost || {}),
+    allowInefficient,
+  });
   let portfolioValue = 0;
   state.etfs.forEach((item) => {
     const itemPrice =
@@ -427,6 +484,7 @@ function decisionContext(advice) {
     if (itemPrice > 0 && item.shares > 0) portfolioValue += itemPrice * item.shares;
   });
   const currentValue = entry && price > 0 ? entry.shares * price : 0;
+  const capitalBase = Math.max(0, Number(state.plan?.capital_base) || 0);
   const position = projectedPosition({
     currentValue,
     portfolioValue,
@@ -449,10 +507,13 @@ function decisionContext(advice) {
     entry,
     price,
     cycle,
+    pending,
     order,
     position,
     portfolioValue,
     currentValue,
+    capitalBase,
+    assetPositionPct: capitalBase > 0 && currentValue > 0 ? (currentValue / capitalBase) * 100 : null,
     risk,
     strongestCorrelation: correlations[0] || null,
   };
@@ -468,34 +529,69 @@ const CYCLE_STATUS_LABELS = {
 };
 
 function executionPanelHtml(advice, context) {
-  const { cycle, order, position } = context;
+  const { cycle, order, position, pending, symbol } = context;
+  const initial = advice?.execution?.phase === "initial";
   const lastBuyText = cycle.lastBuy
     ? `${cycle.lastBuy.date} · ${Number(cycle.lastBuy.price).toFixed(3)}`
     : "暂无记录";
+  const forcedPreview =
+    order.shares <= 0 && order.maxAffordableShares >= order.lotSize
+      ? orderPreview(cycle.remainingAmount, context.price, {
+          ...(state.plan?.trading_cost || {}),
+          allowInefficient: true,
+        })
+      : null;
   const action =
     position.blocked || position.wouldExceed
       ? "暂停新增，先恢复仓位约束"
       : cycle.status === "completed"
         ? "本期已完成，避免重复买入"
         : order.shares > 0
-          ? `可买 ${order.shares.toLocaleString("zh-CN")} 份`
-          : advice.amount > 0
-            ? "预算不足 100 份，保留现金"
-            : "本期不下单";
+          ? `${order.inefficient ? "仍可买" : "可买"} ${order.shares.toLocaleString("zh-CN")} 份`
+          : order.blockedReason === "fee_inefficient"
+            ? "额度不足，累计至下期"
+            : order.blockedReason === "fee_rate_exceeds_limit"
+              ? "佣金费率高于设定上限，请调整成本参数"
+            : advice.amount > 0
+              ? `不足 ${order.lotSize} 份，继续累计`
+              : "本期不下单";
   return `
     <div class="decision-execution" aria-label="本期执行状态">
       <div class="decision-execution-head">
         <strong>${escapeHtml(action)}</strong>
-        <span>${escapeHtml(CYCLE_STATUS_LABELS[cycle.status] || cycle.status)}</span>
+        <span>${initial ? "初期建仓" : escapeHtml(CYCLE_STATUS_LABELS[cycle.status] || cycle.status)}</span>
       </div>
       <dl class="decision-execution-grid">
-        <div><dt>计划执行日</dt><dd>${escapeHtml(cycle.scheduled)}</dd></div>
-        <div><dt>本期已买</dt><dd>${money(cycle.executedAmount)}</dd></div>
-        <div><dt>剩余额度</dt><dd>${money(cycle.remainingAmount)}</dd></div>
-        <div><dt>预计成交</dt><dd>${order.shares > 0 ? money(order.estimatedAmount) : "—"}</dd></div>
+        <div><dt>当前阶段</dt><dd>${initial ? "初期建仓" : "周期定投"}</dd></div>
+        <div><dt>${initial ? "建仓目标" : "计划执行日"}</dt><dd>${initial ? money(advice.execution.targetAmount) : escapeHtml(cycle.scheduled)}</dd></div>
+        <div><dt>${initial ? "当前仓位" : "本期已买"}</dt><dd>${initial ? fmt(advice.execution.currentPositionPct, 1, "%") : money(cycle.executedAmount)}</dd></div>
+        <div><dt>本阶段可用</dt><dd>${money(cycle.remainingAmount)}</dd></div>
+        <div><dt>待执行累计</dt><dd>${money(pending?.carry || 0)}</dd></div>
+        <div><dt>建议成交份额</dt><dd>${order.shares > 0 ? `${order.shares.toLocaleString("zh-CN")} 份` : "—"}</dd></div>
+        <div><dt>成交金额</dt><dd>${order.shares > 0 ? money(order.estimatedAmount) : "—"}</dd></div>
+        <div><dt>预计手续费</dt><dd>${order.shares > 0 ? money(order.fee) : "—"}</dd></div>
+        <div><dt>实际占用资金</dt><dd>${order.shares > 0 ? money(order.totalCash) : "—"}</dd></div>
+        <div><dt>手续费占比</dt><dd>${
+          order.feeRatioPct != null
+            ? `${fmt(order.feeRatioPct, 3)}%${order.inefficient ? " · 高于效率阈值" : ""}`
+            : "—"
+        }</dd></div>
         <div><dt>取整余款</dt><dd>${money(order.cashRemainder)}</dd></div>
         <div><dt>最近买入</dt><dd>${escapeHtml(lastBuyText)}</dd></div>
       </dl>
+      ${
+        order.blockedReason === "fee_inefficient" && forcedPreview?.shares > 0
+          ? `<div class="decision-execution-force">
+              <p class="muted">达到经济性最小 ${order.minimumEfficientShares.toLocaleString("zh-CN")} 份前默认累计。若仍买入 ${forcedPreview.shares.toLocaleString("zh-CN")} 份，手续费占比约 ${fmt(forcedPreview.feeRatioPct, 3)}%。</p>
+              <button class="ghost-button compact" type="button" data-force-inefficient="${escapeAttr(symbol)}">仍然买入</button>
+            </div>`
+          : order.inefficient
+            ? `<div class="decision-execution-force">
+                <p class="muted">已选择仍然买入；手续费占比高于设定效率阈值。</p>
+                <button class="ghost-button compact" type="button" data-clear-force-inefficient="${escapeAttr(symbol)}">改回累计</button>
+              </div>`
+            : ""
+      }
     </div>
   `;
 }
@@ -534,7 +630,7 @@ function addPlanHtml(entry, price, advice) {
         ${levels
           .map((level) => {
             const levelAmount = amount * level.ratio;
-            const lots = level.trigger > 0 ? Math.floor(levelAmount / level.trigger / 100) * 100 : 0;
+            const levelOrder = orderPreview(levelAmount, level.trigger, state.plan?.trading_cost);
             const distance = price != null && price > 0 ? ((level.trigger - price) / price) * 100 : null;
             const triggered = price != null && price <= level.trigger;
             return `
@@ -558,7 +654,7 @@ function addPlanHtml(entry, price, advice) {
                   </div>
                   <div>
                     <dt>参考份额</dt>
-                    <dd>${lots > 0 ? `${lots.toLocaleString("zh-CN")} 份` : "不足 100 份"}</dd>
+                    <dd>${levelOrder.shares > 0 ? `${levelOrder.shares.toLocaleString("zh-CN")} 份` : "继续累计"}</dd>
                   </div>
                 </dl>
               </article>
@@ -624,13 +720,15 @@ function holdingsPanel(symbol, price, advice, context) {
   const pnlPct = pnl != null && costValue ? (pnl / costValue) * 100 : null;
   const position = advice?.position || {};
   const rows = [
-    ["目标仓位", position.targetWeight != null ? `${position.targetWeight.toFixed(1)}%` : "未设置"],
-    ["当前仓位", position.actualWeight != null ? `${position.actualWeight.toFixed(1)}%` : "—"],
-    ["买后仓位", context.position.projectedWeight != null ? `${context.position.projectedWeight.toFixed(1)}%` : "—"],
+    ["池内目标权重", position.targetWeight != null ? `${position.targetWeight.toFixed(1)}%` : "未设置"],
+    ["池内当前权重", position.actualWeight != null ? `${position.actualWeight.toFixed(1)}%` : "—"],
+    ["池内买后权重", context.position.projectedWeight != null ? `${context.position.projectedWeight.toFixed(1)}%` : "—"],
+    ["ETF 池总仓位", advice?.execution?.currentPositionPct != null ? `${advice.execution.currentPositionPct.toFixed(1)}%` : "—"],
+    ["单只总资产仓位", context.assetPositionPct != null ? `${context.assetPositionPct.toFixed(1)}%` : "—"],
     ["偏离目标", position.drift != null ? `${signed(position.drift, 1)} pp` : "—"],
     ["允许上限", position.maxWeight != null ? `${position.maxWeight.toFixed(1)}%` : "—"],
     ["持有份额", entry.shares.toLocaleString("zh-CN")],
-    ["成本价", cost != null ? cost.toFixed(3) : "—"],
+    ["成本价（含费）", cost != null ? cost.toFixed(3) : "—"],
     ["现价", price != null ? Number(price).toFixed(3) : "—"],
     ["市值", value != null ? money(value) : "—"],
     ["浮盈亏", pnl != null ? `${money(pnl)}（${signed(pnlPct, 1)}%）` : "—"],
@@ -765,8 +863,8 @@ function errorsHtml() {
 function buildIndexChartMarkers(payload) {
   const markers = [];
   const markerValues = payload?.chart?.markers || {};
-  if (markerValues.ma250 != null) markers.push({ key: "fair", label: "年线 MA250", value: markerValues.ma250 });
-  if (markerValues.boll_mid != null) markers.push({ key: "add", label: "布林中轨", value: markerValues.boll_mid });
+  if (markerValues.ma250 != null) markers.push({ key: "ma250", label: "年线 MA250", value: markerValues.ma250 });
+  if (markerValues.boll_mid != null) markers.push({ key: "bollMid", label: "布林中轨", value: markerValues.boll_mid });
   if (markerValues.boll_upper != null) markers.push({ key: "tp", label: "布林上轨", value: markerValues.boll_upper });
   if (markerValues.boll_lower != null) markers.push({ key: "sl", label: "布林下轨", value: markerValues.boll_lower });
   const symbol = state.analysisSymbol || payload?.symbol || "";
@@ -825,13 +923,9 @@ function paintDividend() {
       ${vehicleQualityHtml(context)}
       ${riskAndConfidenceHtml(context)}
     </div>
-    ${aiReviewHtml(advice, context)}
     <section class="panel-block dividend-chart-block">
       <div class="panel-heading">
-        <div>
-          <h2 class="section-title">ETF 走势 · 年线与布林</h2>
-          <p class="muted" id="indexChartSummary">加载区间… · ${escapeHtml(payload.chart?.name || payload.etf_name || "")}（${escapeHtml(payload.chart?.symbol || payload.symbol || "")}）</p>
-        </div>
+        <h2 class="section-title">ETF 走势 · 年线与布林</h2>
         <div class="range-segment" role="group" aria-label="ETF 走势区间">
           ${Object.entries(INDEX_CHART_RANGE_LABELS)
             .map(
@@ -856,12 +950,11 @@ function paintDividend() {
       </div>
       ${commentaryHtml()}
     </section>
+    ${aiReviewHtml(advice, context)}
     <section class="panel-block dividend-sources">
       <h2 class="section-title">数据来源</h2>
       <ul>${sourcesHtml()}</ul>
-      ${payload.spread?.note ? `<p class="muted">口径说明：${escapeHtml(payload.spread.note)}。</p>` : ""}
     </section>
-    <footer class="disclaimer">${escapeHtml(payload.disclaimer || "仅供研究参考，不构成投资建议。")}</footer>
   `;
 
   const canvas = els.dividendContent.querySelector("#dividendChart");
@@ -890,16 +983,6 @@ function drawIndexChart(payload, canvas, tooltip, markers) {
   if (!canvas) return;
   const allPoints = payload?.chart?.points || [];
   const points = sliceIndexChartPoints(allPoints, state.indexChartRange || "1y");
-  const summary = els.dividendContent?.querySelector("#indexChartSummary");
-  if (summary) {
-    const label = INDEX_CHART_RANGE_LABELS[state.indexChartRange] || "1Y";
-    const from = points[0]?.date || payload?.chart?.available_from || "—";
-    const to = points[points.length - 1]?.date || payload?.chart?.available_to || "—";
-    const name = payload?.chart?.name || payload?.etf_name || "";
-    const code = payload?.chart?.symbol || payload?.symbol || "";
-    const buyCount = (markers || []).filter((item) => item?.date && item.key === "buy").length;
-    summary.textContent = `${label} · ${points.length} 个交易日（${from} → ${to}） · ${name}${code ? `（${code}）` : ""} · ETF 实际价格 · 共可看 ${allPoints.length} 日${buyCount ? ` · 买入点 ${buyCount}` : ""}`;
-  }
   drawPriceChart(canvas, tooltip, points, markers || [], "CNY", null, state.indexChartRange);
 }
 
@@ -907,6 +990,18 @@ function bindIndexChartRangeControls() {
   if (!els.dividendContent || indexChartBound) return;
   indexChartBound = true;
   els.dividendContent.addEventListener("click", (event) => {
+    const forceBuy = event.target.closest?.("[data-force-inefficient]");
+    if (forceBuy && els.dividendContent.contains(forceBuy)) {
+      forceInefficientBySymbol.add(forceBuy.dataset.forceInefficient);
+      paintDividend();
+      return;
+    }
+    const clearForce = event.target.closest?.("[data-clear-force-inefficient]");
+    if (clearForce && els.dividendContent.contains(clearForce)) {
+      forceInefficientBySymbol.delete(clearForce.dataset.clearForceInefficient);
+      paintDividend();
+      return;
+    }
     const aiButton = event.target.closest?.("[data-ai-review]");
     if (aiButton && els.dividendContent.contains(aiButton)) {
       requestAIReview({ force: aiButton.dataset.force === "true" });

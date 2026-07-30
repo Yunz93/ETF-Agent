@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 
 import {
   cycleExecution,
+  estimatedTradeFee,
+  holdingFromTrades,
   orderPreview,
+  pendingOrderState,
+  planExecutionContext,
   planPeriod,
   projectedPosition,
   returnCorrelation,
@@ -44,6 +48,96 @@ test("order preview uses board lots and preserves residual cash", () => {
   assert.ok(Math.abs(preview.cashRemainder - 28.8) < 1e-8);
 });
 
+test("order preview includes minimum commission and blocks inefficient small orders", () => {
+  const tradingCost = {
+    min_commission: 5,
+    commission_rate_pct: 0.03,
+    max_fee_ratio_pct: 0.25,
+    lot_size: 100,
+  };
+  const blocked = orderPreview(2000, 1.275, tradingCost);
+  assert.equal(blocked.shares, 0);
+  assert.equal(blocked.minimumEfficientShares, 1600);
+  assert.equal(blocked.blockedReason, "fee_inefficient");
+
+  const executable = orderPreview(2045, 1.275, tradingCost);
+  assert.equal(executable.shares, 1600);
+  assert.equal(executable.estimatedAmount, 2040);
+  assert.equal(executable.fee, 5);
+  assert.equal(executable.totalCash, 2045);
+  assert.ok(executable.feeRatioPct < 0.25);
+  assert.equal(estimatedTradeFee(2040, tradingCost), 5);
+
+  const forced = orderPreview(2000, 1.275, { ...tradingCost, allowInefficient: true });
+  assert.equal(forced.shares, 1500);
+  assert.equal(forced.inefficient, true);
+  assert.ok(forced.feeRatioPct > 0.25);
+});
+
+test("holding cost basis includes buy fees and sell net proceeds", () => {
+  const holding = holdingFromTrades(
+    [{ id: "b1", symbol: "512890", date: "2026-01-01", price: 1, shares: 1000, fee: 5 }],
+    [{ id: "s1", symbol: "512890", date: "2026-02-01", price: 1.1, shares: 400, fee: 5 }],
+    "512890",
+  );
+  assert.equal(holding.shares, 600);
+  assert.ok(Math.abs(holding.cost - 1.005) < 1e-9);
+  assert.ok(holding.realizedPnl > 0);
+});
+
+test("initial build budget is independent from recurring contribution", () => {
+  const context = planExecutionContext({
+    plan: {
+      amount: 5000,
+      capital_base: 100000,
+      initial_target_pct: 30,
+    },
+    holdings: [{ marketValue: 10000 }],
+  });
+  assert.equal(context.phase, "initial");
+  assert.equal(context.targetAmount, 30000);
+  assert.equal(context.budget, 20000);
+});
+
+test("completed initial build stays in recurring mode after a drawdown", () => {
+  const context = planExecutionContext({
+    plan: {
+      amount: 5000,
+      capital_base: 100000,
+      initial_target_pct: 30,
+      initial_build_completed_at: "2026-07-30T00:00:00Z",
+    },
+    holdings: [{ marketValue: 24000 }],
+  });
+  assert.equal(context.phase, "recurring");
+  assert.equal(context.budget, 5000);
+});
+
+test("pending order rolls remaining budget into the next period", () => {
+  const plan = {
+    cadence: "monthly",
+    day: 1,
+    pending_orders: {
+      "512890": {
+        period: "2026-06-01",
+        carry: 0,
+        scheduled: 800,
+        remaining: 800,
+      },
+    },
+  };
+  const pending = pendingOrderState({
+    plan,
+    symbol: "512890",
+    recommendedAmount: 900,
+    buys: [],
+    now: new Date(2026, 6, 10),
+  });
+  assert.equal(pending.carry, 800);
+  assert.equal(pending.scheduled, 900);
+  assert.equal(pending.remaining, 1700);
+});
+
 test("projected position detects current and post-buy concentration breach", () => {
   const result = projectedPosition({
     currentValue: 20_000,
@@ -82,4 +176,3 @@ test("return correlation uses aligned daily returns", () => {
   assert.ok(correlation.value > 0.99);
   assert.equal(correlation.samples, 29);
 });
-

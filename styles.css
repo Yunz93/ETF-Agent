@@ -38,6 +38,8 @@
   --chart-grid: rgba(30, 34, 45, 0.07);
   --chart-line: oklch(56% 0.19 258);
   --chart-label: oklch(46% 0.01 260);
+  --chart-ma250: oklch(50% 0.13 165);
+  --chart-boll-mid: oklch(54% 0.18 305);
   --buy-marker: oklch(65% 0.19 48);
   --sell-marker: oklch(55% 0.2 28);
   --sidebar-width: 224px;
@@ -82,6 +84,8 @@
   --chart-grid: rgba(255, 255, 255, 0.07);
   --chart-line: oklch(66% 0.16 258);
   --chart-label: oklch(70% 0.008 260);
+  --chart-ma250: oklch(72% 0.12 165);
+  --chart-boll-mid: oklch(74% 0.14 305);
   --buy-marker: oklch(78% 0.15 65);
   --sell-marker: oklch(72% 0.17 25);
 }
@@ -1256,7 +1260,6 @@ canvas {
   pointer-events: none;
   font-size: 12px;
   line-height: 1.45;
-  transform: translate(-10%, -110%);
 }
 
 .price-tooltip strong {
@@ -1647,7 +1650,7 @@ button:active {
 
 .dividend-hero {
   display: grid;
-  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.4fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   align-items: stretch;
 }
@@ -1757,7 +1760,7 @@ button:active {
 .decision-execution-grid,
 .decision-quality-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 9px 14px;
   margin: 0;
 }
@@ -1783,6 +1786,19 @@ button:active {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+}
+
+.decision-execution-force {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed color-mix(in oklab, var(--line) 80%, transparent);
+}
+
+.decision-execution-force .muted {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .decision-detail-grid {
@@ -2416,8 +2432,8 @@ button:active {
 
 .plan-config-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.4fr);
-  gap: 10px 12px;
+  grid-template-columns: 1fr;
+  gap: 0;
   width: 100%;
   margin: 0;
   padding: 14px;
@@ -2426,6 +2442,48 @@ button:active {
   box-shadow: var(--panel-shadow);
   align-items: end;
   box-sizing: border-box;
+}
+
+.plan-config-group {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-config-group:first-child {
+  padding-top: 0;
+}
+
+.plan-config-group:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.plan-config-group-heading {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px 20px;
+}
+
+.plan-config-group-heading h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.plan-config-group-heading p {
+  margin: 0;
+  font-size: 11.5px;
+  text-align: right;
+}
+
+.plan-config-identity {
+  grid-template-columns: minmax(180px, 0.8fr) minmax(280px, 2.2fr);
 }
 
 .plan-config-strip label {
@@ -2439,15 +2497,37 @@ button:active {
 }
 
 .plan-config-strip label.plan-strategy-field {
-  grid-column: 1 / 3;
+  grid-column: auto;
 }
 
 .plan-strategy-hint {
-  grid-column: 3 / -1;
+  grid-column: span 2;
   margin: 0;
   align-self: center;
   font-size: 12.5px;
   line-height: 1.4;
+}
+
+.plan-config-strip .plan-complete-check {
+  display: flex;
+  align-items: center;
+  align-self: end;
+  gap: 8px;
+  min-height: 35px;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.plan-config-strip .plan-complete-check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.plan-config-strip .plan-complete-check span {
+  color: var(--ink);
+  font-size: 12.5px;
 }
 
 .plan-config-strip label span {
@@ -2582,12 +2662,14 @@ button:active {
 }
 
 @media (max-width: 1180px) {
-  .plan-config-strip {
+  .plan-config-group {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .plan-config-strip label.grow,
-  .plan-config-strip label.plan-strategy-field,
+  .plan-config-identity {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .plan-strategy-hint {
     grid-column: 1 / -1;
   }
@@ -2617,8 +2699,18 @@ button:active {
     min-width: 104px;
   }
 
-  .plan-config-strip {
+  .plan-config-group,
+  .plan-config-identity {
     grid-template-columns: 1fr;
+  }
+
+  .plan-config-group-heading {
+    display: grid;
+    gap: 3px;
+  }
+
+  .plan-config-group-heading p {
+    text-align: left;
   }
 
   .plan-grade-mult {
@@ -2806,7 +2898,7 @@ button:active {
 .ai-review-card {
   position: relative;
   overflow: hidden;
-  padding: 22px 24px;
+  padding: 16px 18px;
   border-color: color-mix(in oklab, var(--accent) 34%, var(--line));
   background:
     linear-gradient(
@@ -2818,7 +2910,7 @@ button:active {
 
 .ai-review-card::before {
   position: absolute;
-  inset: 20px auto 20px 0;
+  inset: 16px auto 16px 0;
   width: 3px;
   border-radius: 0 4px 4px 0;
   background: var(--accent);
@@ -2827,8 +2919,8 @@ button:active {
 
 .ai-review-card > .panel-heading {
   align-items: flex-start;
-  gap: 24px;
-  margin-bottom: 16px;
+  gap: 16px;
+  margin-bottom: 12px;
 }
 
 .ai-review-card > .panel-heading > div {
@@ -2837,12 +2929,13 @@ button:active {
 }
 
 .ai-review-card > .panel-heading .section-title {
-  font-size: 20px;
+  font-size: 17px;
 }
 
 .ai-review-card > .panel-heading .muted {
-  margin: 5px 0 0;
-  line-height: 1.65;
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
   text-wrap: pretty;
 }
 
@@ -2868,7 +2961,13 @@ button:active {
 .ai-review-card.is-disabled > p {
   max-width: 760px;
   margin: 0;
-  line-height: 1.7;
+}
+
+.ai-review-status {
+  max-width: 920px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .ai-review-summary {
@@ -2876,7 +2975,7 @@ button:active {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
-  margin: 16px 0 18px;
+  margin: 12px 0 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--line);
@@ -2884,7 +2983,7 @@ button:active {
 
 .ai-review-summary > div {
   min-width: 0;
-  padding: 14px 16px;
+  padding: 12px 14px;
   background: var(--surface-2);
 }
 
@@ -2903,33 +3002,53 @@ button:active {
 
 .ai-review-headline {
   max-width: 920px;
-  margin: 18px 0;
+  margin: 8px 0 14px;
   font-family: var(--font-display);
-  font-size: clamp(17px, 1.6vw, 22px);
+  font-size: 15px;
   font-weight: 700;
-  line-height: 1.45;
-  letter-spacing: -0.015em;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
   text-wrap: pretty;
+}
+
+.ai-review-focus {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.ai-review-focus span {
+  flex: 0 0 auto;
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+}
+
+.ai-review-focus strong {
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .ai-review-details {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin: 18px 0;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 14px 0;
 }
 
 .ai-review-details > div {
   min-width: 0;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid color-mix(in oklab, var(--line) 78%, transparent);
   border-radius: var(--radius-md);
   background: color-mix(in oklab, var(--surface) 55%, transparent);
 }
 
 .ai-review-details h3 {
-  margin: 0 0 10px;
-  font-size: 12px;
+  margin: 0 0 8px;
+  font-size: 13px;
   letter-spacing: 0.02em;
 }
 
@@ -2941,9 +3060,33 @@ button:active {
   line-height: 1.65;
 }
 
+.ai-review-watch {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.ai-review-watch > strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.ai-review-watch ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 6px 28px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
 .ai-review-choice {
-  margin-top: 18px;
-  padding-top: 16px;
+  margin-top: 14px;
+  padding-top: 14px;
   border-top: 1px solid var(--line);
   flex-wrap: wrap;
 }
@@ -2959,7 +3102,7 @@ button:active {
 
 @media (max-width: 760px) {
   .ai-review-card {
-    padding: 18px 16px;
+    padding: 16px;
   }
 
   .ai-review-card::before {
@@ -2980,8 +3123,9 @@ button:active {
     grid-template-columns: 1fr 1fr;
   }
 
-  .ai-review-details > div:last-child {
-    grid-column: 1 / -1;
+  .ai-review-details,
+  .ai-review-watch ul {
+    grid-template-columns: 1fr;
   }
 
   .ai-review-choice strong {
