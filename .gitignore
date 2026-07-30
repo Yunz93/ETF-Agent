@@ -1,18 +1,54 @@
+# OS / editor
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Cursor：忽略本地状态，保留可共享的项目规则
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Secrets / local env
 .env
 .env.*
 !.env.example
+
+# Runtime workspace (local plan & holdings)
 workspace.json
 workspace.json.tmp
+
+# Local logs & agent artifacts
+logs/
+*.log
+.tmp-screenshots/
+.playwright-cli/
+output/playwright/
+
+# Packaging / build
 build/
 dist/
 *.spec.bak
-.venv/
-venv/
 packaging/icons/StockAgent.iconset/
 packaging/icons/*.icns
 !packaging/icons/icon-1024.png
 !packaging/icons/.gitkeep
-.playwright-cli/

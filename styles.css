@@ -1823,9 +1823,19 @@ button:active {
   align-content: stretch;
 }
 
+.dividend-score-card-secondary .dividend-score-main {
+  align-items: center;
+}
+
 .dividend-score-card-secondary .dividend-grade-mark {
-  font-size: clamp(72px, 9vw, 96px);
+  font-size: clamp(44px, 5.5vw, 56px);
   opacity: 0.95;
+  align-self: start;
+  margin-top: -2px;
+}
+
+.dividend-score-card-secondary .dividend-score-copy {
+  padding-bottom: 0;
 }
 
 .dividend-score-card-secondary .dividend-score-total {
