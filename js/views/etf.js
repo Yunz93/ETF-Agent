@@ -1,22 +1,48 @@
-import { ETF_QUOTE_TTL_MS, analysisIsFullIndex } from "../constants.js";
-import { appConfig, els, state } from "../state.js";
-import { escapeAttr, escapeHtml, money, normalizeEtfSymbol, signed } from "../utils.js";
+import { ETF_QUOTE_TTL_MS, DEFAULT_TARGET_WEIGHTS, analysisIsFullIndex } from "../constants.js";
+import { appConfig, els, state, workspaceRuntime } from "../state.js";
+import {
+  escapeAttr,
+  escapeHtml,
+  etfShortLabel,
+  money,
+  normalizeEtfSymbol,
+  resolveEtfDisplayName,
+  signed,
+} from "../utils.js";
 import { drawPriceChart, buyEventMarkers, sellEventMarkers } from "../chart.js";
 import { setSourceStatus } from "../navigation.js";
 import { persistWorkspace } from "../workspace.js";
 import { poolAllocationHtml } from "../pool-alloc.js";
+import { ensurePoolAnalysisPrefetch } from "../analysis-cache.js";
+import {
+  buildExecutionDraftsFromAllocation,
+  executionDraftSummary,
+  updateExecutionDraft,
+} from "../execution-drafts.js";
 import { normalizeTradingCost, upsertBuy, upsertSell } from "../workspace_model.js";
+import { ADD_PLAN_PRESETS, normalizeAddPlanConfig } from "../add-plan.js";
 import { estimatedTradeFee, holdingFromTrades, planExecutionContext } from "../decision-support.js";
 import { openAnalysis, registerRenderers } from "./render.js";
 import {
   DEFAULT_STRATEGY_CONFIG,
   normalizeStrategyConfig,
   normalizeStrategyId,
+  STRATEGY_PRESETS,
   strategySummary,
 } from "../strategy.js";
 
+const ROW_STRATEGY_OPTIONS = Object.freeze([
+  { value: "", label: "跟随全局" },
+  { value: "fixed", label: STRATEGY_PRESETS.fixed.label },
+  { value: "valuation", label: STRATEGY_PRESETS.valuation.label },
+  { value: "grade", label: STRATEGY_PRESETS.grade.label },
+  { value: "rebalance", label: STRATEGY_PRESETS.rebalance.label },
+  { value: "custom", label: STRATEGY_PRESETS.custom.label },
+]);
+
 let quotesPromise = null;
 let editingTrade = null;
+let confirmingDraftId = null;
 
 function poolSymbols() {
   return state.etfs.map((item) => item.symbol);
@@ -26,6 +52,71 @@ function clampWeight(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return 0;
   return Math.min(100, Math.round(number * 100) / 100);
+}
+
+function registryEtfName(symbol) {
+  return (
+    appConfig?.etf?.analysis_registry?.[symbol]?.etf_name ||
+    appConfig?.etf?.analysis_support?.[symbol]?.etf_name ||
+    ""
+  );
+}
+
+function seedEtfName(symbol) {
+  const pool = appConfig?.etf?.pool || [];
+  const hit = pool.find((item) => item.symbol === symbol);
+  return hit?.name || "";
+}
+
+function etfDisplayName(entry, quote) {
+  return resolveEtfDisplayName({
+    name: entry?.name,
+    symbol: entry?.symbol,
+    quoteName: quote?.name,
+    registryName: registryEtfName(entry?.symbol),
+    seedName: seedEtfName(entry?.symbol),
+  });
+}
+
+/** 导入 config 默认种子池（均衡目标权重）。 */
+export function importSeedPool() {
+  const pool = appConfig?.etf?.pool || [];
+  if (!pool.length) {
+    if (els.etfFormStatus) els.etfFormStatus.textContent = "配置中无默认种子池";
+    return;
+  }
+  const toEntry = (item) => {
+    const symbol = String(item.symbol || "");
+    if (!/^\d{6}$/.test(symbol)) return null;
+    return {
+      symbol,
+      name: String(item.name || ""),
+      shares: 0,
+      cost: 0,
+      target_weight: clampWeight(DEFAULT_TARGET_WEIGHTS[symbol] || 0),
+      note: "",
+    };
+  };
+  if (!state.etfs.length) {
+    state.etfs = pool.map(toEntry).filter(Boolean);
+  } else {
+    const existing = new Set(state.etfs.map((item) => item.symbol));
+    let added = 0;
+    pool.forEach((item) => {
+      const entry = toEntry(item);
+      if (!entry || existing.has(entry.symbol)) return;
+      state.etfs.push(entry);
+      existing.add(entry.symbol);
+      added += 1;
+    });
+    if (!added) {
+      if (els.etfFormStatus) els.etfFormStatus.textContent = "种子池品种已在计划中";
+      return;
+    }
+  }
+  persistWorkspace();
+  if (els.etfFormStatus) els.etfFormStatus.textContent = `已导入种子池 ${state.etfs.length} 只`;
+  renderEtfPool({ refresh: true });
 }
 
 function moveEtfRelative(fromSymbol, toSymbol, placeAfter = false) {
@@ -143,10 +234,22 @@ async function refreshQuotes(force = false) {
         });
         state.quotesBySymbol = map;
         state.quotesFetchedAt = Date.now();
-        // 用行情名称补全池中的空名称
+        // 用友好名 / 行情名补全或升级池中名称（避免行情短名覆盖 registry 全称）
+        let renamed = false;
         state.etfs.forEach((entry) => {
-          if (!entry.name && map[entry.symbol]?.name) entry.name = map[entry.symbol].name;
+          const next = resolveEtfDisplayName({
+            name: entry.name,
+            symbol: entry.symbol,
+            quoteName: map[entry.symbol]?.name,
+            registryName: registryEtfName(entry.symbol),
+            seedName: seedEtfName(entry.symbol),
+          });
+          if (next && next !== entry.name) {
+            entry.name = next;
+            renamed = true;
+          }
         });
+        if (renamed) persistWorkspace();
       }
       setSourceStatus(payload.error ? `行情不可用：${payload.error}` : payload.provider || "行情已连接", payload.error ? "error" : "connected");
       if (els.etfQuoteStatus) {
@@ -167,27 +270,38 @@ async function refreshQuotes(force = false) {
 function entryMetrics(entry) {
   const quote = state.quotesBySymbol[entry.symbol];
   const price = quote?.price;
-  const value = price != null && entry.shares > 0 ? price * entry.shares : null;
-  const costValue = entry.shares > 0 && entry.cost > 0 ? entry.cost * entry.shares : null;
+  const shares = Math.max(0, Number(entry.shares) || 0);
+  const cost = Math.max(0, Number(entry.cost) || 0);
+  // 有行情即参与统计：份额为 0 时市值 / 权重记 0，而不是缺省
+  const value = price != null ? price * shares : null;
+  // 成本未填（0）且已有份额时不把浮盈当成「全额盈利」
+  const costValue =
+    price != null && (cost > 0 || shares === 0) ? cost * shares : null;
   const pnl = value != null && costValue != null ? value - costValue : null;
-  const pnlPct = pnl != null && costValue ? (pnl / costValue) * 100 : null;
-  return { quote, price, value, costValue, pnl, pnlPct };
+  const pnlPct = pnl != null && costValue > 0 ? (pnl / costValue) * 100 : null;
+  return { quote, price, value, costValue, pnl, pnlPct, shares, cost };
+}
+
+function holdingInputValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? String(number) : "0";
 }
 
 function portfolioTotals() {
   let totalValue = 0;
   let totalCost = 0;
   let held = 0;
+  let quoted = 0;
   state.etfs.forEach((entry) => {
-    const { value, costValue } = entryMetrics(entry);
+    const { value, costValue, shares } = entryMetrics(entry);
     if (value != null) {
       totalValue += value;
-      held += 1;
+      quoted += 1;
+      if (shares > 0) held += 1;
     }
     if (costValue != null) totalCost += costValue;
   });
-  const targetSum = state.etfs.reduce((sum, entry) => sum + (Number(entry.target_weight) || 0), 0);
-  return { totalValue, totalCost, held, targetSum };
+  return { totalValue, totalCost, held, quoted };
 }
 
 function syncCustomStrategyForm(config) {
@@ -221,6 +335,79 @@ function syncCustomStrategyForm(config) {
       )
       .join("");
   }
+}
+
+function syncAddPlanForm(config) {
+  const cfg = normalizeAddPlanConfig(config);
+  if (els.planAddPlanEnabled) els.planAddPlanEnabled.checked = cfg.enabled !== false;
+  if (els.planAddPlanAnchor) els.planAddPlanAnchor.value = cfg.anchor === "cost" ? "cost" : "price";
+  if (els.planAddPlanPreset) {
+    // 自定义仅为旧配置兼容项：有已保存档位时才可见
+    const customOption = els.planAddPlanPreset.querySelector('option[value="custom"]');
+    if (customOption) customOption.hidden = cfg.preset !== "custom";
+    els.planAddPlanPreset.value = cfg.preset;
+  }
+  const showingLevels = renderAddPlanLevelPreview(cfg);
+  if (els.planAddPlanPresetHint) {
+    // 档位表已展示数值时，说明只补非数字信息，避免复述
+    if (showingLevels) {
+      els.planAddPlanPresetHint.textContent =
+        cfg.preset === "steady"
+          ? "不随估值缩放"
+          : cfg.preset === "deep"
+            ? "只接较深回调"
+            : cfg.preset === "custom"
+              ? "沿用已保存档位"
+              : "";
+    } else {
+      els.planAddPlanPresetHint.textContent = ADD_PLAN_PRESETS[cfg.preset]?.summary || "";
+    }
+  }
+}
+
+/** 固定/自定义预设时展示只读档位表；智能推荐仅用下方说明。返回是否已展示表格。 */
+function renderAddPlanLevelPreview(cfg) {
+  const el = els.planAddPlanLevels;
+  if (!el) return false;
+  let levels = null;
+  if (cfg.preset === "steady" || cfg.preset === "deep") {
+    levels = ADD_PLAN_PRESETS[cfg.preset]?.levels || null;
+  } else if (cfg.preset === "custom" && Array.isArray(cfg.levels) && cfg.levels.length) {
+    levels = cfg.levels;
+  }
+  if (!levels?.length) {
+    el.hidden = true;
+    el.innerHTML = "";
+    return false;
+  }
+  el.hidden = false;
+  el.innerHTML = `
+    <div class="plan-add-plan-head"><span></span><span>跌幅 %</span><span>比例 %</span></div>
+    ${levels
+      .map((level, i) => {
+        const drawdown = Number(level.drawdown_pct);
+        const ratioPct = Math.round(Number(level.ratio) * 1000) / 10;
+        return `
+      <div class="plan-add-plan-row" data-level-index="${i}">
+        <span class="plan-add-plan-row-label">第${i + 1}档</span>
+        <span class="plan-add-plan-cell">${Number.isFinite(drawdown) ? drawdown : "—"}</span>
+        <span class="plan-add-plan-cell">${Number.isFinite(ratioPct) ? ratioPct : "—"}</span>
+      </div>`;
+      })
+      .join("")}
+  `;
+  return true;
+}
+
+function readAddPlanConfigFromForm() {
+  const preset = els.planAddPlanPreset?.value || "auto";
+  return normalizeAddPlanConfig({
+    enabled: els.planAddPlanEnabled?.checked !== false,
+    anchor: els.planAddPlanAnchor?.value === "cost" ? "cost" : "price",
+    preset,
+    // 自定义预设沿用已保存档位；其余预设的档位由 add-plan 模块给出
+    levels: preset === "custom" ? state.plan?.add_plan?.levels || null : null,
+  });
 }
 
 function readCustomStrategyConfigFromForm() {
@@ -271,14 +458,17 @@ function syncPlanForm() {
   if (els.planStrategyHint) els.planStrategyHint.textContent = strategySummary(strategy);
   if (els.planStrategyCustom) els.planStrategyCustom.hidden = strategy !== "custom";
   syncCustomStrategyForm(plan.strategy_config);
+  syncAddPlanForm(plan.add_plan);
   renderInitialSummary();
+  workspaceRuntime.planFormReady = true;
 }
 
 function currentPlanHoldings() {
   return state.etfs.map((entry) => {
     const price = Number(state.quotesBySymbol[entry.symbol]?.price);
+    const shares = Math.max(0, Number(entry.shares) || 0);
     return {
-      marketValue: price > 0 && entry.shares > 0 ? price * entry.shares : 0,
+      marketValue: price > 0 ? price * shares : 0,
     };
   });
 }
@@ -325,6 +515,8 @@ export function readPlanFormIntoState() {
     note: String(els.planNote?.value || "").trim(),
     strategy,
     strategy_config,
+    strategy_overrides: state.plan.strategy_overrides || {},
+    add_plan: readAddPlanConfigFromForm(),
     trading_cost: normalizeTradingCost({
       min_commission: els.planMinCommission?.value,
       commission_rate_pct: els.planCommissionRatePct?.value,
@@ -347,21 +539,19 @@ export function readPlanFormIntoState() {
 
 function renderMetrics() {
   if (!els.etfMetrics) return;
-  const { totalValue, totalCost, held, targetSum } = portfolioTotals();
+  const { totalValue, totalCost, held, quoted } = portfolioTotals();
   const pnl = totalCost ? totalValue - totalCost : null;
   const pnlPct = totalCost ? ((totalValue - totalCost) / totalCost) * 100 : null;
-  const targetClass = Math.abs(targetSum - 100) < 0.05 ? "" : targetSum > 100.05 ? "down" : "up";
   const capitalBase = Math.max(0, Number(state.plan?.capital_base) || 0);
   const poolPositionPct = capitalBase > 0 && totalValue > 0 ? (totalValue / capitalBase) * 100 : null;
   const cards = [
-    ["计划内 ETF", `${state.etfs.length} 只 · 持仓 ${held}`],
-    ["配置目标合计", `<span class="${targetClass}">${targetSum.toFixed(1)}%</span>`],
-    ["组合市值", totalValue ? money(totalValue) : "—"],
+    ["计划内 ETF", `${state.etfs.length} 只 · 持仓 ${held}${quoted > held ? ` · 零仓 ${quoted - held}` : ""}`],
+    ["组合市值", quoted ? money(totalValue) : "—"],
     [
       "ETF 池总仓位",
       poolPositionPct != null ? `${poolPositionPct.toFixed(1)}%` : capitalBase > 0 ? "0%" : "需填总资金",
     ],
-    ["浮盈亏", pnl != null ? `${money(pnl)}（${signed(pnlPct, 1)}%）` : "—"],
+    ["浮盈亏", pnl != null ? `${money(pnl)}（${pnlPct != null ? `${signed(pnlPct, 1)}%` : "—"}）` : "—"],
   ];
   els.etfMetrics.innerHTML = cards
     .map(
@@ -380,23 +570,31 @@ function renderRows() {
   if (!state.etfs.length) {
     els.etfRows.innerHTML = "";
     if (els.etfEmpty) els.etfEmpty.hidden = false;
+    if (els.overviewEmptyGuide) els.overviewEmptyGuide.hidden = false;
     return;
   }
   if (els.etfEmpty) els.etfEmpty.hidden = true;
+  if (els.overviewEmptyGuide) els.overviewEmptyGuide.hidden = true;
   const { totalValue } = portfolioTotals();
   const capitalBase = Math.max(0, Number(state.plan?.capital_base) || 0);
+  const overrides = state.plan?.strategy_overrides || {};
   els.etfRows.innerHTML = state.etfs
     .map((entry) => {
       const { quote, price, value, pnl, pnlPct } = entryMetrics(entry);
       const change = quote?.change_pct;
       const changeClass = change > 0 ? "up" : change < 0 ? "down" : "";
-      const poolWeight = value != null && totalValue ? (value / totalValue) * 100 : null;
+      const poolWeight = value != null ? (totalValue > 0 ? (value / totalValue) * 100 : 0) : null;
       const assetWeight = value != null && capitalBase > 0 ? (value / capitalBase) * 100 : null;
       const target = Number(entry.target_weight) || 0;
       const drift = poolWeight != null ? poolWeight - target : null;
       const driftClass = drift != null ? (drift > 0.5 ? "up" : drift < -0.5 ? "down" : "") : "";
       const selected = state.selectedEtf === entry.symbol;
       const fullIndex = analysisIsFullIndex(appConfig, entry.symbol);
+      const rowStrategy = overrides[entry.symbol] || "";
+      const strategyOptions = ROW_STRATEGY_OPTIONS.map(
+        (opt) =>
+          `<option value="${escapeAttr(opt.value)}"${opt.value === rowStrategy ? " selected" : ""}>${escapeHtml(opt.label)}</option>`,
+      ).join("");
       return `
         <tr class="${selected ? "etf-row-selected" : ""}" data-symbol="${escapeAttr(entry.symbol)}">
           <td class="etf-drag-cell">
@@ -404,27 +602,42 @@ function renderRows() {
           </td>
           <td>
             <button class="link-button etf-name" data-analyze="${escapeAttr(entry.symbol)}" type="button" title="打开定投分析">
-              <strong>${escapeHtml(entry.name || quote?.name || entry.symbol)}</strong>
+              <strong>${escapeHtml(etfDisplayName(entry, quote))}</strong>
               <span class="muted">${escapeHtml(entry.symbol)}${fullIndex ? "" : " · ETF 口径"}</span>
             </button>
           </td>
           <td class="num">${price != null ? price.toFixed(3) : "—"}</td>
           <td class="num ${changeClass}">${change != null ? `${signed(change)}%` : "—"}</td>
-          <td class="num etf-input-cell">
-            <input type="number" min="0" max="100" step="any" value="${target || ""}" placeholder="0" data-field="target_weight" data-symbol="${escapeAttr(entry.symbol)}" aria-label="配置目标权重" />
+          <td class="num etf-input-cell etf-col-target">
+            <input type="number" min="0" max="100" step="any" value="${holdingInputValue(target)}" placeholder="0" data-field="target_weight" data-symbol="${escapeAttr(entry.symbol)}" aria-label="配置目标权重" title="目标配置权重，分母为计划内 ETF 目标合计" />
           </td>
-          <td class="num" title="池内权重">${poolWeight != null ? `${poolWeight.toFixed(1)}%` : "—"}</td>
-          <td class="num" title="占总资金">${assetWeight != null ? `${assetWeight.toFixed(1)}%` : "—"}</td>
-          <td class="num ${driftClass}">${drift != null ? `${signed(drift, 1)}` : "—"}</td>
+          <td class="etf-input-cell etf-col-strategy">
+            <select class="etf-strategy-select" data-field="strategy_override" data-symbol="${escapeAttr(entry.symbol)}" aria-label="本品种定投策略" title="默认跟随计划全局策略">
+              ${strategyOptions}
+            </select>
+          </td>
+          <td class="num etf-col-pool" title="当前市值占计划内 ETF 合计市值的比例">${poolWeight != null ? `${poolWeight.toFixed(1)}%` : "—"}</td>
+          <td class="num etf-col-asset" title="${
+            assetWeight != null
+              ? "当前市值占可投资总资金的比例"
+              : "填写计划设置中的可投资总资金后显示"
+          }">${assetWeight != null ? `${assetWeight.toFixed(1)}%` : "—"}</td>
+          <td class="num ${driftClass}" title="池内实际权重相对目标配置的偏离（百分点）">${
+            drift != null
+              ? `${signed(drift, 1)}<br /><small>${drift > 0.05 ? "超配" : drift < -0.05 ? "低配" : "贴近"}</small>`
+              : "—"
+          }</td>
           <td class="num etf-input-cell">
-            <input type="number" min="0" step="any" value="${entry.shares || ""}" placeholder="0" data-field="shares" data-symbol="${escapeAttr(entry.symbol)}" aria-label="持有份额" />
+            <input type="number" min="0" step="any" value="${holdingInputValue(entry.shares)}" placeholder="0" data-field="shares" data-symbol="${escapeAttr(entry.symbol)}" aria-label="持有份额" />
           </td>
           <td class="num etf-input-cell">
-            <input type="number" min="0" step="any" value="${entry.cost || ""}" placeholder="0" data-field="cost" data-symbol="${escapeAttr(entry.symbol)}" aria-label="含费成本价" />
+            <input type="number" min="0" step="any" value="${holdingInputValue(entry.cost)}" placeholder="0" data-field="cost" data-symbol="${escapeAttr(entry.symbol)}" aria-label="含费成本价" />
           </td>
           <td class="num">${value != null ? money(value) : "—"}</td>
           <td class="num ${pnl > 0 ? "up" : pnl < 0 ? "down" : ""}">${
-            pnl != null ? `${money(pnl)}<br /><small>${signed(pnlPct, 1)}%</small>` : "—"
+            pnl != null
+              ? `${money(pnl)}${pnlPct != null ? `<br /><small>${signed(pnlPct, 1)}%</small>` : ""}`
+              : "—"
           }</td>
           <td class="etf-actions">
             <button class="ghost-button compact danger" data-remove="${escapeAttr(entry.symbol)}" type="button">移除</button>
@@ -441,14 +654,33 @@ function renderRows() {
       const value = Number(input.value);
       if (input.dataset.field === "target_weight") {
         entry.target_weight = clampWeight(value);
-        input.value = entry.target_weight || "";
+        input.value = holdingInputValue(entry.target_weight);
       } else {
-        entry[input.dataset.field] = Number.isFinite(value) && value > 0 ? value : 0;
+        entry[input.dataset.field] = Number.isFinite(value) && value >= 0 ? value : 0;
+        input.value = holdingInputValue(entry[input.dataset.field]);
       }
       persistWorkspace();
       renderMetrics();
       renderRows();
       renderSidebarEtfs();
+      renderPoolAllocation();
+    });
+  });
+  els.etfRows.querySelectorAll("select[data-field='strategy_override']").forEach((select) => {
+    select.addEventListener("change", () => {
+      if (!state.plan) state.plan = {};
+      const next = { ...(state.plan.strategy_overrides || {}) };
+      const symbol = select.dataset.symbol;
+      const value = String(select.value || "").trim().toLowerCase();
+      if (!value) {
+        delete next[symbol];
+      } else {
+        next[symbol] = normalizeStrategyId(value);
+      }
+      state.plan.strategy_overrides = next;
+      persistWorkspace();
+      renderPoolAllocation();
+      renderRows();
     });
   });
   els.etfRows.querySelectorAll("[data-remove]").forEach((button) => {
@@ -458,10 +690,16 @@ function renderRows() {
         state.selectedEtf = null;
         if (els.etfChartPanel) els.etfChartPanel.hidden = true;
       }
+      if (state.plan?.strategy_overrides?.[button.dataset.remove]) {
+        const next = { ...state.plan.strategy_overrides };
+        delete next[button.dataset.remove];
+        state.plan.strategy_overrides = next;
+      }
       persistWorkspace();
       renderMetrics();
       renderRows();
       renderSidebarEtfs();
+      renderPoolAllocation();
     });
   });
   els.etfRows.querySelectorAll("[data-analyze]").forEach((button) => {
@@ -481,7 +719,7 @@ export async function selectEtfChart(symbol) {
   const entry = state.etfs.find((item) => item.symbol === symbol);
   const quote = state.quotesBySymbol[symbol];
   if (els.etfChartTitle) {
-    els.etfChartTitle.textContent = `${entry?.name || quote?.name || symbol}（${symbol}）`;
+    els.etfChartTitle.textContent = `${etfDisplayName(entry, quote) || symbol}（${symbol}）`;
   }
   document.querySelectorAll("#etfChartPanel .js-range").forEach((button) => {
     button.classList.toggle("active", button.dataset.range === state.priceRange);
@@ -539,9 +777,16 @@ export async function addEtf(rawSymbol, shares, cost, targetWeight) {
     if (!quote || quote.price == null) {
       throw new Error(payload.error || "行情源没有该代码，确认是 A 股场内 ETF");
     }
+    const displayName = resolveEtfDisplayName({
+      name: "",
+      symbol,
+      quoteName: quote.name,
+      registryName: registryEtfName(symbol),
+      seedName: seedEtfName(symbol),
+    });
     state.etfs.push({
       symbol,
-      name: quote.name || "",
+      name: displayName,
       shares: Number(shares) > 0 ? Number(shares) : 0,
       cost: Number(cost) > 0 ? Number(cost) : 0,
       target_weight: clampWeight(targetWeight),
@@ -549,7 +794,7 @@ export async function addEtf(rawSymbol, shares, cost, targetWeight) {
     });
     state.quotesBySymbol[symbol] = quote;
     persistWorkspace();
-    if (els.etfFormStatus) els.etfFormStatus.textContent = `已加入 ${quote.name || symbol}`;
+    if (els.etfFormStatus) els.etfFormStatus.textContent = `已加入 ${displayName || symbol}`;
     if (els.etfSymbol) els.etfSymbol.value = "";
     if (els.etfShares) els.etfShares.value = "";
     if (els.etfCost) els.etfCost.value = "";
@@ -563,11 +808,147 @@ export async function addEtf(rawSymbol, shares, cost, targetWeight) {
   }
 }
 
+function activateBuysTab() {
+  const tab = document.querySelector('[data-etf-tab="buys"]');
+  if (tab) tab.click();
+}
+
+function bindDraftActions(root) {
+  if (!root) return;
+  root.querySelectorAll("[data-generate-exec-drafts]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.executionDrafts = buildExecutionDraftsFromAllocation();
+      persistWorkspace();
+      renderPoolAllocation();
+      renderExecDraftPanel();
+      const summary = executionDraftSummary();
+      if (summary.pending > 0) {
+        // 清单统一在「交易记录」页处理，生成后直接带过去
+        activateBuysTab();
+        els.execDraftPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else if (els.poolAllocPanel) {
+        const note = document.createElement("p");
+        note.className = "muted pool-alloc-note";
+        note.textContent = "本期无可执行整手份额（检查行情与手续费门槛）";
+        els.poolAllocPanel.querySelector(".pool-alloc-block")?.appendChild(note);
+      }
+    });
+  });
+  root.querySelectorAll("[data-open-buys]").forEach((button) => {
+    button.addEventListener("click", () => {
+      activateBuysTab();
+      els.execDraftPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+  root.querySelectorAll("[data-draft-confirm]").forEach((button) => {
+    button.addEventListener("click", () => confirmExecutionDraft(button.dataset.draftConfirm));
+  });
+  root.querySelectorAll("[data-draft-skip]").forEach((button) => {
+    button.addEventListener("click", () => skipExecutionDraft(button.dataset.draftSkip));
+  });
+}
+
+function confirmExecutionDraft(id) {
+  const draft = (state.executionDrafts || []).find((item) => item.id === id);
+  if (!draft || draft.status !== "pending") return;
+  confirmingDraftId = id;
+  activateBuysTab();
+  if (els.tradeType) els.tradeType.value = "buy";
+  if (els.buySymbol) els.buySymbol.value = draft.symbol;
+  if (els.buyDate) els.buyDate.value = draft.date;
+  if (els.buyPrice) els.buyPrice.value = String(draft.price);
+  if (els.buyShares) els.buyShares.value = String(draft.shares);
+  if (els.buyFee) els.buyFee.value = draft.fee > 0 ? String(draft.fee) : "";
+  if (els.buyNote) els.buyNote.value = draft.note || `执行清单 ${draft.period}`;
+  if (els.buySubmit) els.buySubmit.textContent = "确认入账";
+  if (els.buyCancelEdit) els.buyCancelEdit.hidden = false;
+  if (els.buyFormStatus) {
+    els.buyFormStatus.textContent = `已预填 ${draft.name || draft.symbol}：可修正成交价后提交入账`;
+  }
+  els.buyForm?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function skipExecutionDraft(id) {
+  const draft = (state.executionDrafts || []).find((item) => item.id === id);
+  if (!draft || draft.status !== "pending") return;
+  const reason = window.prompt("跳过原因（可选）", "") ?? "";
+  state.executionDrafts = updateExecutionDraft(id, {
+    status: "skipped",
+    skip_reason: String(reason).trim(),
+  });
+  persistWorkspace();
+  renderPoolAllocation();
+  renderExecDraftPanel();
+}
+
+function renderExecDraftPanel() {
+  if (!els.execDraftPanel) return;
+  const summary = executionDraftSummary();
+  if (!summary.drafts.length) {
+    els.execDraftPanel.hidden = true;
+    els.execDraftPanel.innerHTML = "";
+    return;
+  }
+  const headerParts = [];
+  if (summary.pending > 0) headerParts.push(`待执行 ${summary.pending} 笔`);
+  if (summary.executed > 0) headerParts.push(`已执行 ${money(summary.executed)}`);
+  if (summary.drafts.length > 1) headerParts.push(`合计建议 ${money(summary.suggested)}`);
+  if (!headerParts.length) headerParts.push("已处理完毕");
+  els.execDraftPanel.hidden = false;
+  els.execDraftPanel.innerHTML = `
+    <div class="panel-heading">
+      <div>
+        <h3 class="section-title">本期执行清单</h3>
+        <p class="muted">${headerParts.join(" · ")}</p>
+      </div>
+    </div>
+    <div class="exec-draft-list">
+      ${summary.drafts
+        .map((draft) => {
+          const statusLabel =
+            draft.status === "confirmed" ? "已入账" : draft.status === "skipped" ? "已跳过" : "待执行";
+          const actions =
+            draft.status === "pending"
+              ? `<span class="exec-draft-actions">
+                  <button class="primary-button compact" type="button" data-draft-confirm="${escapeAttr(draft.id)}">确认入账</button>
+                  <button class="ghost-button compact" type="button" data-draft-skip="${escapeAttr(draft.id)}">跳过</button>
+                </span>`
+              : `<span class="muted">${escapeHtml(statusLabel)}${draft.skip_reason ? ` · ${escapeHtml(draft.skip_reason)}` : ""}</span>`;
+          const orderAmount = (Number(draft.shares) || 0) * (Number(draft.price) || 0);
+          return `<div class="exec-draft-row">
+            <div class="exec-draft-main">
+              <strong>${escapeHtml(draft.name || draft.symbol)}</strong>
+              <span class="muted">${escapeHtml(draft.symbol)}</span>
+            </div>
+            <div class="exec-draft-meta">
+              <span>${draft.shares.toLocaleString("zh-CN")} 份 × ${money(draft.price)} ≈ ${money(orderAmount)}</span>
+              <span>费 ${money(draft.fee)}</span>
+            </div>
+            ${actions}
+          </div>`;
+        })
+        .join("")}
+    </div>
+  `;
+  bindDraftActions(els.execDraftPanel);
+}
+
 function renderPoolAllocation() {
   if (!els.poolAllocPanel) return;
   els.poolAllocPanel.innerHTML = poolAllocationHtml({ clickable: true });
   els.poolAllocPanel.querySelectorAll("[data-analyze]").forEach((button) => {
     button.addEventListener("click", () => openAnalysis(button.dataset.analyze));
+  });
+  bindDraftActions(els.poolAllocPanel);
+  ensurePoolAnalysisPrefetch({
+    onUpdate: () => {
+      if (!els.poolAllocPanel || state.activeView !== "etf") return;
+      els.poolAllocPanel.innerHTML = poolAllocationHtml({ clickable: true });
+      els.poolAllocPanel.querySelectorAll("[data-analyze]").forEach((button) => {
+        button.addEventListener("click", () => openAnalysis(button.dataset.analyze));
+      });
+      bindDraftActions(els.poolAllocPanel);
+    },
   });
 }
 
@@ -578,7 +959,7 @@ function renderBuySymbolOptions() {
   const options = state.etfs
     .map((entry) => {
       const quote = state.quotesBySymbol[entry.symbol];
-      const name = entry.name || quote?.name || entry.symbol;
+      const name = etfDisplayName(entry, quote);
       return `<option value="${escapeAttr(entry.symbol)}">${escapeHtml(name)}（${escapeHtml(entry.symbol)}）</option>`;
     })
     .join("");
@@ -599,6 +980,7 @@ function renderBuySymbolOptions() {
 export function renderBuys() {
   if (!els.buyRows) return;
   renderBuySymbolOptions();
+  renderExecDraftPanel();
   const trades = [
     ...(state.buys || []).map((item) => ({ ...item, type: "buy" })),
     ...(state.sells || []).map((item) => ({ ...item, type: "sell" })),
@@ -624,7 +1006,7 @@ export function renderBuys() {
     .map((trade) => {
       const entry = state.etfs.find((item) => item.symbol === trade.symbol);
       const quote = state.quotesBySymbol[trade.symbol];
-      const name = entry?.name || quote?.name || trade.symbol;
+      const name = entry ? etfDisplayName(entry, quote) : quote?.name || trade.symbol;
       const amount = trade.price * trade.shares;
       const fee = Math.max(0, Number(trade.fee) || 0);
       const cashImpact = trade.type === "sell" ? amount - fee : amount + fee;
@@ -702,6 +1084,7 @@ function startBuyEdit(type, id) {
 
 export function cancelBuyEdit() {
   editingTrade = null;
+  confirmingDraftId = null;
   if (els.buySubmit) els.buySubmit.textContent = els.tradeType?.value === "sell" ? "添加卖出" : "添加买入";
   if (els.buyCancelEdit) els.buyCancelEdit.hidden = true;
   if (els.buyPrice) els.buyPrice.value = "";
@@ -776,6 +1159,17 @@ export function addBuyRecord() {
   else state.buys = upsertBuy(state.buys, record);
   syncHoldingFromTrades(symbol);
   if (previousSymbol && previousSymbol !== symbol) syncHoldingFromTrades(previousSymbol);
+  if (confirmingDraftId && type === "buy") {
+    state.executionDrafts = updateExecutionDraft(confirmingDraftId, {
+      status: "confirmed",
+      confirmed_trade_id: record.id,
+      price: record.price,
+      shares: record.shares,
+      fee: record.fee,
+      date: record.date,
+    });
+    confirmingDraftId = null;
+  }
   editingTrade = null;
   persistWorkspace();
   if (els.buySubmit) els.buySubmit.textContent = type === "sell" ? "添加卖出" : "添加买入";
@@ -785,6 +1179,7 @@ export function addBuyRecord() {
   if (els.buyFee) els.buyFee.value = "";
   if (els.buyNote) els.buyNote.value = "";
   renderBuys();
+  renderPoolAllocation();
   renderMetrics();
   renderRows();
   renderSidebarEtfs();
@@ -826,12 +1221,14 @@ export function renderSidebarEtfs() {
   els.sidebarEtfList.innerHTML = state.etfs
     .map((entry) => {
       const quote = state.quotesBySymbol[entry.symbol];
-      const name = entry.name || quote?.name || entry.symbol;
+      const name = etfDisplayName(entry, quote);
+      const shortLabel = etfShortLabel(name, entry.symbol);
       const change = quote?.change_pct;
       const changeClass = change > 0 ? "up" : change < 0 ? "down" : "";
       const active = activeSymbol === entry.symbol ? " active" : "";
       const fullIndex = analysisIsFullIndex(appConfig, entry.symbol);
       const target = Number(entry.target_weight) || 0;
+      const label = `${name}（${entry.symbol}）${target ? ` · 目标 ${target}%` : ""}${fullIndex ? "" : " · ETF 口径分析"}`;
       return `
         <div class="sidebar-etf-item${active}" data-symbol="${escapeAttr(entry.symbol)}">
           <span class="sidebar-etf-handle" draggable="true" title="拖动排序" aria-label="拖动排序">⋮⋮</span>
@@ -839,9 +1236,10 @@ export function renderSidebarEtfs() {
             class="sidebar-etf-button"
             type="button"
             data-analyze="${escapeAttr(entry.symbol)}"
-            title="${escapeAttr(name)}（${escapeAttr(entry.symbol)}）${target ? ` · 目标 ${target}%` : ""}${fullIndex ? "" : " · ETF 口径分析"}"
+            title="${escapeAttr(label)}"
+            aria-label="${escapeAttr(label)}"
           >
-            <span class="sidebar-etf-mark" aria-hidden="true">${escapeHtml(entry.symbol.slice(-3))}</span>
+            <span class="sidebar-etf-mark" aria-hidden="true">${escapeHtml(shortLabel)}</span>
             <span class="sidebar-etf-name">
               <strong>${escapeHtml(name)}</strong>
               <em>${escapeHtml(entry.symbol)}${target ? ` · ${target}%` : ""}</em>

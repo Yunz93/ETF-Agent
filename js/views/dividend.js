@@ -1,8 +1,14 @@
 import { els, state, appConfig } from "../state.js";
 import { escapeAttr, escapeHtml, money, signed } from "../utils.js";
-import { analysisSupported, INDEX_CHART_RANGE_WINDOWS, INDEX_CHART_RANGE_LABELS } from "../constants.js";
+import {
+  analysisSupported,
+  GRADE_GUIDE,
+  INDEX_CHART_RANGE_WINDOWS,
+  INDEX_CHART_RANGE_LABELS,
+} from "../constants.js";
 import { getPeriodAdvice, STANCE } from "../period-advice.js";
 import { drawPriceChart, buyEventMarkers, sellEventMarkers } from "../chart.js";
+import { buildChartNarrative } from "../chart-narrative.js";
 import {
   cycleExecution,
   orderPreview,
@@ -11,21 +17,26 @@ import {
   returnCorrelation,
   riskMetrics,
 } from "../decision-support.js";
+import { ADD_PLAN_PRESETS, buildAddPlan, normalizeAddPlanConfig } from "../add-plan.js";
+import {
+  analysisCacheKey,
+  fetchAnalysis,
+  getCachedAnalysis,
+} from "../analysis-cache.js";
 import { callRenderer, registerRenderers } from "./render.js";
 import { persistWorkspace } from "../workspace.js";
 
-const loadingByKey = new Map();
 let indexChartBound = false;
 const forceInefficientBySymbol = new Set();
 
 const GRADE_TONES = { A: "grade-a", B: "grade-b", C: "grade-c", D: "grade-d", E: "grade-e" };
 
 function cacheKey(symbol) {
-  return symbol || "__default__";
+  return analysisCacheKey(symbol);
 }
 
 function currentPayload() {
-  return state.analysisCache[cacheKey(state.analysisSymbol)] || null;
+  return getCachedAnalysis(state.analysisSymbol);
 }
 
 function fmt(value, digits = 2, suffix = "") {
@@ -62,59 +73,37 @@ function syncAnalysisChrome(payload) {
 async function loadDividend(force = false) {
   const symbol = state.analysisSymbol;
   const key = cacheKey(symbol);
-  if (!force && state.analysisCache[key] != null) {
-    return state.analysisCache[key];
+  const cached = getCachedAnalysis(symbol);
+  if (!force && cached != null) {
+    return cached;
   }
-  if (loadingByKey.has(key)) return loadingByKey.get(key);
-
-  const request = (async () => {
-    const label = symbol || "分析";
-    if (els.dividendStatus && cacheKey(state.analysisSymbol) === key) {
-      els.dividendStatus.textContent = `正在拉取 ${label} 数据（指数历史 / 估值 / 国债收益率 / ETF 行情）…`;
+  const label = symbol || "分析";
+  if (els.dividendStatus && cacheKey(state.analysisSymbol) === key) {
+    els.dividendStatus.textContent = `正在拉取 ${label} 数据（指数历史 / 估值 / 国债收益率 / ETF 行情）…`;
+  }
+  const payload = await fetchAnalysis(symbol, { force });
+  if (cacheKey(state.analysisSymbol) !== key) return payload;
+  syncAnalysisChrome(payload);
+  if (els.dividendStatus) {
+    if (payload.supported === false) {
+      els.dividendStatus.textContent = payload.error || "暂不支持完整估值分析";
+    } else {
+      els.dividendStatus.textContent = payload.error
+        ? `数据不可用：${payload.error}`
+        : `数据更新于 ${payload.updated_at || "—"} · 指数收盘日 ${payload.index?.date || "—"}`;
     }
-    try {
-      const params = new URLSearchParams();
-      if (force) params.set("refresh", "1");
-      if (symbol) params.set("symbol", symbol);
-      const query = params.toString();
-      const response = await fetch(`/api/dividend/daily${query ? `?${query}` : ""}`);
-      const payload = await response.json();
-      state.analysisCache[key] = payload;
-      if (cacheKey(state.analysisSymbol) !== key) return payload;
-      syncAnalysisChrome(payload);
-      if (els.dividendStatus) {
-        if (payload.supported === false) {
-          els.dividendStatus.textContent = payload.error || "暂不支持完整估值分析";
-        } else {
-          els.dividendStatus.textContent = payload.error
-            ? `数据不可用：${payload.error}`
-            : `数据更新于 ${payload.updated_at || "—"} · 指数收盘日 ${payload.index?.date || "—"}`;
-        }
-      }
-      if (els.topSourceStatus) {
-        els.topSourceStatus.textContent =
-          payload.supported === false
-            ? "分析不可用"
-            : payload.error
-              ? `分析不可用：${payload.error}`
-              : payload.etf?.provider || "分析数据已就绪";
-      }
-      document.body.dataset.quoteStatus =
-        payload.supported === false || payload.error ? "error" : "connected";
-      return payload;
-    } catch (error) {
-      const payload = { supported: false, error: String(error), symbol };
-      state.analysisCache[key] = payload;
-      if (els.dividendStatus && cacheKey(state.analysisSymbol) === key) {
-        els.dividendStatus.textContent = `数据不可用：${error}`;
-      }
-      return payload;
-    } finally {
-      loadingByKey.delete(key);
-    }
-  })();
-  loadingByKey.set(key, request);
-  return request;
+  }
+  if (els.topSourceStatus) {
+    els.topSourceStatus.textContent =
+      payload.supported === false
+        ? "分析不可用"
+        : payload.error
+          ? `分析不可用：${payload.error}`
+          : payload.etf?.provider || "分析数据已就绪";
+  }
+  document.body.dataset.quoteStatus =
+    payload.supported === false || payload.error ? "error" : "connected";
+  return payload;
 }
 
 export async function renderDividend({ force = false } = {}) {
@@ -176,16 +165,34 @@ function scoreCardHtml() {
     ? `同评分 ±${backtest.band} · ${backtest.samples} 日样本 · ${backtest.horizon_days} 日均 <strong>${fmtSigned(backtest.avg_return_pct, 1, "%")}</strong> · 胜率 <strong>${fmt(backtest.win_rate_pct, 0, "%")}</strong>（${escapeHtml(backtest.label || "")} · ${fmtSigned(backtest.worst_pct, 1, "%")} ~ ${fmtSigned(backtest.best_pct, 1, "%")}）`
     : "历史同评分样本不足，暂无回测参考。";
   return `
-    <section class="panel-block dividend-score-card ${tone}" aria-label="综合评分档位">
+    <section class="panel-block dividend-score-card dividend-score-card-secondary ${tone}" aria-label="综合评分" title="${escapeAttr(GRADE_GUIDE)}">
+      <div class="panel-heading">
+        <div>
+          <h2 class="section-title">综合评分</h2>
+        </div>
+      </div>
       <div class="dividend-score-main">
         <div class="dividend-grade-mark" aria-hidden="true">${escapeHtml(grade)}</div>
         <div class="dividend-score-copy">
-          <p class="dividend-grade-kicker">${escapeHtml(grade)} 档 · 综合评分（诊断，非本期执行）</p>
+          <p class="dividend-grade-kicker">${escapeHtml(grade)} 档 · 诊断辅助</p>
           <strong class="dividend-score-total">${score.total == null ? "—" : Math.round(score.total)}</strong>
         </div>
       </div>
       <div class="dividend-components">${components}</div>
       <p class="muted dividend-backtest-line">${backtestLine}</p>
+    </section>
+  `;
+}
+
+function metricsCardHtml() {
+  return `
+    <section class="panel-block dividend-metrics-card" aria-label="关键指标">
+      <div class="panel-heading">
+        <div>
+          <h2 class="section-title">关键指标</h2>
+        </div>
+      </div>
+      <div class="metric-grid dividend-metrics">${metricsHtml()}</div>
     </section>
   `;
 }
@@ -199,6 +206,7 @@ function metricsHtml() {
   const spread = payload.spread || {};
   const technicals = payload.technicals || {};
   const kdj = technicals.kdj || {};
+  const chartMarkers = payload.chart?.markers || {};
   const price = etf.price != null ? etf.price : index.close;
   const change = etf.price != null ? etf.change_pct : index.change_pct;
   const priceDigits = etf.price != null ? 3 : 2;
@@ -207,24 +215,33 @@ function metricsHtml() {
     : "指数收盘（中证指数官网）";
   const changeClass = change > 0 ? "up" : change < 0 ? "down" : "";
   const pePct = valuation.pe_percentile_10y;
+  // 年线数字与上方图表同口径：有 ETF 图标记用 ETF MA250，否则明确标「指数」
+  const chartMa = chartMarkers.ma250;
+  let biasValue = technicals.bias_pct;
+  let maSub;
+  if (chartMa != null && payload.chart?.price_basis !== "index") {
+    if (price != null && chartMa > 0) biasValue = (Number(price) / Number(chartMa) - 1) * 100;
+    maSub = `MA250 ${fmt(chartMa, 3)}`;
+  } else if (technicals.ma250 != null) {
+    maSub = `指数 MA250 ${fmt(technicals.ma250, 2)}`;
+  } else {
+    maSub = "MA250 —";
+  }
   const cards = [
     {
       label: "PE 近 10 年分位",
       value: pePct == null ? "—" : `${Math.round(pePct * 100)}<em>%</em>`,
       sub: `PE ${fmt(valuation.pe, 2)} · PB ${fmt(valuation.pb, 2)}`,
-      priority: true,
     },
     {
       label: "年线乖离",
-      value: fmtSigned(technicals.bias_pct, 2, "%"),
-      sub: `MA250 ${fmt(technicals.ma250, 2)}`,
-      priority: true,
+      value: fmtSigned(biasValue, 2, "%"),
+      sub: maSub,
     },
     {
       label: "股债利差",
       value: fmt(spread.value, 2),
-      sub: `股息 ${fmt(valuation.dividend_yield_pct, 2, "%")} / 国债 ${fmt(bond.yield10y, 2, "%")} · ${escapeHtml(spread.label || "—")}`,
-      priority: true,
+      sub: `股息 ${fmt(valuation.dividend_yield_pct, 2, "%")} / 国债 ${fmt(bond.yield10y, 2, "%")}<br><span class="metric-sub-keep">${escapeHtml(spread.label || "—")}</span>`,
     },
     {
       label: "现价 / 单日",
@@ -245,7 +262,7 @@ function metricsHtml() {
   return cards
     .map(
       (card, index) => `
-        <div class="metric-card dividend-metric${card.priority ? " metric-priority" : ""}" style="--stagger:${index}">
+        <div class="metric-card dividend-metric" style="--stagger:${index}">
           <span>${card.label}</span>
           <strong>${card.value}</strong>
           <small class="muted">${card.sub}</small>
@@ -305,12 +322,15 @@ function aiReviewHtml(advice, context) {
   const review = currentAIReview();
   if (!enabled) {
     return `
-      <section class="panel-block ai-review-card is-disabled" aria-label="AI 分析">
+      <section class="panel-block ai-review-card ai-guide-card is-disabled" aria-label="AI 分析">
         <div class="panel-heading">
-          <div><h2 class="section-title">AI 分析</h2></div>
+          <div>
+            <h2 class="section-title">AI 分析</h2>
+          </div>
           <span class="muted">未启用</span>
         </div>
-        <p class="muted ai-review-status">可在设置中配置 DeepSeek 或 OpenAI。模型负责识别关键矛盾，最终金额受本地风控约束。</p>
+        <p class="ai-guide-copy">配置 DeepSeek 或 OpenAI 后，可对估值、趋势与仓位矛盾做二次审视；最终金额仍受本地策略与风控约束。</p>
+        <button class="primary-button compact" type="button" data-open-settings>去设置配置</button>
       </section>
     `;
   }
@@ -318,7 +338,7 @@ function aiReviewHtml(advice, context) {
     return `
       <section class="panel-block ai-review-card is-loading" aria-live="polite">
         <div class="panel-heading"><div><h2 class="section-title">AI 分析</h2></div></div>
-        <p class="muted ai-review-status">正在识别本只 ETF 的关键矛盾，请稍候…</p>
+        <p class="muted ai-review-status">正在识别 ETF 的关键矛盾，请稍候…</p>
       </section>
     `;
   }
@@ -337,15 +357,14 @@ function aiReviewHtml(advice, context) {
   const result = review?.result;
   if (!result) {
     return `
-      <section class="panel-block ai-review-card">
+      <section class="panel-block ai-review-card ai-guide-card" aria-label="AI 分析">
         <div class="panel-heading">
           <div>
             <h2 class="section-title">AI 分析</h2>
-            <p class="muted">识别本只 ETF 当前最值得决策的矛盾。</p>
           </div>
           <button class="primary-button compact" data-ai-review type="button">开始分析</button>
         </div>
-        <p class="muted ai-review-status">将分析跟踪标的、估值、趋势、交易质量、仓位和本期计划；不发送账户凭证。</p>
+        <p class="ai-guide-copy">将分析跟踪标的、估值、趋势、交易质量、仓位和本期计划。</p>
       </section>
     `;
   }
@@ -528,9 +547,31 @@ const CYCLE_STATUS_LABELS = {
   not_required: "本期无需执行",
 };
 
+/** 标题用可下单余额；策略全额只在被截断时作依据，避免与「本阶段可用」并排打架。 */
+function conclusionHeadline(advice, context) {
+  if (advice?.stance !== STANCE.INVEST) return advice?.headline || "";
+  const amount = Number(advice?.amount) || 0;
+  const remaining = Number(context?.cycle?.remainingAmount) || 0;
+  const executed = Number(context?.cycle?.executedAmount) || 0;
+  const initial = advice?.execution?.phase === "initial";
+  const verb = initial ? "建议投入" : "本期建议投入";
+  if (amount > 0 && remaining <= 0 && executed > 0) return "本期已完成";
+  const display = advice?.canAdd ? remaining : amount;
+  return `${verb} ${money(display)}`;
+}
+
 function executionPanelHtml(advice, context) {
   const { cycle, order, position, pending, symbol } = context;
   const initial = advice?.execution?.phase === "initial";
+  const strategyAmount = Number(advice?.amount) || 0;
+  const remaining = Number(cycle.remainingAmount) || 0;
+  const executed = Number(cycle.executedAmount) || 0;
+  const carry = Number(pending?.carry) || 0;
+  // 可执行额已上标题时，明细只补「策略全额 / 已买」依据，不再复述同一可用额
+  const truncated =
+    advice?.stance === STANCE.INVEST &&
+    strategyAmount > 0 &&
+    (Math.abs(strategyAmount - remaining) > 0.009 || executed > 0.009 || carry > 0.009);
   const lastBuyText = cycle.lastBuy
     ? `${cycle.lastBuy.date} · ${Number(cycle.lastBuy.price).toFixed(3)}`
     : "暂无记录";
@@ -541,12 +582,13 @@ function executionPanelHtml(advice, context) {
           allowInefficient: true,
         })
       : null;
+  const willOrder = order.shares > 0;
   const action =
     position.blocked || position.wouldExceed
       ? "暂停新增，先恢复仓位约束"
       : cycle.status === "completed"
         ? "本期已完成，避免重复买入"
-        : order.shares > 0
+        : willOrder
           ? `${order.inefficient ? "仍可买" : "可买"} ${order.shares.toLocaleString("zh-CN")} 份`
           : order.blockedReason === "fee_inefficient"
             ? "额度不足，累计至下期"
@@ -554,7 +596,40 @@ function executionPanelHtml(advice, context) {
               ? "佣金费率高于设定上限，请调整成本参数"
             : advice.amount > 0
               ? `不足 ${order.lotSize} 份，继续累计`
-              : "本期不下单";
+              : "无待成交订单";
+
+  const skipOrder = !willOrder && !(advice?.amount > 0 && order.blockedReason);
+  const gridRows = [
+    `<div><dt>当前阶段</dt><dd>${initial ? "初期建仓" : "周期定投"}</dd></div>`,
+    `<div><dt>${initial ? "建仓目标" : "计划执行日"}</dt><dd>${initial ? money(advice.execution.targetAmount) : escapeHtml(cycle.scheduled)}</dd></div>`,
+    `<div><dt>${initial ? "当前仓位" : "本期已买"}</dt><dd>${initial ? fmt(advice.execution.currentPositionPct, 1, "%") : money(executed)}</dd></div>`,
+  ];
+  if (truncated) {
+    gridRows.push(`<div><dt>策略分配</dt><dd>${money(strategyAmount)}</dd></div>`);
+    // 周期定投第三格已是「本期已买」；初期建仓第三格是仓位，这里补已买依据
+    if (initial) {
+      gridRows.push(`<div><dt>本期已买</dt><dd>${money(executed)}</dd></div>`);
+    }
+  }
+  gridRows.push(`<div><dt>待执行累计</dt><dd>${money(carry)}</dd></div>`);
+  if (willOrder || (!skipOrder && advice?.amount > 0)) {
+    gridRows.push(
+      `<div><dt>建议成交份额</dt><dd>${willOrder ? `${order.shares.toLocaleString("zh-CN")} 份` : "—"}</dd></div>`,
+      `<div><dt>成交金额</dt><dd>${willOrder ? money(order.estimatedAmount) : "—"}</dd></div>`,
+      `<div><dt>预计手续费</dt><dd>${willOrder ? money(order.fee) : "—"}</dd></div>`,
+      `<div><dt>实际占用资金</dt><dd>${willOrder ? money(order.totalCash) : "—"}</dd></div>`,
+      `<div><dt>手续费占比</dt><dd>${
+        order.feeRatioPct != null
+          ? `${fmt(order.feeRatioPct, 3)}%${order.inefficient ? " · 高于效率阈值" : ""}`
+          : "—"
+      }</dd></div>`,
+      `<div><dt>取整余款</dt><dd>${money(order.cashRemainder)}</dd></div>`,
+    );
+  } else if (!willOrder) {
+    gridRows.push(`<div><dt>下期执行日</dt><dd>${escapeHtml(cycle.scheduled)}</dd></div>`);
+  }
+  gridRows.push(`<div><dt>最近买入</dt><dd>${escapeHtml(lastBuyText)}</dd></div>`);
+
   return `
     <div class="decision-execution" aria-label="本期执行状态">
       <div class="decision-execution-head">
@@ -562,22 +637,7 @@ function executionPanelHtml(advice, context) {
         <span>${initial ? "初期建仓" : escapeHtml(CYCLE_STATUS_LABELS[cycle.status] || cycle.status)}</span>
       </div>
       <dl class="decision-execution-grid">
-        <div><dt>当前阶段</dt><dd>${initial ? "初期建仓" : "周期定投"}</dd></div>
-        <div><dt>${initial ? "建仓目标" : "计划执行日"}</dt><dd>${initial ? money(advice.execution.targetAmount) : escapeHtml(cycle.scheduled)}</dd></div>
-        <div><dt>${initial ? "当前仓位" : "本期已买"}</dt><dd>${initial ? fmt(advice.execution.currentPositionPct, 1, "%") : money(cycle.executedAmount)}</dd></div>
-        <div><dt>本阶段可用</dt><dd>${money(cycle.remainingAmount)}</dd></div>
-        <div><dt>待执行累计</dt><dd>${money(pending?.carry || 0)}</dd></div>
-        <div><dt>建议成交份额</dt><dd>${order.shares > 0 ? `${order.shares.toLocaleString("zh-CN")} 份` : "—"}</dd></div>
-        <div><dt>成交金额</dt><dd>${order.shares > 0 ? money(order.estimatedAmount) : "—"}</dd></div>
-        <div><dt>预计手续费</dt><dd>${order.shares > 0 ? money(order.fee) : "—"}</dd></div>
-        <div><dt>实际占用资金</dt><dd>${order.shares > 0 ? money(order.totalCash) : "—"}</dd></div>
-        <div><dt>手续费占比</dt><dd>${
-          order.feeRatioPct != null
-            ? `${fmt(order.feeRatioPct, 3)}%${order.inefficient ? " · 高于效率阈值" : ""}`
-            : "—"
-        }</dd></div>
-        <div><dt>取整余款</dt><dd>${money(order.cashRemainder)}</dd></div>
-        <div><dt>最近买入</dt><dd>${escapeHtml(lastBuyText)}</dd></div>
+        ${gridRows.join("")}
       </dl>
       ${
         order.blockedReason === "fee_inefficient" && forcedPreview?.shares > 0
@@ -596,75 +656,117 @@ function executionPanelHtml(advice, context) {
   `;
 }
 
-function commentaryHtml() {
-  const raw = (currentPayload() || {}).commentary || [];
-  // 兼容旧缓存：盘面只保留分析，不重复展示建议卡中的执行结论
-  const lines = raw.filter((line) => {
-    const text = String(line || "").trim();
-    return text && !text.startsWith("结论：");
-  });
-  if (!lines.length) return '<p class="muted">暂无盘面点评。</p>';
-  return `<ol class="dividend-commentary">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol>`;
+function addPlanHeadingHtml(presetLabel) {
+  return `
+    <div class="panel-heading">
+      <div>
+        <h2 class="section-title">分档策略 - ${escapeHtml(presetLabel)}</h2>
+      </div>
+    </div>
+  `;
 }
 
-function addPlanHtml(entry, price, advice) {
-  if (!entry || !(entry.shares > 0)) return "";
-  const cost = entry.cost > 0 ? entry.cost : null;
+function addPlanShellHtml(presetLabel, bodyHtml, { empty = false } = {}) {
+  return `
+    <section class="panel-block dividend-add-plan${empty ? " dividend-add-plan-empty" : ""}" aria-label="分档策略">
+      ${addPlanHeadingHtml(presetLabel)}
+      ${bodyHtml}
+    </section>
+  `;
+}
+
+function addPlanHtml(entry, price, advice, payload = null) {
+  // 始终渲染同壳占位，避免分档区时隐时现造成版面跳动（CLS）
+  const config = state.plan?.add_plan;
+  if (config && config.enabled === false) {
+    return "";
+  }
+  const cfg = normalizeAddPlanConfig(config);
+  const presetLabel = ADD_PLAN_PRESETS[cfg.preset]?.label || ADD_PLAN_PRESETS.auto.label;
+
+  if (!entry || !(entry.shares > 0)) {
+    return addPlanShellHtml(
+      presetLabel,
+      `<p class="muted dividend-add-plan-empty-msg">暂无可用档位</p>`,
+      { empty: true },
+    );
+  }
   const canAdd = advice?.canAdd === true;
   if (!canAdd) {
-    return `<p class="muted dividend-holdings-hint">本期策略结论：不加仓（${escapeHtml(advice?.reason || "不投")}）</p>`;
-  }
-  if (cost == null) {
-    return `<p class="muted dividend-holdings-hint">补成本价后可生成分档加仓预案。</p>`;
+    // 主结论已在「本期结论」卡展示，此处只说明分档不可用，不复述不投结论
+    return addPlanShellHtml(
+      presetLabel,
+      `<p class="muted dividend-add-plan-empty-msg">本期未分配到该品种</p>`,
+      { empty: true },
+    );
   }
 
   const amount = Number(advice?.amount) || 0;
-  const add1 = cost * 0.97;
-  const levels = [
-    { name: "第一档", trigger: add1, drawdown: "-3%", ratio: 0.4 },
-    { name: "第二档", trigger: cost * 0.95, drawdown: "-5%", ratio: 0.6 },
-  ];
-  return `
-    <div class="dividend-add-plan">
-      <div class="dividend-add-levels">
-        ${levels
-          .map((level) => {
-            const levelAmount = amount * level.ratio;
-            const levelOrder = orderPreview(levelAmount, level.trigger, state.plan?.trading_cost);
-            const distance = price != null && price > 0 ? ((level.trigger - price) / price) * 100 : null;
-            const triggered = price != null && price <= level.trigger;
-            return `
-              <article class="dividend-add-level${triggered ? " is-triggered" : ""}">
-                <div class="dividend-add-level-top">
-                  <strong>${level.name}</strong>
-                  <span>${level.drawdown}</span>
+  if (!(amount > 0)) {
+    return addPlanShellHtml(
+      presetLabel,
+      `<p class="muted dividend-add-plan-empty-msg">暂无可用档位</p>`,
+      { empty: true },
+    );
+  }
+
+  const assetClass = advice?.assetClass || payload?.asset_class || null;
+  const plan = buildAddPlan({
+    cost: entry.cost > 0 ? entry.cost : null,
+    price,
+    amount,
+    assetClass,
+    mult: advice?.mult,
+    config,
+    tradingCost: state.plan?.trading_cost,
+  });
+
+  if (!plan.applicable) {
+    return addPlanShellHtml(
+      plan.presetLabel || presetLabel,
+      `<p class="muted dividend-add-plan-empty-msg">${escapeHtml(plan.reason || "暂无可用档位")}</p>`,
+      { empty: true },
+    );
+  }
+
+  const levelsHtml = `
+    <div class="dividend-add-levels">
+      ${plan.levels
+        .map((level) => {
+          const distance =
+            price != null && price > 0 ? ((level.trigger - price) / price) * 100 : null;
+          return `
+            <article class="dividend-add-level${level.triggered ? " is-triggered" : ""}">
+              <div class="dividend-add-level-top">
+                <strong>${escapeHtml(level.name)}</strong>
+                <span>-${level.drawdownPct.toFixed(1)}%</span>
+              </div>
+              <div class="dividend-add-trigger">
+                <small>触发价</small>
+                <strong>${level.trigger.toFixed(3)}</strong>
+              </div>
+              <dl>
+                <div>
+                  <dt>距离现价</dt>
+                  <dd>${level.triggered ? "已触发" : distance != null ? `${fmtSigned(distance, 2, "%")}` : "—"}</dd>
                 </div>
-                <div class="dividend-add-trigger">
-                  <small>触发价</small>
-                  <strong>${level.trigger.toFixed(3)}</strong>
+                <div>
+                  <dt>预留额度</dt>
+                  <dd>${money(level.amount)}</dd>
                 </div>
-                <dl>
-                  <div>
-                    <dt>距离现价</dt>
-                    <dd>${triggered ? "已触发" : distance != null ? `${fmtSigned(distance, 2, "%")}` : "—"}</dd>
-                  </div>
-                  <div>
-                    <dt>预留额度</dt>
-                    <dd>${money(levelAmount)}</dd>
-                  </div>
-                  <div>
-                    <dt>参考份额</dt>
-                    <dd>${levelOrder.shares > 0 ? `${levelOrder.shares.toLocaleString("zh-CN")} 份` : "继续累计"}</dd>
-                  </div>
-                </dl>
-              </article>
-            `;
-          })
-          .join("")}
-      </div>
-      <p class="muted dividend-add-plan-foot">两档合计不超过本期建议额 ${money(amount)}，实际成交以触发时价格为准。</p>
+                <div>
+                  <dt>参考份额</dt>
+                  <dd>${level.shares > 0 ? `${level.shares.toLocaleString("zh-CN")} 份` : "继续累计"}</dd>
+                </div>
+              </dl>
+            </article>
+          `;
+        })
+        .join("")}
     </div>
   `;
+
+  return addPlanShellHtml(plan.presetLabel || presetLabel, levelsHtml);
 }
 
 function dcaAdviceHtml(advice, context) {
@@ -673,11 +775,30 @@ function dcaAdviceHtml(advice, context) {
   const grade = score.grade || "—";
   const proxy = payload.analysis_mode === "etf_proxy";
   const active = advice || currentPeriodAdvice();
-  const symbol = state.analysisSymbol || payload.symbol || payload.etf?.symbol || "";
-  const entry = state.etfs.find((item) => item.symbol === symbol);
-  const price = payload.etf?.price != null ? payload.etf.price : payload.index?.close;
   const bullets = [...(active.bullets || [])];
   if (proxy && active.pePct == null) bullets.push("ETF 口径，无 PE 分位");
+  const assetClass = active.assetClass || payload.asset_class || "";
+  if (assetClass === "commodity") {
+    bullets.push("商品类无估值口径，按目标仓位定额参与");
+  } else if (assetClass === "bond") {
+    bullets.push("债券类无估值口径，按目标仓位定额参与");
+  }
+
+  const strategyAmount = Number(active.amount) || 0;
+  const remaining = Number(context?.cycle?.remainingAmount) || 0;
+  const executed = Number(context?.cycle?.executedAmount) || 0;
+  const carry = Number(context?.pending?.carry) || 0;
+  // 标题已是可执行额时，用一句依据说明被截断来源，不再并列第二个「建议」金额
+  if (
+    active.stance === STANCE.INVEST &&
+    strategyAmount > 0 &&
+    (Math.abs(strategyAmount - remaining) > 0.009 || executed > 0.009 || carry > 0.009)
+  ) {
+    const parts = [`策略分配 ${money(strategyAmount)}`];
+    if (executed > 0.009) parts.push(`本期已买 ${money(executed)}`);
+    if (carry > 0.009) parts.push(`上期累计 ${money(carry)}`);
+    bullets.push(parts.join(" · "));
+  }
 
   const tone =
     active.stance === STANCE.INVEST
@@ -686,20 +807,50 @@ function dcaAdviceHtml(advice, context) {
         ? "grade-c"
         : "grade-d";
 
+  const mixedValuation =
+    assetClass === "dividend" && String(active.hint || "").includes("混合");
+  const peText = mixedValuation
+    ? "PE+利差混合分位"
+    : active.pePct != null
+      ? `PE 分位 ${(Number(active.pePct) * 100).toFixed(0)}%`
+      : active.band || "估值未知";
+  // 原因链止于倍率：结论语已在 headline 展示，末步不再复述「本期不投 / 建议投入 ¥x」
+  const reasonSteps = [
+    active.strategyName || "策略",
+    peText,
+    `${active.mult ?? "—"}×`,
+  ];
+  const stanceClass =
+    active.stance === STANCE.INVEST
+      ? "is-invest"
+      : active.stance === STANCE.NEED_BUDGET
+        ? "is-need-budget"
+        : "is-skip";
+  const headline = conclusionHeadline(active, context);
+
   return `
-    <section class="panel-block dividend-advice ${tone}" aria-label="本只定投建议">
+    <section class="panel-block dividend-advice dividend-conclusion-card ${tone} ${stanceClass}" aria-label="本期结论">
       <div class="panel-heading">
         <div>
-          <h2 class="section-title">定投建议</h2>
+          <h2 class="section-title">本期结论</h2>
         </div>
         <span class="dividend-advice-grade">${escapeHtml(active.strategyName)} · ${escapeHtml(active.band)}</span>
       </div>
-      <p class="dividend-advice-headline">${escapeHtml(active.headline)}</p>
+      <p class="dividend-advice-headline">${escapeHtml(headline)}</p>
+      <p class="dividend-reason-chain" aria-label="原因链">
+        ${reasonSteps
+          .map(
+            (step, index) => `
+          <span class="dividend-reason-step${index === reasonSteps.length - 1 ? " is-result" : ""}">${escapeHtml(step)}</span>
+          ${index < reasonSteps.length - 1 ? `<span class="dividend-reason-sep" aria-hidden="true">→</span>` : ""}
+        `,
+          )
+          .join("")}
+      </p>
       <ul class="dividend-advice-list">
         ${bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
       </ul>
       ${executionPanelHtml(active, context)}
-      ${context.cycle.remainingAmount > 0 ? addPlanHtml(entry, price, { ...active, amount: context.cycle.remainingAmount }) : ""}
     </section>
   `;
 }
@@ -792,12 +943,11 @@ function vehicleQualityHtml(context) {
     ["买卖价差", optionalMetric(metadata.bid_ask_spread_pct, (value) => `${fmt(value, 3)}%`)],
   ];
   return `
-    <section class="panel-block decision-detail-card" aria-label="ETF 交易质量">
+    <section class="panel-block decision-detail-card decision-secondary" aria-label="ETF 交易质量">
       <div class="panel-heading"><div><h2 class="section-title">ETF 交易质量</h2></div></div>
       <dl class="decision-quality-grid">
         ${rows.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join("")}
       </dl>
-      <p class="muted decision-card-note">规模与费率来自东方财富基金档案；折溢价与价差来自腾讯实时盘口；跟踪误差为近一年 ETF 与指数同日收益差的年化估算。以上数据不参与建议金额计算。</p>
     </section>
   `;
 }
@@ -830,7 +980,7 @@ function riskAndConfidenceHtml(context) {
     ["历史样本", risk ? `${risk.samples} 个交易日` : "不足"],
   ];
   return `
-    <section class="panel-block decision-detail-card" aria-label="风险与数据可信度">
+    <section class="panel-block decision-detail-card decision-secondary" aria-label="风险与数据可信度">
       <div class="panel-heading">
         <div><h2 class="section-title">风险与数据可信度</h2></div>
         <span class="decision-confidence${errorCount || stale ? " is-degraded" : ""}">${confidenceLabel}</span>
@@ -881,6 +1031,28 @@ function buildIndexChartMarkers(payload) {
   return markers;
 }
 
+function chartNarrativeHtml(payload) {
+  // ETF 走势解读：与上方图表同口径（chart.points / markers）
+  const rangeKey = state.indexChartRange || "1y";
+  const points = sliceIndexChartPoints(payload?.chart?.points || [], rangeKey);
+  const lines = buildChartNarrative({
+    points,
+    markers: payload?.chart?.markers || {},
+    price: payload?.etf?.price != null ? payload.etf.price : null,
+    rangeKey,
+    priceBasis: payload?.chart?.price_basis === "index" ? "index" : "etf",
+  });
+  if (!lines.length) return '<p class="muted chart-narrative-empty">历史数据不足，暂无法解读走势。</p>';
+  return `<ul class="chart-narrative">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`;
+}
+
+function commentaryHtml() {
+  const raw = (currentPayload() || {}).commentary || [];
+  const lines = Array.isArray(raw) ? raw.filter(Boolean) : [];
+  if (!lines.length) return '<p class="muted">暂无盘面点评。</p>';
+  return `<ol class="dividend-commentary">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol>`;
+}
+
 function paintDividend() {
   if (!els.dividendContent) return;
   const payload = currentPayload();
@@ -907,17 +1079,26 @@ function paintDividend() {
   els.dividendContent.hidden = false;
   const advice = currentPeriodAdvice();
   const context = decisionContext(advice);
+  const addPlanEntry = state.etfs.find((item) => item.symbol === context.symbol);
+  const addPlanPrice = payload.etf?.price != null ? payload.etf.price : payload.index?.close;
+  // 始终占位：额度不足 / 无持仓时也渲染空态壳，避免右侧塌缩跳动
+  const addPlan = addPlanHtml(
+    addPlanEntry,
+    addPlanPrice,
+    {
+      ...advice,
+      amount: context.cycle.remainingAmount,
+    },
+    payload,
+  );
   els.dividendContent.innerHTML = `
     ${errorsHtml()}
     <div class="dividend-hero">
-      <div class="dividend-hero-main">
-        ${scoreCardHtml()}
-        ${dcaAdviceHtml(advice, context)}
-      </div>
-      <div class="dividend-hero-aside">
-        <div class="metric-grid dividend-metrics">${metricsHtml()}</div>
-        ${holdingsCardHtml(advice, context)}
-      </div>
+      ${dcaAdviceHtml(advice, context)}
+      ${metricsCardHtml()}
+      ${addPlan}
+      ${scoreCardHtml()}
+      ${holdingsCardHtml(advice, context)}
     </div>
     <div class="decision-detail-grid">
       ${vehicleQualityHtml(context)}
@@ -940,19 +1121,25 @@ function paintDividend() {
         <canvas id="dividendChart" width="960" height="360" aria-label="ETF 价格走势"></canvas>
         <div class="price-tooltip" id="dividendChartTooltip" hidden></div>
       </div>
+      <div class="chart-narrative-block">
+        <div id="dividendChartNarrative" aria-label="ETF 走势解读">${chartNarrativeHtml(payload)}</div>
+      </div>
     </section>
     <section class="panel-block">
       <div class="panel-heading">
         <div>
           <h2 class="section-title">今日盘面</h2>
         </div>
-        <span class="muted">规则点评 · 执行跟策略</span>
       </div>
       ${commentaryHtml()}
     </section>
     ${aiReviewHtml(advice, context)}
-    <section class="panel-block dividend-sources">
-      <h2 class="section-title">数据来源</h2>
+    <section class="panel-block dividend-sources decision-secondary">
+      <div class="panel-heading">
+        <div>
+          <h2 class="section-title">数据来源</h2>
+        </div>
+      </div>
       <ul>${sourcesHtml()}</ul>
     </section>
   `;
@@ -1007,6 +1194,11 @@ function bindIndexChartRangeControls() {
       requestAIReview({ force: aiButton.dataset.force === "true" });
       return;
     }
+    const openSettings = event.target.closest?.("[data-open-settings]");
+    if (openSettings && els.dividendContent.contains(openSettings)) {
+      callRenderer("switchView", "settings");
+      return;
+    }
     const choiceButton = event.target.closest?.("[data-ai-choice]");
     if (choiceButton && els.dividendContent.contains(choiceButton)) {
       const symbol = state.analysisSymbol || currentPayload()?.symbol || "";
@@ -1029,6 +1221,8 @@ function bindIndexChartRangeControls() {
     const canvas = els.dividendContent.querySelector("#dividendChart");
     const tooltip = els.dividendContent.querySelector("#dividendChartTooltip");
     drawIndexChart(payload, canvas, tooltip, buildIndexChartMarkers(payload));
+    const narrative = els.dividendContent.querySelector("#dividendChartNarrative");
+    if (narrative) narrative.innerHTML = chartNarrativeHtml(payload);
   });
 }
 

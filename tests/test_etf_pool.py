@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -90,7 +91,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(second["shares"], 0)
         self.assertEqual(second["cost"], 0)
         self.assertEqual(second["target_weight"], 100)
-        self.assertEqual(workspace["version"], 6)
+        self.assertEqual(workspace["version"], 7)
         self.assertEqual(workspace["plan"]["name"], "测试计划")
         self.assertEqual(workspace["plan"]["amount"], 3000)
         self.assertEqual(workspace["plan"]["cadence"], "weekly")
@@ -112,17 +113,88 @@ class WorkspaceNormalizationTests(unittest.TestCase):
                         "grade_mult": {"A": 2, "E": 0},
                         "use_rebalance": False,
                     },
+                    "strategy_overrides": {
+                        "512890": "fixed",
+                        "sh510300": "grade",
+                        "159937": "nope",
+                        "bad": "valuation",
+                    },
                 }
             }
         )
         plan = workspace["plan"]
         self.assertEqual(plan["strategy"], "custom")
         self.assertEqual(plan["strategy_config"]["pe_bands"][0]["max_pct"], 25)
+        self.assertEqual(plan["strategy_overrides"], {"512890": "fixed", "510300": "grade"})
+        self.assertEqual(
+            workspace_store.normalize_workspace({"plan": {}} )["plan"]["strategy_overrides"],
+            {},
+        )
         self.assertEqual(plan["strategy_config"]["pe_bands"][-1]["max_pct"], 100)
         self.assertEqual(plan["strategy_config"]["grade_mult"]["A"], 2.0)
         self.assertEqual(plan["strategy_config"]["grade_mult"]["C"], 1.0)
         self.assertFalse(plan["strategy_config"]["use_rebalance"])
 
+        fixed = workspace_store.normalize_plan({"strategy": "fixed"})
+        self.assertEqual(fixed["strategy"], "fixed")
+
+    def test_plan_add_plan_defaults_and_normalize(self):
+        legacy = workspace_store.normalize_plan({})
+        self.assertEqual(
+            legacy["add_plan"],
+            {"enabled": True, "anchor": "price", "preset": "auto", "levels": None},
+        )
+
+        custom = workspace_store.normalize_plan(
+            {
+                "add_plan": {
+                    "enabled": False,
+                    "anchor": "cost",
+                    "levels": [
+                        {"drawdown_pct": 12, "ratio": 1},
+                        {"drawdown_pct": 0.1, "ratio": 1},
+                        {"drawdown_pct": 40, "ratio": 2},
+                        {"drawdown_pct": 8, "ratio": 1},
+                        {"drawdown_pct": 20, "ratio": 1},
+                    ],
+                }
+            }
+        )
+        self.assertFalse(custom["add_plan"]["enabled"])
+        self.assertEqual(custom["add_plan"]["anchor"], "cost")
+        # 旧配置带 levels 时推断为 custom 预设
+        self.assertEqual(custom["add_plan"]["preset"], "custom")
+        self.assertEqual(len(custom["add_plan"]["levels"]), 4)
+        self.assertEqual(
+            [row["drawdown_pct"] for row in custom["add_plan"]["levels"]],
+            [0.5, 8.0, 12.0, 30.0],
+        )
+        # 后端宽松存储：比例不归一
+        self.assertEqual(custom["add_plan"]["levels"][0]["ratio"], 1.0)
+        self.assertEqual(custom["add_plan"]["levels"][3]["ratio"], 2.0)
+
+        bad_anchor = workspace_store.normalize_plan({"add_plan": {"anchor": "nope"}})
+        self.assertEqual(bad_anchor["add_plan"]["anchor"], "price")
+        camel = workspace_store.normalize_plan({"addPlan": {"enabled": 0, "anchor": "cost"}})
+        self.assertFalse(camel["add_plan"]["enabled"])
+        self.assertEqual(camel["add_plan"]["anchor"], "cost")
+
+        empty_levels = workspace_store.normalize_plan(
+            {"add_plan": {"levels": [{"drawdown_pct": 3, "ratio": 0}]}}
+        )
+        self.assertIsNone(empty_levels["add_plan"]["levels"])
+        self.assertEqual(empty_levels["add_plan"]["preset"], "auto")
+
+        # 预设持久化：非 custom 预设不携带 levels；未知预设回退 auto
+        steady = workspace_store.normalize_plan(
+            {"add_plan": {"preset": "steady", "levels": [{"drawdown_pct": 9, "ratio": 1}]}}
+        )
+        self.assertEqual(steady["add_plan"]["preset"], "steady")
+        self.assertIsNone(steady["add_plan"]["levels"])
+        bogus = workspace_store.normalize_plan({"add_plan": {"preset": "magic"}})
+        self.assertEqual(bogus["add_plan"]["preset"], "auto")
+
+    def test_plan_strategy_unknown_falls_back(self):
         fixed = workspace_store.normalize_plan({"strategy": "fixed"})
         self.assertEqual(fixed["strategy"], "fixed")
         bogus = workspace_store.normalize_plan({"strategy": "magic"})
@@ -139,7 +211,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
                 ],
             }
         )
-        self.assertEqual(workspace["version"], 6)
+        self.assertEqual(workspace["version"], 7)
         self.assertEqual(len(workspace["buys"]), 1)
         self.assertEqual(workspace["buys"][0]["symbol"], "510300")
         self.assertTrue(workspace_store.workspace_has_user_data(workspace))
@@ -179,7 +251,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(workspace["buys"][0]["shares"], 1000)
         self.assertEqual(workspace["buys"][1]["id"], "keep")
         self.assertEqual(workspace["buys"][1]["symbol"], "510300")
-        self.assertEqual(workspace["version"], 6)
+        self.assertEqual(workspace["version"], 7)
 
     def test_plan_normalizes_initial_build_and_trading_cost(self):
         plan = workspace_store.normalize_plan(
@@ -207,6 +279,31 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(plan["initial_target_pct"], 30)
         self.assertEqual(plan["trading_cost"]["commission_rate_pct"], 0.025)
         self.assertEqual(plan["pending_orders"]["512890"]["remaining"], 2000)
+
+    def test_save_workspace_preserves_client_iso_updated_at(self):
+        stamp = "2026-07-31T01:02:03.456Z"
+        payload = {
+            "etfs": [{"symbol": "510300", "name": "沪深300", "shares": 0, "cost": 0, "target_weight": 10}],
+            "plan": {
+                "amount": 8888,
+                "capital_base": 250000,
+                "initial_target_pct": 40,
+                "name": "重启校验",
+            },
+            "updated_at": stamp,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "workspace.json"
+            with patch.object(workspace_store, "WORKSPACE_PATH", path):
+                saved = workspace_store.save_workspace(payload)
+                self.assertEqual(saved["updated_at"], stamp)
+                self.assertEqual(saved["plan"]["capital_base"], 250000)
+                self.assertEqual(saved["plan"]["amount"], 8888)
+                self.assertEqual(saved["plan"]["initial_target_pct"], 40)
+                loaded = workspace_store.get_workspace()
+                self.assertEqual(loaded["plan"]["capital_base"], 250000)
+                self.assertEqual(loaded["plan"]["name"], "重启校验")
+                self.assertEqual(loaded["updated_at"], stamp)
 
     def test_trade_fee_is_preserved(self):
         workspace = workspace_store.normalize_workspace(
@@ -240,8 +337,44 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(workspace["etfs"], [])
         self.assertEqual(workspace["buys"], [])
         self.assertEqual(workspace["sells"], [])
+        self.assertEqual(workspace["execution_drafts"], [])
         self.assertEqual(workspace["plan"]["name"], "默认定投计划")
         self.assertFalse(workspace_store.workspace_has_user_data(workspace))
+
+    def test_execution_drafts_are_normalized(self):
+        workspace = workspace_store.normalize_workspace(
+            {
+                "execution_drafts": [
+                    {
+                        "period": "2026-07-01",
+                        "symbol": "sh512890",
+                        "suggested_amount": 1200,
+                        "price": 1.2,
+                        "shares": 1000,
+                        "fee": 5,
+                        "status": "pending",
+                    },
+                    {"period": "bad", "symbol": "512890"},
+                    {
+                        "id": "draft_x",
+                        "period": "2026-07-01",
+                        "symbol": "510300",
+                        "suggested_amount": 800,
+                        "price": 4,
+                        "shares": 200,
+                        "status": "skipped",
+                        "skip_reason": "已下单",
+                    },
+                ]
+            }
+        )
+        self.assertEqual(len(workspace["execution_drafts"]), 2)
+        first = next(item for item in workspace["execution_drafts"] if item["symbol"] == "512890")
+        self.assertEqual(first["id"], "draft_2026-07-01_512890")
+        self.assertEqual(first["status"], "pending")
+        skipped = next(item for item in workspace["execution_drafts"] if item["symbol"] == "510300")
+        self.assertEqual(skipped["skip_reason"], "已下单")
+        self.assertEqual(workspace["version"], 7)
 
 
 class ConfigNormalizationTests(unittest.TestCase):

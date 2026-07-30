@@ -126,7 +126,7 @@ ETF_ANALYSIS_REGISTRY = {
         "index_name": "纳斯达克100",
         "index_full_name": "纳斯达克100",
         "danjuan_code": "NDX",
-        "etf_name": "纳指ETF",
+        "etf_name": "纳指100ETF博时",
         "history_source": "tencent",
         "history_symbol": "us.NDX",
     },
@@ -172,11 +172,12 @@ DEFAULT_STRATEGY_CONFIG = {
 }
 
 DEFAULT_WORKSPACE = {
-    "version": 6,
+    "version": 7,
     "updated_at": None,
     "etfs": [],
     "buys": [],
     "sells": [],
+    "execution_drafts": [],
     "plan": {
         "name": "默认定投计划",
         "amount": 2000,
@@ -188,6 +189,8 @@ DEFAULT_WORKSPACE = {
         "note": "",
         "strategy": "valuation",
         "strategy_config": DEFAULT_STRATEGY_CONFIG,
+        "strategy_overrides": {},
+        "add_plan": {"enabled": True, "anchor": "price", "preset": "auto", "levels": None},
         "trading_cost": {
             "min_commission": 5,
             "commission_rate_pct": 0.03,

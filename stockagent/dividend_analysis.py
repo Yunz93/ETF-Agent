@@ -489,21 +489,31 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
     backtest = backtest_forward_returns(index_rows, scores, total)
     backtest["label"] = win_rate_label(backtest.get("win_rate_pct"))
 
-    # ---- 盘面点评 ----
+    # ---- 盘面点评（指数口径，与评分/估值同一套 technicals）----
     commentary = build_commentary(score_block, technicals, spread_block, valuation_block)
 
     # 决策指标仍按跟踪指数计算，走势图单独使用 ETF 实际价格。
+    using_etf_chart = bool(chart_rows)
     chart_source_rows = chart_rows or index_rows
     chart_source_rows = chart_source_rows[-3000:] if len(chart_source_rows) > 3000 else chart_source_rows
     chart_closes = [row["close"] for row in chart_source_rows]
     chart_ma250 = sma(chart_closes, 250)
     chart_boll = bollinger(chart_closes, 20, 2.0)
+    chart_points = [{"date": row["date"], "close": row["close"]} for row in chart_source_rows]
+    chart_markers = {
+        "ma250": round(chart_ma250, 3) if chart_ma250 is not None else None,
+        "boll_mid": round(chart_boll["mid"], 3) if chart_boll else None,
+        "boll_upper": round(chart_boll["upper"], 3) if chart_boll else None,
+        "boll_lower": round(chart_boll["lower"], 3) if chart_boll else None,
+    }
+    price_basis = "etf" if using_etf_chart else "index"
     payload = {
         "name": settings.get("index_name", "红利低波"),
         "index_name": settings.get("index_name", "红利低波"),
         "index_full_name": settings.get("index_full_name", "中证红利低波"),
         "index_code": settings.get("index_code", "H30269"),
         "etf_name": settings.get("etf_name"),
+        "asset_class": settings.get("asset_class") or "equity_core",
         "etf": etf_quote or {},
         "index": {
             "close": latest["close"],
@@ -522,16 +532,11 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
         "chart": {
             "name": settings.get("etf_name"),
             "symbol": settings.get("etf_symbol"),
-            "price_basis": "etf",
-            "points": [{"date": row["date"], "close": row["close"]} for row in chart_source_rows],
+            "price_basis": price_basis,
+            "points": chart_points,
             "available_from": chart_source_rows[0]["date"] if chart_source_rows else None,
             "available_to": chart_source_rows[-1]["date"] if chart_source_rows else None,
-            "markers": {
-                "ma250": round(chart_ma250, 3) if chart_ma250 is not None else None,
-                "boll_mid": round(chart_boll["mid"], 3) if chart_boll else None,
-                "boll_upper": round(chart_boll["upper"], 3) if chart_boll else None,
-                "boll_lower": round(chart_boll["lower"], 3) if chart_boll else None,
-            },
+            "markers": chart_markers,
         },
         "disclaimer": DISCLAIMER,
         "updated_at": as_of(None),

@@ -21,7 +21,7 @@
     "batch_size": 80,
     "max_age_seconds": 1800,
     "auto_refresh_enabled": true,
-    "refresh_interval_seconds": 300
+    "refresh_interval_seconds": 60
   },
   "etf": {
     "pool": [

@@ -1,5 +1,11 @@
-import { els, state } from "./state.js";
-import { buildWorkspacePayload, exportWorkspaceBackup, importWorkspaceBackup, persistWorkspace } from "./workspace.js";
+import { els, state, workspaceRuntime } from "./state.js";
+import {
+  buildWorkspacePayload,
+  exportWorkspaceBackup,
+  importWorkspaceBackup,
+  persistWorkspace,
+  writeLocalWorkspaceCache,
+} from "./workspace.js";
 import { saveAppConfig } from "./settings.js";
 import {
   closeMobileSidebar,
@@ -13,6 +19,7 @@ import {
   addEtf,
   addBuyRecord,
   cancelBuyEdit,
+  importSeedPool,
   readPlanFormIntoState,
   renderBuys,
   selectEtfChart,
@@ -58,6 +65,11 @@ export function bindEvents() {
     if (event.target.closest("[data-analyze]")) closeMobileSidebar();
   });
 
+  els.importSeedPool?.addEventListener("click", () => importSeedPool());
+  document.addEventListener("click", (event) => {
+    const seed = event.target.closest?.("[data-import-seed-pool]");
+    if (seed) importSeedPool();
+  });
   els.dividendRefresh?.addEventListener("click", () => {
     renderDividend({ force: true });
   });
@@ -66,14 +78,23 @@ export function bindEvents() {
     renderEtfPool({ refresh: true });
   });
 
-  const persistPlan = () => {
+  const persistPlan = ({ rerender = true } = {}) => {
     readPlanFormIntoState();
     persistWorkspace();
-    renderEtfPool();
+    // input 过程不要整页重绘，否则 syncPlanForm 会打乱正在输入的光标
+    if (rerender) renderEtfPool();
   };
 
-  els.dcaPlanForm?.addEventListener("change", persistPlan);
-  els.planStrategyCustom?.addEventListener("change", persistPlan);
+  // change：失焦提交并刷新概览；input：仅写入 state/磁盘（debounce PUT）
+  els.dcaPlanForm?.addEventListener("change", () => persistPlan({ rerender: true }));
+  els.dcaPlanForm?.addEventListener("input", () => persistPlan({ rerender: false }));
+  els.dcaPlanForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    persistPlan({ rerender: true });
+  });
+  els.planStrategyCustom?.addEventListener("change", () => persistPlan({ rerender: true }));
+  els.planStrategyCustom?.addEventListener("input", () => persistPlan({ rerender: false }));
+  els.planAddPlan?.addEventListener("change", () => persistPlan({ rerender: true }));
 
   els.etfForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -115,7 +136,14 @@ export function bindEvents() {
   els.exportWorkspace?.addEventListener("click", exportWorkspaceBackup);
   els.importWorkspace?.addEventListener("click", () => els.importWorkspaceFile?.click());
   els.importWorkspaceFile?.addEventListener("change", importWorkspaceBackup);
-  els.syncWorkspaceNow?.addEventListener("click", () => persistWorkspace({ immediate: true }));
+  els.syncWorkspaceNow?.addEventListener("click", () => {
+    try {
+      if (workspaceRuntime.planFormReady) readPlanFormIntoState();
+    } catch {
+      /* form may be unavailable */
+    }
+    persistWorkspace({ immediate: true, announce: true });
+  });
 
   els.saveConfig?.addEventListener("click", saveAppConfig);
 
@@ -148,7 +176,25 @@ export function bindEvents() {
   window.addEventListener("resize", syncSidebarForViewport);
 
   window.addEventListener("beforeunload", () => {
-    if (state.workspaceSync.status === "pending" || state.workspaceSync.status === "syncing") {
+    try {
+      // 表单尚未从 state 回填前禁止回读，否则空表单会冲掉刚 hydrate 的计划并污染 localStorage
+      if (workspaceRuntime.planFormReady) readPlanFormIntoState();
+    } catch {
+      /* form may be unavailable during teardown */
+    }
+    try {
+      writeLocalWorkspaceCache({
+        updatedAt:
+          state.workspaceSync.status === "synced" ? state.workspaceSync.updatedAt : null,
+      });
+    } catch {
+      /* ignore cache failures */
+    }
+    if (
+      state.workspaceSync.status === "pending" ||
+      state.workspaceSync.status === "syncing" ||
+      state.workspaceSync.status === "offline"
+    ) {
       try {
         fetch("/api/workspace", {
           method: "PUT",

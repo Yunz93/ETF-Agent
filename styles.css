@@ -412,9 +412,13 @@ p {
   background: var(--surface-2);
   box-shadow: inset 0 0 0 1px var(--line);
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  text-align: center;
+  padding: 0 2px;
+  overflow: hidden;
   flex-shrink: 0;
 }
 
@@ -509,7 +513,9 @@ html[data-sidebar="collapsed"] .sidebar-footer {
 html[data-sidebar="collapsed"] .nav-stack-footer .nav-item {
   justify-content: center;
   width: 44px;
-  padding: 10px;
+  min-height: 44px;
+  padding: 8px;
+  gap: 0;
 }
 
 @media (hover: hover) {
@@ -559,17 +565,32 @@ html[data-sidebar="collapsed"] .nav-stack-footer .nav-item {
 }
 
 .icon {
-  width: 22px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   text-align: center;
   color: var(--faint);
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: 0.02em;
+  line-height: 1;
+  transform: scale(1.15);
+  transform-origin: center;
 }
 
 .nav-item.active .icon {
   color: var(--accent-strong);
+}
+
+html[data-sidebar="collapsed"] .nav-stack-footer .icon {
+  width: 28px;
+  height: 28px;
+  font-size: 24px;
+  transform: scale(1.2);
 }
 
 .panel-heading,
@@ -874,14 +895,6 @@ input[type="checkbox"]:focus-visible {
   line-height: 1.1;
 }
 
-.metric-card:first-child {
-  background: var(--surface-2);
-}
-
-.metric-priority {
-  background: color-mix(in oklab, var(--surface-accent-strong) 55%, var(--surface-2));
-}
-
 .stock-table-panel,
 .detail-panel,
 #watchlistView,
@@ -900,6 +913,94 @@ input[type="checkbox"]:focus-visible {
   width: 100%;
   border-collapse: collapse;
   min-width: 940px;
+}
+
+.etf-table-wrap {
+  position: relative;
+}
+
+.etf-table-wrap::after {
+  content: "";
+  position: sticky;
+  right: 0;
+  top: 0;
+  float: right;
+  width: 28px;
+  height: 100%;
+  margin-left: -28px;
+  pointer-events: none;
+  background: linear-gradient(to right, transparent, color-mix(in oklab, var(--surface) 88%, transparent));
+}
+
+.seed-guide-card {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 18px;
+  padding: 18px 16px;
+  border: 1px dashed color-mix(in srgb, var(--line) 90%, var(--accent));
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--surface-2) 92%, var(--accent));
+  text-align: left;
+}
+
+.seed-guide-card h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.seed-guide-card p {
+  margin: 0;
+  max-width: 42em;
+}
+
+.seed-guide-card[hidden] {
+  display: none;
+}
+
+.ai-guide-card .ai-guide-copy {
+  margin: 0 0 12px;
+  max-width: 42em;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+@media (max-width: 1100px) {
+  .etf-table .etf-col-target,
+  .etf-table .etf-col-asset {
+    display: none;
+  }
+
+  .stock-table.etf-table {
+    min-width: 860px;
+  }
+
+  .plan-config-group {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .plan-config-identity {
+    grid-template-columns: 1fr;
+  }
+}
+
+.etf-strategy-select {
+  width: 100%;
+  min-width: 6.5em;
+  max-width: 8.5em;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+@media (max-width: 1024px) {
+  .plan-config-strip {
+    padding: 12px;
+  }
+
+  .plan-config-group {
+    grid-template-columns: 1fr;
+  }
 }
 
 th,
@@ -957,6 +1058,12 @@ td {
 
 .settings-status {
   margin: 0 0 12px;
+}
+
+.settings-status:empty,
+.settings-status[hidden] {
+  display: none;
+  margin: 0;
 }
 
 #workspaceStatus[data-status="synced"] {
@@ -1073,6 +1180,10 @@ canvas {
   color: var(--warn);
   line-height: 1.55;
   font-size: 13px;
+}
+
+.panel-block > .panel-heading {
+  margin-bottom: 10px;
 }
 
 .panel-block {
@@ -1655,30 +1766,156 @@ button:active {
   align-items: stretch;
 }
 
-.dividend-hero-main,
-.dividend-hero-aside {
-  display: contents;
+.dividend-hero > .panel-block {
   min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
 }
 
-.dividend-hero-main > .dividend-score-card {
+/* 左：本期结论跨两行；右：关键指标 + 分档策略上下叠放 */
+.dividend-hero > .dividend-conclusion-card,
+.dividend-hero > .dividend-advice {
   grid-column: 1;
-  grid-row: 1;
+  grid-row: 1 / span 2;
 }
 
-.dividend-hero-aside > .dividend-metrics {
+.dividend-hero > .dividend-metrics-card {
   grid-column: 2;
   grid-row: 1;
 }
 
-.dividend-hero-main > .dividend-advice {
-  grid-column: 1;
+.dividend-hero > .dividend-add-plan {
+  grid-column: 2;
   grid-row: 2;
 }
 
-.dividend-hero-aside > .dividend-holdings-card {
+.dividend-hero > .dividend-add-plan-empty {
+  min-height: 132px;
+}
+
+.dividend-hero > .dividend-score-card {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.dividend-hero > .dividend-holdings-card {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 3;
+}
+
+.dividend-conclusion-card .decision-execution {
+  margin-top: auto;
+}
+
+.dividend-score-card .dividend-backtest-line {
+  margin-top: auto;
+}
+
+.dividend-holdings-card > .dividend-holdings,
+.dividend-holdings-card > .dividend-holdings.empty {
+  flex: 1 1 auto;
+}
+
+.dividend-metrics-card > .dividend-metrics {
+  flex: 1 1 auto;
+  align-content: stretch;
+}
+
+.dividend-score-card-secondary .dividend-grade-mark {
+  font-size: clamp(72px, 9vw, 96px);
+  opacity: 0.95;
+}
+
+.dividend-score-card-secondary .dividend-score-total {
+  font-size: clamp(1.5rem, 2.4vw, 1.9rem);
+}
+
+.dividend-grade-guide {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.dividend-conclusion-card {
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid color-mix(in oklab, var(--grade-tone, var(--accent)) 48%, var(--line));
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in oklab, var(--grade-tone, var(--accent)) 18%, var(--surface-2)) 0%,
+      var(--surface-2) 48%
+    );
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--grade-tone, var(--accent)) 22%, transparent),
+    var(--shadow);
+}
+
+.dividend-conclusion-card .dividend-advice-headline {
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.dividend-conclusion-card.is-invest .dividend-advice-headline {
+  color: var(--grade-a);
+}
+
+.dividend-conclusion-card.is-skip .dividend-advice-headline {
+  color: var(--grade-tone, var(--grade-d));
+}
+
+.dividend-reason-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--grade-tone, var(--accent)) 16%, var(--surface-3));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--grade-tone, var(--accent)) 28%, var(--line));
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.dividend-reason-step {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.dividend-reason-step.is-result {
+  color: var(--grade-tone, var(--ink));
+  font-weight: 800;
+  font-size: 1.12em;
+}
+
+.dividend-reason-sep {
+  color: var(--muted);
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.dividend-conclusion-card .dividend-advice-list {
+  color: color-mix(in oklab, var(--ink) 72%, var(--muted));
+  font-size: 12.5px;
+}
+
+.dividend-conclusion-card .decision-execution {
+  opacity: 0.88;
+  border-color: color-mix(in oklab, var(--grade-tone, var(--accent)) 22%, var(--line));
+  background: color-mix(in oklab, var(--surface-2) 92%, transparent);
+}
+
+.dividend-conclusion-card .decision-execution-head strong {
+  font-size: 14px;
 }
 
 .dividend-advice,
@@ -1724,7 +1961,33 @@ button:active {
 }
 
 .dividend-add-plan {
-  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.dividend-add-plan > .panel-heading {
+  flex: 0 0 auto;
+}
+
+.dividend-add-plan-empty-msg {
+  margin: 0;
+  max-width: 18em;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* 空态正文在标题下方剩余区域居中，标题本身固定在顶部 */
+.dividend-add-plan-empty > .dividend-add-plan-empty-msg {
+  margin-top: auto;
+  margin-bottom: auto;
+  text-align: center;
+  align-self: center;
+}
+
+.dividend-add-plan > .dividend-add-levels {
+  flex: 1 1 auto;
 }
 
 .decision-execution {
@@ -1805,6 +2068,15 @@ button:active {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  align-items: stretch;
+}
+
+.decision-detail-grid > .panel-block {
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  height: auto;
 }
 
 .decision-detail-card {
@@ -1842,17 +2114,11 @@ button:active {
   line-height: 1.5;
 }
 
-.dividend-add-plan-foot {
-  margin: 8px 0 0;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 .dividend-add-levels {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  margin-top: 12px;
+  margin-top: 0;
 }
 
 .dividend-add-level {
@@ -1922,8 +2188,8 @@ button:active {
 .dividend-advice-headline {
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(22px, 2.4vw, 28px);
-  font-weight: 700;
+  font-size: 28px;
+  font-weight: 800;
   line-height: 1.2;
   letter-spacing: -0.02em;
   color: var(--grade-tone, var(--ink));
@@ -2001,16 +2267,121 @@ button:active {
   line-height: 1.5;
 }
 
+.pool-alloc-progress {
+  color: color-mix(in oklab, var(--warn) 70%, var(--muted));
+}
+
+.pool-alloc-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
+}
+
+.pool-alloc-badge.is-ready {
+  color: color-mix(in oklab, var(--up, #1a7f4b) 80%, var(--ink));
+  background: color-mix(in oklab, var(--up, #1a7f4b) 12%, var(--surface));
+}
+
+.pool-alloc-badge.is-neutral {
+  color: var(--muted);
+  background: color-mix(in oklab, var(--muted) 14%, var(--surface));
+}
+
+.pool-alloc-summary.is-preliminary .pool-alloc-metric strong,
+.dca-alloc-row .num.is-preliminary {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.pool-alloc-prelim-tag {
+  margin-left: 4px;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 650;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.pool-alloc-exec-summary {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.exec-draft-panel {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.exec-draft-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.exec-draft-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) auto;
+  gap: 10px 14px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.exec-draft-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.exec-draft-main strong {
+  font-size: 13px;
+}
+
+.exec-draft-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.exec-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
 @media (max-width: 720px) {
   .pool-alloc-summary {
     grid-template-columns: 1fr;
+  }
+
+  .exec-draft-row {
+    grid-template-columns: 1fr;
+  }
+
+  .exec-draft-actions {
+    justify-content: flex-start;
   }
 }
 
 .dca-alloc-head,
 .dca-alloc-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.9fr) minmax(0, 0.9fr);
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.8fr) minmax(0, 0.9fr);
   gap: 8px;
   padding: 8px 12px;
   align-items: center;
@@ -2055,7 +2426,6 @@ button:active {
   gap: 14px;
   position: relative;
   overflow: hidden;
-  height: auto;
   /* 父容器是纵向 flex：align-self 作用于水平方向，start 会把卡片压成内容宽度 */
   align-self: stretch;
   animation: grade-enter 420ms var(--ease-out) both;
@@ -2182,6 +2552,10 @@ button:active {
   line-height: 1.35;
 }
 
+.metric-sub-keep {
+  white-space: nowrap;
+}
+
 .dividend-metric strong {
   font-size: 20px;
 }
@@ -2193,6 +2567,24 @@ button:active {
   font-family: var(--font-sans);
 }
 
+.decision-secondary {
+  opacity: 0.68;
+}
+
+.decision-secondary .decision-quality-grid dd,
+.decision-secondary .decision-execution-grid dd {
+  font-size: 12px;
+  font-weight: 600;
+  color: color-mix(in oklab, var(--ink) 78%, var(--muted));
+}
+
+.decision-secondary .decision-card-note,
+.dividend-sources.decision-secondary ul {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
 .dividend-columns {
   display: grid;
   grid-template-columns: 1.1fr 1fr;
@@ -2201,13 +2593,47 @@ button:active {
 }
 
 .dividend-commentary {
-  margin: 8px 0 0;
+  margin: 0;
   padding-left: 18px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.chart-narrative-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.chart-narrative {
+  margin: 14px 0 0;
+  padding: 12px 14px 12px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--ink-soft, var(--ink));
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.chart-narrative li::marker {
+  color: var(--muted, inherit);
+}
+
+.chart-narrative li:last-child {
+  color: var(--muted, inherit);
+  font-size: 12px;
+}
+
+.chart-narrative-empty {
+  margin: 12px 0 0;
+  font-size: 13px;
 }
 
 .dividend-note {
@@ -2282,18 +2708,12 @@ button:active {
 
 @media (max-width: 1100px) {
   .dividend-hero {
-    display: block;
+    grid-template-columns: 1fr;
   }
 
-  .dividend-hero-main,
-  .dividend-hero-aside {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .dividend-hero-aside {
-    margin-top: 12px;
+  .dividend-hero > .panel-block {
+    grid-column: 1;
+    grid-row: auto;
   }
 
   .dividend-metrics {
@@ -2585,6 +3005,89 @@ button:active {
   margin: 0;
 }
 
+.plan-add-plan-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  margin-bottom: 10px;
+}
+
+.plan-add-plan-toolbar .plan-strategy-check {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  min-height: 34px;
+  padding-bottom: 0;
+  margin-bottom: 1px;
+}
+
+.plan-add-plan-field {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 168px;
+  min-width: 0;
+  max-width: 280px;
+}
+
+.plan-add-plan-field span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.plan-add-plan-field select {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.plan-add-plan-levels {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.plan-add-plan-levels[hidden] {
+  display: none;
+}
+
+.plan-add-plan-head,
+.plan-add-plan-row {
+  display: grid;
+  grid-template-columns: minmax(48px, 0.5fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.plan-add-plan-head {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.plan-add-plan-row-label {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.plan-add-plan-cell {
+  font-size: 13px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
 .plan-pe-bands {
   display: grid;
   gap: 6px;
@@ -2834,7 +3337,9 @@ button:active {
 }
 
 .etf-table td .up small,
-.etf-table td.up small {
+.etf-table td.up small,
+.etf-table td .down small,
+.etf-table td.down small {
   opacity: 0.85;
 }
 
@@ -2854,7 +3359,6 @@ button:active {
 }
 
 .settings-ai-heading,
-.settings-secret-row,
 .ai-review-choice {
   display: flex;
   align-items: center;
@@ -2871,24 +3375,54 @@ button:active {
 }
 
 .settings-secret-row {
+  display: grid;
+  gap: 6px;
   margin-top: 12px;
+}
+
+.settings-secret-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.settings-secret-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
   flex-wrap: wrap;
 }
 
-.settings-secret-row label {
-  flex: 1 1 280px;
+.settings-secret-controls input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line-strong);
+  box-sizing: border-box;
 }
 
-.settings-secret-row label span {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--muted);
-  font-size: 12px;
+.settings-secret-controls .compact {
+  flex: 0 0 auto;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 12px;
 }
 
-.settings-secret-row input,
 .settings-ai input[type="text"] {
   width: 100%;
+  box-sizing: border-box;
+  min-height: 34px;
+  height: 34px;
+  padding: 0 10px;
 }
 
 .settings-ai-status {
@@ -2920,7 +3454,7 @@ button:active {
 .ai-review-card > .panel-heading {
   align-items: flex-start;
   gap: 16px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .ai-review-card > .panel-heading > div {
@@ -2933,7 +3467,7 @@ button:active {
 }
 
 .ai-review-card > .panel-heading .muted {
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 12.5px;
   line-height: 1.5;
   text-wrap: pretty;
@@ -2955,7 +3489,7 @@ button:active {
 }
 
 .ai-review-card.is-disabled > .panel-heading {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .ai-review-card.is-disabled > p {
@@ -2968,6 +3502,10 @@ button:active {
   margin: 0;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.ai-review-status + .ai-review-status {
+  margin-top: 6px;
 }
 
 .ai-review-summary {

@@ -55,6 +55,11 @@ export const MOBILE_SIDEBAR_MAX = 780;
 export const WORKSPACE_CACHE_KEY = "stockagent.workspace.cache";
 export const WORKSPACE_SYNC_DEBOUNCE_MS = 500;
 export const ETF_QUOTE_TTL_MS = 60_000;
+/** 前端分析缓存 TTL，与后端 DIVIDEND_CACHE 默认 1800s 对齐 */
+export const ANALYSIS_CACHE_TTL_MS = 30 * 60_000;
+
+export const GRADE_GUIDE =
+  "A 很有吸引力 · B 偏有利 · C 中性 · D 偏弱 · E 很弱";
 
 /** 定投池内 ETF 均可分析；无指数映射时后端走 ETF 行情兜底。 */
 export function analysisSupported(appConfig, symbol) {

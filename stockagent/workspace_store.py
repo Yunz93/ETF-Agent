@@ -88,6 +88,56 @@ def normalize_pending_orders(payload):
     return result
 
 
+def normalize_execution_drafts(payload):
+    if not isinstance(payload, list):
+        return []
+    seen = set()
+    drafts = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        digits = "".join(ch for ch in str(item.get("symbol") or "") if ch.isdigit())
+        symbol = digits.zfill(6)
+        if len(symbol) != 6 or not digits:
+            continue
+        period = str(item.get("period") or "").strip()
+        if len(period) != 10 or period[4] != "-" or period[7] != "-":
+            continue
+        date = str(item.get("date") or "").strip() or period
+        if len(date) != 10 or date[4] != "-" or date[7] != "-":
+            date = period
+        status = str(item.get("status") or "pending").strip()
+        if status not in ("pending", "confirmed", "skipped"):
+            status = "pending"
+        draft_id = str(item.get("id") or "").strip() or f"draft_{period}_{symbol}"
+        if draft_id in seen:
+            continue
+        seen.add(draft_id)
+        suggested = _positive_number(item.get("suggested_amount"))
+        price = _positive_number(item.get("price"))
+        shares = _positive_number(item.get("shares"))
+        fee = _nonnegative_number(item.get("fee"))
+        confirmed = str(item.get("confirmed_trade_id") or "").strip() or None
+        drafts.append(
+            {
+                "id": draft_id,
+                "period": period,
+                "symbol": symbol,
+                "name": str(item.get("name") or "").strip(),
+                "suggested_amount": round(suggested, 2),
+                "price": round(price, 6),
+                "shares": round(shares, 4),
+                "fee": round(fee, 2),
+                "date": date,
+                "status": status,
+                "skip_reason": str(item.get("skip_reason") or "").strip(),
+                "confirmed_trade_id": confirmed,
+            }
+        )
+    drafts.sort(key=lambda row: (row["period"], row["symbol"]), reverse=True)
+    return drafts
+
+
 def normalize_etf_entry(item):
     if not isinstance(item, dict):
         return None
@@ -168,12 +218,84 @@ def normalize_strategy_config(payload):
     }
 
 
+def normalize_strategy_overrides(payload):
+    """按品种策略覆盖：key 为 6 位代码，value 须为合法 strategy id。"""
+    if not isinstance(payload, dict):
+        return {}
+    result = {}
+    for raw_key, raw_id in payload.items():
+        digits = "".join(ch for ch in str(raw_key or "") if ch.isdigit())
+        symbol = digits.zfill(6) if digits else ""
+        if len(symbol) != 6:
+            continue
+        strategy = str(raw_id or "").strip().lower()
+        if strategy not in STRATEGY_IDS:
+            continue
+        result[symbol] = strategy
+    return result
+
+
+ADD_PLAN_PRESETS = ("auto", "steady", "deep", "custom")
+
+
+def normalize_add_plan(payload):
+    """分档加仓预案：enabled / anchor / preset / levels（宽松存储，比例不在此归一）。
+
+    preset 缺失时：带合法 levels 视为 custom（兼容旧配置），否则 auto；
+    preset 非 custom 时 levels 恒为 None（档位建议值由前端预设给出）。
+    """
+    base = {"enabled": True, "anchor": "price", "preset": "auto", "levels": None}
+    if not isinstance(payload, dict):
+        return dict(base)
+    enabled = payload.get("enabled", True)
+    if enabled in (0, "0", "false", "False", False):
+        enabled = False
+    else:
+        enabled = True
+    anchor = str(payload.get("anchor") or "price").strip().lower()
+    if anchor not in ("price", "cost"):
+        anchor = "price"
+    raw_levels = payload.get("levels")
+    levels = None
+    if isinstance(raw_levels, list) and raw_levels:
+        rows = []
+        for item in raw_levels[:4]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                drawdown = float(item.get("drawdown_pct", item.get("drawdownPct")))
+                ratio = float(item.get("ratio"))
+            except (TypeError, ValueError):
+                continue
+            if not (ratio > 0):
+                continue
+            rows.append(
+                {
+                    "drawdown_pct": min(30.0, max(0.5, drawdown)),
+                    "ratio": ratio,
+                }
+            )
+        if rows:
+            rows.sort(key=lambda row: row["drawdown_pct"])
+            levels = rows
+    preset = str(payload.get("preset") or "").strip().lower()
+    if preset not in ADD_PLAN_PRESETS:
+        preset = "custom" if levels else "auto"
+    if preset == "custom" and not levels:
+        preset = "auto"
+    if preset != "custom":
+        levels = None
+    return {"enabled": enabled, "anchor": anchor, "preset": preset, "levels": levels}
+
+
 def normalize_plan(payload):
     base = dict(DEFAULT_WORKSPACE["plan"])
     if not isinstance(payload, dict):
         return {
             **base,
             "strategy_config": normalize_strategy_config(base.get("strategy_config")),
+            "strategy_overrides": {},
+            "add_plan": normalize_add_plan(base.get("add_plan")),
         }
     name = str(payload.get("name") or base["name"]).strip() or base["name"]
     cadence = str(payload.get("cadence") or base["cadence"]).strip().lower()
@@ -193,6 +315,12 @@ def normalize_plan(payload):
     raw_config = payload.get("strategy_config")
     if raw_config is None:
         raw_config = payload.get("strategyConfig")
+    raw_overrides = payload.get("strategy_overrides")
+    if raw_overrides is None:
+        raw_overrides = payload.get("strategyOverrides")
+    raw_add_plan = payload.get("add_plan")
+    if raw_add_plan is None:
+        raw_add_plan = payload.get("addPlan")
     return {
         "name": name,
         "amount": _positive_number(payload.get("amount")) or 0,
@@ -206,6 +334,8 @@ def normalize_plan(payload):
         "note": str(payload.get("note") or "").strip(),
         "strategy": strategy,
         "strategy_config": normalize_strategy_config(raw_config),
+        "strategy_overrides": normalize_strategy_overrides(raw_overrides),
+        "add_plan": normalize_add_plan(raw_add_plan),
         "trading_cost": normalize_trading_cost(payload.get("trading_cost")),
         "pending_orders": normalize_pending_orders(payload.get("pending_orders")),
     }
@@ -281,6 +411,7 @@ def normalize_workspace(payload):
 
     workspace["etfs"] = etfs
     workspace["plan"] = normalize_plan(payload.get("plan"))
+    workspace["execution_drafts"] = normalize_execution_drafts(payload.get("execution_drafts"))
 
     buys = []
     seen_buy_ids = set()
@@ -307,7 +438,7 @@ def normalize_workspace(payload):
     if isinstance(payload.get("prefs"), dict):
         workspace["prefs"] = payload["prefs"]
 
-    workspace["version"] = 6
+    workspace["version"] = 7
     workspace["updated_at"] = payload.get("updated_at") or as_of(None)
     return workspace
 
@@ -330,10 +461,28 @@ def get_workspace():
             return empty_workspace()
 
 
+def _workspace_updated_at(payload):
+    """Prefer client ISO timestamps so local/server clocks compare fairly."""
+    raw = ""
+    if isinstance(payload, dict):
+        raw = str(payload.get("updated_at") or "").strip()
+    if raw:
+        candidate = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+        try:
+            datetime.datetime.fromisoformat(candidate)
+            return raw
+        except ValueError:
+            pass
+    return (
+        datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+        + "Z"
+    )
+
+
 def save_workspace(payload):
     with WORKSPACE_LOCK:
         workspace = normalize_workspace(payload)
-        workspace["updated_at"] = as_of(None)
+        workspace["updated_at"] = _workspace_updated_at(payload)
         temp_path = WORKSPACE_PATH.with_suffix(".json.tmp")
         temp_path.write_text(json.dumps(workspace, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         temp_path.replace(WORKSPACE_PATH)

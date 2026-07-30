@@ -141,3 +141,73 @@ test("initial build prefers target gaps while still respecting valuation pause",
   assert.equal(allocationForSymbol(paused, "510300"), null);
   assert.ok(allocationForSymbol(paused, "512890")?.amount > 0);
 });
+
+test("commodity valuation uses flat 1x and does not fall back to grade", () => {
+  const result = dcaMultiplier({
+    strategy: "valuation",
+    assetClass: "commodity",
+    pePct: null,
+    grade: "E",
+  });
+  assert.equal(result.mult, 1);
+  assert.match(result.band, /商品类/);
+  assert.match(result.hint, /定额参与/);
+});
+
+test("dividend valuation mixes PE with spread percentile", () => {
+  const purePe = dcaMultiplier({
+    strategy: "valuation",
+    assetClass: "dividend",
+    pePct: 0.9,
+  });
+  assert.equal(purePe.mult, 0);
+
+  const mixed = dcaMultiplier({
+    strategy: "valuation",
+    assetClass: "dividend",
+    pePct: 0.9,
+    spreadPct: 0.9,
+  });
+  assert.ok(mixed.mult > purePe.mult);
+  assert.match(mixed.hint, /混合/);
+
+  const spreadOnly = dcaMultiplier({
+    strategy: "valuation",
+    assetClass: "dividend",
+    spreadPct: 0.8,
+  });
+  assert.equal(spreadOnly.mult, 1.5);
+  assert.match(spreadOnly.hint, /混合/);
+});
+
+test("equity_growth uses GROWTH_PE_BANDS and keeps 0.25x above 95%", () => {
+  assert.equal(
+    dcaMultiplier({ strategy: "valuation", assetClass: "equity_growth", pePct: 0.2 }).mult,
+    1.3,
+  );
+  assert.equal(
+    dcaMultiplier({ strategy: "valuation", assetClass: "equity_growth", pePct: 0.96 }).mult,
+    0.25,
+  );
+  assert.equal(
+    dcaMultiplier({ strategy: "valuation", assetClass: "equity_core", pePct: 0.96 }).mult,
+    0,
+  );
+});
+
+test("strategyOverrides apply per-symbol multipliers", () => {
+  const result = allocatePoolBudget({
+    budget: 2000,
+    strategy: "valuation",
+    strategyOverrides: { "159937": "fixed" },
+    holdings: [
+      { symbol: "159937", targetWeight: 50, pePct: 0.99, grade: "E", assetClass: "commodity" },
+      { symbol: "510300", targetWeight: 50, pePct: 0.99, assetClass: "equity_core" },
+    ],
+  });
+  const gold = allocationForSymbol(result, "159937");
+  assert.ok(gold);
+  assert.equal(gold.mult, 1);
+  assert.match(gold.band, /指定/);
+  assert.equal(allocationForSymbol(result, "510300"), null);
+});

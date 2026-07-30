@@ -31,25 +31,34 @@ def analysis_registry():
     return registry
 
 NAME_INFER_RULES = (
-    (("红利低波", "红利低波动"), {"index_code": "H30269", "index_name": "红利低波", "index_full_name": "中证红利低波", "danjuan_code": "CSIH30269"}),
-    (("中证红利",), {"index_code": "000922", "index_name": "中证红利", "index_full_name": "中证红利", "danjuan_code": "SH000922", "history_source": "csindex"}),
-    (("沪深300",), {"index_code": "000300", "index_name": "沪深300", "index_full_name": "沪深300", "danjuan_code": "CSI000300"}),
-    (("中证500",), {"index_code": "000905", "index_name": "中证500", "index_full_name": "中证500", "danjuan_code": "CSI000905"}),
-    (("中证1000",), {"index_code": "000852", "index_name": "中证1000", "index_full_name": "中证1000", "danjuan_code": "CSI000852"}),
-    (("科创50", "科创板50"), {"index_code": "000688", "index_name": "科创50", "index_full_name": "上证科创板50成份", "danjuan_code": "SH000688", "history_source": "csindex"}),
-    (("创业板",), {"index_code": "399006", "index_name": "创业板指", "index_full_name": "创业板指数", "danjuan_code": "SZ399006", "history_source": "sina"}),
-    (("中证A500", "A500"), {"index_code": "000510", "index_name": "中证A500", "index_full_name": "中证A500", "danjuan_code": "", "history_source": "csindex"}),
-    (("上证50",), {"index_code": "000016", "index_name": "上证50", "index_full_name": "上证50", "danjuan_code": "CSI000016"}),
-    (("恒生科技",), {"index_code": "HSTECH", "index_name": "恒生科技", "index_full_name": "恒生科技指数", "danjuan_code": "HKHSTECH", "history_source": "tencent", "history_symbol": "hkHSTECH"}),
-    (("恒生指数", "恒生ETF"), {"index_code": "HSI", "index_name": "恒生指数", "index_full_name": "恒生指数", "danjuan_code": "HKHSI", "history_source": "tencent", "history_symbol": "hkHSI"}),
-    (("标普500", "S&P500", "SP500"), {"index_code": "SPX", "index_name": "标普500", "index_full_name": "标普500", "danjuan_code": "SP500", "history_source": "tencent", "history_symbol": "us.INX"}),
-    (("纳指", "纳斯达克100", "纳斯达克"), {"index_code": "NDX", "index_name": "纳斯达克100", "index_full_name": "纳斯达克100", "danjuan_code": "NDX", "history_source": "tencent", "history_symbol": "us.NDX"}),
+    (("红利低波", "红利低波动"), {"index_code": "H30269", "index_name": "红利低波", "index_full_name": "中证红利低波", "danjuan_code": "CSIH30269", "asset_class": "dividend"}),
+    (("中证红利",), {"index_code": "000922", "index_name": "中证红利", "index_full_name": "中证红利", "danjuan_code": "SH000922", "history_source": "csindex", "asset_class": "dividend"}),
+    (("沪深300",), {"index_code": "000300", "index_name": "沪深300", "index_full_name": "沪深300", "danjuan_code": "CSI000300", "asset_class": "equity_core"}),
+    (("中证500",), {"index_code": "000905", "index_name": "中证500", "index_full_name": "中证500", "danjuan_code": "CSI000905", "asset_class": "equity_core"}),
+    (("中证1000",), {"index_code": "000852", "index_name": "中证1000", "index_full_name": "中证1000", "danjuan_code": "CSI000852", "asset_class": "equity_core"}),
+    (("科创50", "科创板50"), {"index_code": "000688", "index_name": "科创50", "index_full_name": "上证科创板50成份", "danjuan_code": "SH000688", "history_source": "csindex", "asset_class": "equity_growth"}),
+    (("创业板",), {"index_code": "399006", "index_name": "创业板指", "index_full_name": "创业板指数", "danjuan_code": "SZ399006", "history_source": "sina", "asset_class": "equity_growth"}),
+    (("中证A500", "A500"), {"index_code": "000510", "index_name": "中证A500", "index_full_name": "中证A500", "danjuan_code": "", "history_source": "csindex", "asset_class": "equity_core"}),
+    (("上证50",), {"index_code": "000016", "index_name": "上证50", "index_full_name": "上证50", "danjuan_code": "CSI000016", "asset_class": "equity_core"}),
+    (("恒生科技",), {"index_code": "HSTECH", "index_name": "恒生科技", "index_full_name": "恒生科技指数", "danjuan_code": "HKHSTECH", "history_source": "tencent", "history_symbol": "hkHSTECH", "asset_class": "equity_growth"}),
+    (("恒生指数", "恒生ETF"), {"index_code": "HSI", "index_name": "恒生指数", "index_full_name": "恒生指数", "danjuan_code": "HKHSI", "history_source": "tencent", "history_symbol": "hkHSI", "asset_class": "equity_core"}),
+    (("标普500", "S&P500", "SP500"), {"index_code": "SPX", "index_name": "标普500", "index_full_name": "标普500", "danjuan_code": "SP500", "history_source": "tencent", "history_symbol": "us.INX", "asset_class": "equity_growth"}),
+    (("纳指", "纳斯达克100", "纳斯达克"), {"index_code": "NDX", "index_name": "纳斯达克100", "index_full_name": "纳斯达克100", "danjuan_code": "NDX", "history_source": "tencent", "history_symbol": "us.NDX", "asset_class": "equity_growth"}),
 )
 
 # 代理模式（无指数映射）下按名称粗分资产类别，用于给出准确的降级说明。
 PROXY_ASSET_RULES = (
     ("commodity", ("黄金", "白银", "贵金属", "豆粕", "原油", "石油", "天然气", "能源化工", "有色", "商品", "饲料")),
     ("bond", ("国债", "政金债", "金融债", "信用债", "城投债", "短融", "债券", "转债", "可转债", "货币", "存单", "国开")),
+)
+
+# 定投策略用的资产类别枚举（与 PROXY 的 equity 不同：股票兜底为 equity_core）。
+ASSET_CLASS_IDS = ("dividend", "commodity", "bond", "equity_growth", "equity_core")
+DIVIDEND_INDEX_CODES = frozenset({"H30269", "000922"})
+ASSET_CLASS_RULES = (
+    ("dividend", ("红利低波", "红利低波动", "中证红利", "高股息", "红利")),
+    ("equity_growth", ("纳指", "纳斯达克", "标普500", "S&P500", "SP500", "恒生科技", "科创", "创业板")),
+    ("equity_core", ("中证A500", "A500", "沪深300", "中证500", "中证1000", "上证50", "恒生指数", "恒生ETF")),
 )
 
 PROXY_VALUATION_NOTES = {
@@ -68,6 +77,45 @@ def proxy_asset_class(name):
 def proxy_valuation_note(name):
     return PROXY_VALUATION_NOTES[proxy_asset_class(name)]
 
+def _map_proxy_to_asset_class(proxy):
+    """把 PROXY 粗分类映射到定投用枚举。"""
+    if proxy in ("commodity", "bond"):
+        return proxy
+    return "equity_core"
+
+def resolve_asset_class(name="", index_code="", index_name="", etf_name="", analysis_mode=None, explicit=None):
+    """解析定投用资产类别。explicit 优先；etf_proxy 映射 PROXY；否则按代码/名称规则。"""
+    if explicit in ASSET_CLASS_IDS:
+        return explicit
+    label = str(name or etf_name or index_name or "").strip()
+    if analysis_mode == "etf_proxy":
+        return _map_proxy_to_asset_class(proxy_asset_class(label))
+
+    code = str(index_code or "").strip().upper()
+    if code in DIVIDEND_INDEX_CODES:
+        return "dividend"
+
+    text = " ".join(part for part in (str(name or ""), str(index_name or ""), str(etf_name or "")) if part)
+    for asset_class, keywords in PROXY_ASSET_RULES:
+        if any(key in text for key in keywords):
+            return asset_class
+    for asset_class, keywords in ASSET_CLASS_RULES:
+        if any(key in text for key in keywords):
+            return asset_class
+    return "equity_core"
+
+def _attach_asset_class(settings, name=""):
+    """确保 settings 带有 asset_class。"""
+    settings["asset_class"] = resolve_asset_class(
+        name=name or settings.get("etf_name") or "",
+        index_code=settings.get("index_code") or "",
+        index_name=settings.get("index_name") or "",
+        etf_name=settings.get("etf_name") or "",
+        analysis_mode=settings.get("analysis_mode"),
+        explicit=settings.get("asset_class"),
+    )
+    return settings
+
 def infer_mapping_from_name(name):
     text = str(name or "")
     if not text:
@@ -81,7 +129,7 @@ def etf_proxy_settings(symbol, name=""):
     """无指数映射时：用 ETF 自身行情做技术面 / 定投档位分析。"""
     base = dividend_settings()
     label = str(name or "").strip() or symbol
-    return {
+    return _attach_asset_class({
         **base,
         "etf_symbol": symbol,
         "etf_name": label,
@@ -91,8 +139,8 @@ def etf_proxy_settings(symbol, name=""):
         "danjuan_code": "",
         "history_source": "etf",
         "analysis_mode": "etf_proxy",
-        "asset_class": proxy_asset_class(label),
-    }
+        "asset_class": _map_proxy_to_asset_class(proxy_asset_class(label)),
+    }, name=label)
 
 def resolve_analysis_settings(symbol=None, name=""):
     """解析某只 ETF 的分析配置。
@@ -107,7 +155,7 @@ def resolve_analysis_settings(symbol=None, name=""):
         settings = dict(base)
         settings["etf_symbol"] = _normalize_etf_symbol(settings.get("etf_symbol")) or "512890"
         settings["analysis_mode"] = "index"
-        return settings
+        return _attach_asset_class(settings, name=name)
 
     registry = analysis_registry()
     mapped = registry.get(symbol)
@@ -118,7 +166,7 @@ def resolve_analysis_settings(symbol=None, name=""):
         if not settings.get("etf_name"):
             settings["etf_name"] = str(name or "").strip() or symbol
         settings["analysis_mode"] = "index"
-        return settings
+        return _attach_asset_class(settings, name=name)
 
     default_etf = _normalize_etf_symbol(base.get("etf_symbol"))
     if symbol == default_etf:
@@ -127,7 +175,7 @@ def resolve_analysis_settings(symbol=None, name=""):
         if name:
             settings["etf_name"] = str(name).strip()
         settings["analysis_mode"] = "index"
-        return settings
+        return _attach_asset_class(settings, name=name)
 
     inferred = infer_mapping_from_name(name)
     if inferred:
@@ -136,7 +184,7 @@ def resolve_analysis_settings(symbol=None, name=""):
         settings["etf_symbol"] = symbol
         settings["etf_name"] = str(name or "").strip() or symbol
         settings["analysis_mode"] = "index"
-        return settings
+        return _attach_asset_class(settings, name=name)
 
     return etf_proxy_settings(symbol, name)
 

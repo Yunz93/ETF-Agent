@@ -190,7 +190,6 @@
             aria-labelledby="etfTabOverview"
             data-etf-panel="overview"
           >
-            <div id="poolAllocPanel" class="pool-alloc-home"></div>
             <section class="plan-section" aria-label="组合概览">
               <div class="plan-section-heading">
                 <h3 class="plan-section-title">组合概览</h3>
@@ -198,6 +197,12 @@
               </div>
               <div class="metric-grid" id="etfMetrics"></div>
             </section>
+            <div id="overviewEmptyGuide" class="seed-guide-card" hidden>
+              <h3>概览需要 ETF 池</h3>
+              <p class="muted">当前计划为空。导入默认种子池后即可看到全池本期分配与组合概览。</p>
+              <button class="primary-button" type="button" data-import-seed-pool>导入默认种子池</button>
+            </div>
+            <div id="poolAllocPanel" class="pool-alloc-home"></div>
           </div>
 
           <div
@@ -304,6 +309,35 @@
                   </label>
                 </div>
               </form>
+              <div id="planAddPlan" class="plan-strategy-custom" aria-label="分档策略">
+                <div class="plan-strategy-custom-heading">
+                  <h4 class="plan-strategy-custom-title">分档策略</h4>
+                </div>
+                <div class="plan-add-plan-toolbar">
+                  <label class="plan-strategy-check">
+                    <input id="planAddPlanEnabled" type="checkbox" checked />
+                    <span>启用分档</span>
+                  </label>
+                  <label class="plan-add-plan-field">
+                    <span>方案</span>
+                    <select id="planAddPlanPreset">
+                      <option value="auto" selected>智能推荐（按资产类别）</option>
+                      <option value="steady">稳健两档（−3% / −5%）</option>
+                      <option value="deep">深回调两档（−5% / −10%）</option>
+                      <option value="custom" hidden>自定义档位（沿用已保存）</option>
+                    </select>
+                  </label>
+                  <label class="plan-add-plan-field">
+                    <span>触发锚点</span>
+                    <select id="planAddPlanAnchor">
+                      <option value="price" selected>现价回调</option>
+                      <option value="cost">成本价摊低</option>
+                    </select>
+                  </label>
+                </div>
+                <div id="planAddPlanLevels" class="plan-add-plan-levels" hidden aria-label="档位预览"></div>
+                <p id="planAddPlanPresetHint" class="muted plan-strategy-custom-note"></p>
+              </div>
               <div id="planStrategyCustom" class="plan-strategy-custom" hidden>
               <div class="plan-strategy-custom-heading">
                 <h4 class="plan-strategy-custom-title">自定义倍率网格</h4>
@@ -353,7 +387,7 @@
               <p id="etfFormStatus" class="muted" role="status"></p>
             </form>
             <p id="etfQuoteStatus" class="research-load-status muted" role="status">加载行情…</p>
-            <div class="table-wrap">
+            <div class="table-wrap etf-table-wrap">
               <table class="stock-table etf-table">
                 <thead>
                   <tr>
@@ -361,10 +395,11 @@
                     <th>ETF</th>
                     <th class="num">现价</th>
                     <th class="num">涨跌</th>
-                    <th class="num">配置%</th>
-                    <th class="num">池内%</th>
-                    <th class="num">总仓%</th>
-                    <th class="num">偏离</th>
+                    <th class="num etf-col-target" title="目标配置权重，分母为计划内 ETF 目标合计">配置%</th>
+                    <th class="etf-col-strategy" title="本品种定投策略；默认跟随计划全局策略">策略</th>
+                    <th class="num etf-col-pool" title="当前市值占计划内 ETF 合计市值的比例">池内%</th>
+                    <th class="num etf-col-asset" title="当前市值占计划「可投资总资金」的比例">总仓%</th>
+                    <th class="num" title="池内实际权重相对目标配置的偏离（百分点）">偏离%</th>
                     <th class="num">持有份额</th>
                     <th class="num">含费成本</th>
                     <th class="num">市值</th>
@@ -375,7 +410,11 @@
                 <tbody id="etfRows"></tbody>
               </table>
             </div>
-            <div id="etfEmpty" class="empty-state" hidden>暂无 ETF，用上方表单添加。</div>
+            <div id="etfEmpty" class="empty-state seed-guide-card" hidden>
+              <h3>开始建立定投池</h3>
+              <p class="muted">可一键导入默认种子池（7 只宽基/主题 ETF，已带均衡目标权重），也可上方表单逐只添加。</p>
+              <button id="importSeedPool" class="primary-button" type="button">导入默认种子池</button>
+            </div>
             </section>
 
             <section id="etfChartPanel" class="panel-block etf-chart-panel" hidden>
@@ -412,6 +451,7 @@
               <h3 class="plan-section-title">交易记录</h3>
               <p class="muted">用于复盘成本与走势图买卖点</p>
             </div>
+            <div id="execDraftPanel" class="exec-draft-panel" hidden></div>
             <form id="buyForm" class="add-symbol-strip" autocomplete="off">
               <label>
                 <span>类型</span>
@@ -492,7 +532,7 @@
           <div class="settings-layout">
             <section class="settings-card">
               <div class="panel-heading settings-heading">
-                <h2 class="section-title">数据刷新</h2>
+                <h2 class="section-title">应用设置</h2>
                 <div class="settings-actions">
                   <button id="saveConfig" class="primary-button compact" type="button">保存</button>
                 </div>
@@ -502,7 +542,7 @@
             </section>
             <section class="settings-card">
               <div class="panel-heading settings-heading">
-                <h2 class="section-title">工作区</h2>
+                <h2 class="section-title">工作区备份</h2>
                 <div class="settings-actions">
                   <button id="syncWorkspaceNow" class="ghost-button compact" type="button">同步</button>
                   <button id="exportWorkspace" class="ghost-button compact" type="button">导出</button>
@@ -510,13 +550,13 @@
                   <input id="importWorkspaceFile" type="file" accept="application/json,.json" hidden />
                 </div>
               </div>
-              <p id="workspaceStatus" class="settings-status muted" role="status">尚未同步</p>
+              <p id="workspaceStatus" class="settings-status muted" role="status" hidden></p>
             </section>
           </div>
         </section>
       </main>
     </div>
 
-    <script type="module" src="./js/main.js?v=20260729c"></script>
+    <script type="module" src="./js/main.js?v=20260731a"></script>
   </body>
 </html>

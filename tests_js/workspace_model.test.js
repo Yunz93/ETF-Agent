@@ -4,19 +4,71 @@ import assert from "node:assert/strict";
 import {
   chooseWorkspaceSource,
   normalizeBuys,
+  normalizeExecutionDrafts,
   normalizeSells,
   normalizePlan,
   normalizeWorkspaceEntries,
+  parseWorkspaceTimestamp,
+  planPersistenceScore,
   upsertBuy,
   upsertSell,
 } from "../js/workspace_model.js";
 
 test("workspace source prefers server, then local cache, then defaults", () => {
-  const remote = { etfs: [{ symbol: "510300" }] };
-  const local = { etfs: [{ symbol: "512890" }] };
+  const remote = { etfs: [{ symbol: "510300" }], updated_at: "2026-07-30T01:00:00.000Z" };
+  const local = { etfs: [{ symbol: "512890" }], updated_at: "2026-07-30T00:00:00.000Z" };
   assert.equal(chooseWorkspaceSource(remote, local).source, "server");
   assert.equal(chooseWorkspaceSource({ etfs: [] }, local).source, "local-cache");
   assert.equal(chooseWorkspaceSource({ etfs: [] }, { etfs: [] }).source, "default-pool");
+});
+
+test("workspace source keeps newer local cache when server PUT may have been interrupted", () => {
+  const remote = {
+    etfs: [{ symbol: "510300" }],
+    plan: { amount: 2000, capital_base: 0 },
+    updated_at: "2026-07-30T01:00:00.000Z",
+  };
+  const local = {
+    etfs: [{ symbol: "510300" }],
+    plan: { amount: 2000, capital_base: 100000, initial_target_pct: 30 },
+    updated_at: "2026-07-30T01:00:01.000Z",
+  };
+  const selected = chooseWorkspaceSource(remote, local);
+  assert.equal(selected.source, "local-cache");
+  assert.equal(selected.migrate, true);
+  assert.equal(selected.payload.plan.capital_base, 100000);
+});
+
+test("workspace source keeps server plan when local is newer but weaker/default", () => {
+  const remote = {
+    etfs: [{ symbol: "510300" }],
+    plan: { amount: 20000, capital_base: 200000, initial_target_pct: 30 },
+    updated_at: "2026-07-31 00:04",
+  };
+  const local = {
+    etfs: [{ symbol: "510300" }],
+    plan: { amount: 2000, capital_base: 0, initial_target_pct: 0 },
+    // hydrate 重写 ISO 后几乎总比服务器分钟精度 as_of 新
+    updated_at: "2026-07-30T16:04:12.345Z",
+  };
+  const selected = chooseWorkspaceSource(remote, local);
+  assert.equal(selected.source, "server");
+  assert.equal(selected.payload.plan.capital_base, 200000);
+  assert.equal(selected.payload.plan.initial_target_pct, 30);
+});
+
+test("parseWorkspaceTimestamp accepts ISO and space-separated local stamps", () => {
+  assert.ok(parseWorkspaceTimestamp("2026-07-30T16:04:12.345Z") > 0);
+  assert.ok(parseWorkspaceTimestamp("2026-07-31 00:04") > 0);
+  assert.equal(parseWorkspaceTimestamp(""), 0);
+});
+
+test("planPersistenceScore treats capital/target as strong signals", () => {
+  assert.ok(
+    planPersistenceScore({ capital_base: 100000, initial_target_pct: 30, amount: 5000 }) >
+      planPersistenceScore({ amount: 2000 }),
+  );
+  assert.equal(planPersistenceScore(null), 0);
 });
 
 test("legacy workspace entries receive default target weights", () => {
@@ -40,6 +92,7 @@ test("plan normalization defaults strategy to valuation and accepts custom confi
   const legacy = normalizePlan({ name: "旧计划", amount: 1000 });
   assert.equal(legacy.strategy, "valuation");
   assert.equal(legacy.strategy_config.pe_bands.length, 5);
+  assert.deepEqual(legacy.strategy_overrides, {});
 
   const custom = normalizePlan({
     strategy: "custom",
@@ -58,6 +111,55 @@ test("plan normalization defaults strategy to valuation and accepts custom confi
   assert.equal(normalizePlan({ strategy: "nope" }).strategy, "valuation");
 });
 
+test("plan normalization keeps valid strategy_overrides and drops illegal ids", () => {
+  const plan = normalizePlan({
+    strategy_overrides: {
+      "512890": "fixed",
+      sh510300: "grade",
+      "159937": "nope",
+      bad: "valuation",
+      "513390": "rebalance",
+    },
+  });
+  assert.deepEqual(plan.strategy_overrides, {
+    "512890": "fixed",
+    "510300": "grade",
+    "513390": "rebalance",
+  });
+  assert.deepEqual(normalizePlan({ strategy_overrides: null }).strategy_overrides, {});
+});
+
+test("plan normalization defaults and sanitizes add_plan", () => {
+  const legacy = normalizePlan({ name: "旧计划", amount: 1000 });
+  assert.deepEqual(legacy.add_plan, { enabled: true, anchor: "price", preset: "auto", levels: null });
+
+  const custom = normalizePlan({
+    add_plan: {
+      enabled: false,
+      anchor: "cost",
+      levels: [
+        { drawdown_pct: 2, ratio: 1 },
+        { drawdown_pct: 8, ratio: 1 },
+        { drawdown_pct: 50, ratio: 0 },
+        { drawdown_pct: 1, ratio: 2 },
+        { drawdown_pct: 12, ratio: 1 },
+      ],
+    },
+  });
+  assert.equal(custom.add_plan.enabled, false);
+  assert.equal(custom.add_plan.anchor, "cost");
+  assert.equal(custom.add_plan.levels.length, 3);
+  assert.deepEqual(
+    custom.add_plan.levels.map((row) => row.drawdown_pct),
+    [1, 2, 8],
+  );
+  const ratioSum = custom.add_plan.levels.reduce((sum, row) => sum + row.ratio, 0);
+  assert.ok(Math.abs(ratioSum - 1) < 1e-9);
+
+  assert.equal(normalizePlan({ add_plan: { anchor: "nope" } }).add_plan.anchor, "price");
+  assert.equal(normalizePlan({ addPlan: { enabled: 0 } }).add_plan.enabled, false);
+});
+
 test("plan normalization preserves initial build and trading cost settings", () => {
   const plan = normalizePlan({
     amount: 5000,
@@ -70,10 +172,26 @@ test("plan normalization preserves initial build and trading cost settings", () 
       lot_size: 100,
     },
   });
+  assert.equal(plan.amount, 5000);
   assert.equal(plan.capital_base, 100000);
   assert.equal(plan.initial_target_pct, 30);
   assert.equal(plan.trading_cost.min_commission, 5);
   assert.equal(plan.trading_cost.max_fee_ratio_pct, 0.2);
+});
+
+test("plan normalization does not drop filled capital_base / amount / target", () => {
+  const plan = normalizePlan({
+    name: "家庭主账户",
+    amount: 8888,
+    capital_base: 250000,
+    initial_target_pct: 40,
+    note: "重启后应仍在",
+  });
+  assert.equal(plan.name, "家庭主账户");
+  assert.equal(plan.amount, 8888);
+  assert.equal(plan.capital_base, 250000);
+  assert.equal(plan.initial_target_pct, 40);
+  assert.equal(plan.note, "重启后应仍在");
 });
 
 test("buy normalization deduplicates records and rejects impossible dates", () => {
@@ -108,4 +226,20 @@ test("sell normalization and upsert stay separate from buy records", () => {
   const updated = upsertSell([sell], { ...sell, shares: 40 });
   assert.equal(updated.length, 1);
   assert.equal(updated[0].shares, 40);
+});
+
+test("execution drafts normalize and migrate from missing field", () => {
+  assert.deepEqual(normalizeExecutionDrafts(undefined), []);
+  const drafts = normalizeExecutionDrafts([
+    {
+      period: "2026-07-01",
+      symbol: "512890",
+      suggested_amount: 1000,
+      price: 1.1,
+      shares: 900,
+      status: "pending",
+    },
+  ]);
+  assert.equal(drafts[0].id, "draft_2026-07-01_512890");
+  assert.equal(drafts[0].date, "2026-07-01");
 });

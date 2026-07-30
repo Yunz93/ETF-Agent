@@ -45,10 +45,7 @@ export function renderSettings() {
     </div>
     <div class="settings-ai">
       <div class="settings-ai-heading">
-        <div>
-          <strong>AI 分析</strong>
-          <p class="muted">模型识别每只 ETF 的关键矛盾，最终金额仍由本地风控约束。</p>
-        </div>
+        <strong>AI 分析</strong>
         <label class="config-toggle-control">
           <input type="checkbox" data-ai-key="enabled"${ai.enabled ? " checked" : ""} />
           <span>启用</span>
@@ -73,13 +70,13 @@ export function renderSettings() {
         </label>
       </div>
       <div class="settings-secret-row">
-        <label>
-          <span>API Key</span>
+        <span class="settings-secret-label">API Key</span>
+        <div class="settings-secret-controls">
           <input type="password" data-ai-secret autocomplete="new-password" placeholder="${credential.configured ? "已配置；留空表示不修改" : "输入后保存到 macOS 钥匙串"}" />
-        </label>
-        <button class="ghost-button compact" data-ai-save-key type="button">保存密钥</button>
-        <button class="ghost-button compact" data-ai-test type="button">测试连接</button>
-        <button class="ghost-button compact danger" data-ai-delete-key type="button"${credential.configured ? "" : " disabled"}>删除密钥</button>
+          <button class="ghost-button compact" data-ai-save-key type="button">保存密钥</button>
+          <button class="ghost-button compact" data-ai-test type="button">测试连接</button>
+          <button class="ghost-button compact danger" data-ai-delete-key type="button"${credential.configured ? "" : " disabled"}>删除密钥</button>
+        </div>
       </div>
       <p class="muted settings-ai-status" data-ai-status>
         ${credential.configured ? `密钥已配置（${credential.source === "environment" ? "环境变量" : "macOS 钥匙串"}）` : "尚未配置密钥"}
@@ -91,14 +88,17 @@ export function renderSettings() {
   autoRefreshToggle?.addEventListener("change", () => {
     if (autoRefreshInterval) autoRefreshInterval.disabled = !autoRefreshToggle.checked;
   });
-  const providerSelect = els.settingsForm.querySelector('[data-ai-key="provider"]');
-  providerSelect?.addEventListener("change", async () => {
-    await saveAppConfig({ quiet: true });
-    renderSettings();
-  });
   els.settingsForm.querySelector("[data-ai-save-key]")?.addEventListener("click", saveAIKey);
   els.settingsForm.querySelector("[data-ai-delete-key]")?.addEventListener("click", deleteAIKey);
   els.settingsForm.querySelector("[data-ai-test]")?.addEventListener("click", testAIConnection);
+
+  els.settingsForm.querySelectorAll("[data-quotes-key], [data-ai-key], [data-ai-model]").forEach((input) => {
+    input.addEventListener("change", async () => {
+      await saveAppConfig({ quiet: true });
+      if (els.settingsStatus) els.settingsStatus.textContent = "设置已自动保存";
+      if (input.dataset.aiKey === "provider") renderSettings();
+    });
+  });
 }
 
 function settingsStatus(message) {

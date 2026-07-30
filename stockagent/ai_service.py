@@ -69,6 +69,7 @@ def _analysis_snapshot(payload):
         "index_full_name": payload.get("index_full_name"),
         "etf_name": payload.get("etf_name"),
         "analysis_mode": payload.get("analysis_mode"),
+        "asset_class": payload.get("asset_class"),
         "updated_at": payload.get("updated_at"),
         "etf": {
             key: (payload.get("etf") or {}).get(key)

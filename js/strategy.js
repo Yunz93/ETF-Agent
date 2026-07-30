@@ -53,6 +53,15 @@ export const DEFAULT_PE_BANDS = Object.freeze([
   { max_pct: 100, mult: 0, label: "高估区" },
 ]);
 
+/** 长牛高估值指数：高分位降倍率但不归零，保持定投纪律。 */
+export const GROWTH_PE_BANDS = Object.freeze([
+  { max_pct: 30, mult: 1.3, label: "低估区" },
+  { max_pct: 60, mult: 1.1, label: "偏低区" },
+  { max_pct: 85, mult: 1.0, label: "正常区" },
+  { max_pct: 95, mult: 0.5, label: "偏高区" },
+  { max_pct: 100, mult: 0.25, label: "高估区" },
+]);
+
 export const DEFAULT_GRADE_MULT = Object.freeze({
   A: 1.5,
   B: 1.2,
@@ -179,11 +188,21 @@ function multiplierFromGrade(grade, gradeMult) {
 
 /**
  * 按策略解析单只倍率。
- * pePct: 0–1 近十年分位；无估值时多数策略退回评分档位。
+ * pePct: 0–1 近十年分位；spreadPct: 0–1 股债利差历史分位（越高越便宜）。
+ * assetClass: dividend / commodity / bond / equity_growth / equity_core。
+ * 无估值时多数策略退回评分档位；商品/债券类在估值型策略下定额参与。
  */
-export function dcaMultiplier({ strategy = "valuation", strategyConfig, pePct, grade } = {}) {
+export function dcaMultiplier({
+  strategy = "valuation",
+  strategyConfig,
+  pePct,
+  grade,
+  assetClass,
+  spreadPct,
+} = {}) {
   const id = normalizeStrategyId(strategy);
   const config = normalizeStrategyConfig(strategyConfig);
+  const cls = String(assetClass || "").trim().toLowerCase();
 
   if (id === "fixed") {
     return { mult: 1, band: "定额", hint: "按目标仓位定额分配" };
@@ -191,6 +210,17 @@ export function dcaMultiplier({ strategy = "valuation", strategyConfig, pePct, g
   if (id === "rebalance") {
     return { mult: 1, band: "再平衡", hint: "按相对目标仓位缺口分配" };
   }
+
+  // 商品/债券：无股票估值口径，估值型策略下定额参与
+  if ((cls === "commodity" || cls === "bond") && (id === "valuation" || id === "grade" || id === "custom")) {
+    const band = cls === "commodity" ? "商品类 · 定额参与" : "债券类 · 定额参与";
+    return {
+      mult: 1,
+      band,
+      hint: "无股票估值口径,按目标仓位定额参与,不做估值/评分择时",
+    };
+  }
+
   if (id === "grade") {
     return multiplierFromGrade(grade, config.grade_mult);
   }
@@ -200,16 +230,51 @@ export function dcaMultiplier({ strategy = "valuation", strategyConfig, pePct, g
       multiplierFromGrade(grade, config.grade_mult)
     );
   }
-  // valuation（默认）：内置 PE 网格，无估值时退回评分
+
+  // valuation（默认）：按资产类别差异化
+  if (cls === "dividend") {
+    const mixed = dividendMixedPct(pePct, spreadPct);
+    if (mixed != null) {
+      const result = multiplierFromPeBands(mixed, DEFAULT_PE_BANDS);
+      if (result) {
+        return {
+          ...result,
+          hint: `${result.hint}（PE 分位 + 股债利差分位混合）`,
+        };
+      }
+    }
+    return multiplierFromGrade(grade, DEFAULT_GRADE_MULT);
+  }
+
+  if (cls === "equity_growth") {
+    return (
+      multiplierFromPeBands(pePct, GROWTH_PE_BANDS) ||
+      multiplierFromGrade(grade, DEFAULT_GRADE_MULT)
+    );
+  }
+
   return (
     multiplierFromPeBands(pePct, DEFAULT_PE_BANDS) ||
     multiplierFromGrade(grade, DEFAULT_GRADE_MULT)
   );
 }
 
+/** 红利类：PE 分位与「1−利差分位」各 50% 混合；仅一方可用时用可用侧。 */
+function dividendMixedPct(pePct, spreadPct) {
+  const pe = Number(pePct);
+  const spread = Number(spreadPct);
+  const hasPe = Number.isFinite(pe);
+  const hasSpread = Number.isFinite(spread);
+  const norm = (value) => (value <= 1 ? value : value / 100);
+  if (hasPe && hasSpread) return norm(pe) * 0.5 + (1 - norm(spread)) * 0.5;
+  if (hasPe) return norm(pe);
+  if (hasSpread) return 1 - norm(spread);
+  return null;
+}
+
 /** @deprecated 兼容旧调用；等同 valuation 策略 */
-export function valuationDcaMultiplier({ pePct, grade } = {}) {
-  return dcaMultiplier({ strategy: "valuation", pePct, grade });
+export function valuationDcaMultiplier({ pePct, grade, assetClass, spreadPct } = {}) {
+  return dcaMultiplier({ strategy: "valuation", pePct, grade, assetClass, spreadPct });
 }
 
 export function rebalanceHint({ targetWeight, actualWeight, name } = {}) {
@@ -307,11 +372,12 @@ function finalizeEligible({ totalBudget, eligible, skipped, forceFullDeploy, not
  * 全池定投分配。
  * - budget：整池每期总预算（不是单只 ETF）
  * - strategy / strategyConfig：策略类型与自定义配置
+ * - strategyOverrides：按品种覆盖策略（{ symbol: strategyId }）
  * - 某只不建议投（mult=0）时，其份额可让给其他可投品种
  * - 不强制投完（估值/评分/自定义）：整体偏贵时只部署预算的一部分
  * - 定额 / 再平衡：默认打满预算
  *
- * holdings: [{ symbol, name, targetWeight, actualWeight, pePct, grade, analyzed }]
+ * holdings: [{ symbol, name, targetWeight, actualWeight, pePct, grade, assetClass, spreadPct, analyzed }]
  */
 export function allocatePoolBudget({
   budget,
@@ -319,12 +385,39 @@ export function allocatePoolBudget({
   strategy = "valuation",
   strategyConfig,
   preferTargetGap = false,
+  strategyOverrides,
 } = {}) {
   const totalBudget = Number(budget);
   const strategyId = normalizeStrategyId(strategy);
   const config = normalizeStrategyConfig(strategyConfig);
+  const overrides =
+    strategyOverrides && typeof strategyOverrides === "object" ? strategyOverrides : {};
   const empty = { ...emptyAllocation(totalBudget), strategy: strategyId };
   if (!Number.isFinite(totalBudget) || totalBudget <= 0 || !holdings.length) return empty;
+
+  function resolveRowStrategy(item) {
+    const raw = overrides[item.symbol];
+    if (raw == null || raw === "") return { id: strategyId, overridden: false };
+    const id = String(raw || "").trim().toLowerCase();
+    if (!STRATEGY_IDS.includes(id)) return { id: strategyId, overridden: false };
+    return { id, overridden: true };
+  }
+
+  function rowMultiplier(item, fallbackStrategy) {
+    const { id, overridden } = resolveRowStrategy(item);
+    const grid = dcaMultiplier({
+      strategy: overridden ? id : fallbackStrategy,
+      strategyConfig: config,
+      pePct: item.pePct,
+      grade: item.grade,
+      assetClass: item.assetClass,
+      spreadPct: item.spreadPct,
+    });
+    if (overridden) {
+      return { ...grid, band: `指定 · ${grid.band}` };
+    }
+    return grid;
+  }
 
   const n = holdings.length;
   const hasTargets = holdings.some((item) => Number(item.targetWeight) > 0);
@@ -350,12 +443,7 @@ export function allocatePoolBudget({
       const deficit = actual == null ? target : Math.max(0, target - actual);
       const grid =
         preferTargetGap && strategyId !== "rebalance"
-          ? dcaMultiplier({
-              strategy: strategyId,
-              strategyConfig: config,
-              pePct: item.pePct,
-              grade: item.grade,
-            })
+          ? rowMultiplier(item, strategyId)
           : { mult: 1, band: deficit > 0 ? "待补仓" : "已达标", hint: "" };
       const allowed = positionAllowed(target, actual);
       const score =
@@ -435,12 +523,7 @@ export function allocatePoolBudget({
       item.actualWeight != null && Number.isFinite(Number(item.actualWeight))
         ? Number(item.actualWeight)
         : null;
-    const grid = dcaMultiplier({
-      strategy: strategyId,
-      strategyConfig: config,
-      pePct: item.pePct,
-      grade: item.grade,
-    });
+    const grid = rowMultiplier(item, strategyId);
     const allowed = positionAllowed(target, actual);
     const reb = rebalanceFactor(target, actual, useReb);
     const score = allowed ? (target / 100) * grid.mult * reb : 0;

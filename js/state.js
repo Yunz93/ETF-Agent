@@ -31,6 +31,8 @@ export const state = {
       grade_mult: { A: 1.5, B: 1.2, C: 1.0, D: 0.5, E: 0 },
       use_rebalance: true,
     },
+    strategy_overrides: {},
+    add_plan: { enabled: true, anchor: "price", levels: null },
     trading_cost: {
       min_commission: 5,
       commission_rate_pct: 0.03,
@@ -49,6 +51,10 @@ export const state = {
   // 分析页当前 ETF 代码；由侧栏池条目打开
   analysisSymbol: null,
   analysisCache: {}, // symbolKey -> payload
+  // 全池分析预取进度：idle | running | done
+  analysisPrefetch: { status: "idle", total: 0, done: 0, current: null },
+  // 本期执行草稿：[{id, period, symbol, name, suggested_amount, price, shares, fee, date, status, skip_reason?}]
+  executionDrafts: [],
   aiReviews: {}, // symbol -> { status, result?, error? }
   workspaceSync: {
     status: "idle",
@@ -61,6 +67,8 @@ export const state = {
 export const workspaceRuntime = {
   saveTimer: null,
   saveInFlight: null,
+  /** syncPlanForm 已把 state.plan 画进表单后才允许 beforeunload 回读，避免空表单冲掉已 hydrate 的计划。 */
+  planFormReady: false,
 };
 
 export const els = {};
@@ -102,6 +110,12 @@ export function initEls() {
     planPeBands: document.querySelector("#planPeBands"),
     planGradeMult: document.querySelector("#planGradeMult"),
     planUseRebalance: document.querySelector("#planUseRebalance"),
+    planAddPlan: document.querySelector("#planAddPlan"),
+    planAddPlanEnabled: document.querySelector("#planAddPlanEnabled"),
+    planAddPlanAnchor: document.querySelector("#planAddPlanAnchor"),
+    planAddPlanPreset: document.querySelector("#planAddPlanPreset"),
+    planAddPlanLevels: document.querySelector("#planAddPlanLevels"),
+    planAddPlanPresetHint: document.querySelector("#planAddPlanPresetHint"),
     etfForm: document.querySelector("#etfForm"),
     etfSymbol: document.querySelector("#etfSymbol"),
     etfShares: document.querySelector("#etfShares"),
@@ -110,8 +124,10 @@ export function initEls() {
     etfFormStatus: document.querySelector("#etfFormStatus"),
     etfMetrics: document.querySelector("#etfMetrics"),
     poolAllocPanel: document.querySelector("#poolAllocPanel"),
+    overviewEmptyGuide: document.querySelector("#overviewEmptyGuide"),
     etfRows: document.querySelector("#etfRows"),
     etfEmpty: document.querySelector("#etfEmpty"),
+    importSeedPool: document.querySelector("#importSeedPool"),
     buyForm: document.querySelector("#buyForm"),
     tradeType: document.querySelector("#tradeType"),
     buySymbol: document.querySelector("#buySymbol"),
@@ -128,6 +144,7 @@ export function initEls() {
     buyFilterCount: document.querySelector("#buyFilterCount"),
     buyRows: document.querySelector("#buyRows"),
     buyEmpty: document.querySelector("#buyEmpty"),
+    execDraftPanel: document.querySelector("#execDraftPanel"),
     etfRefresh: document.querySelector("#etfRefresh"),
     etfQuoteStatus: document.querySelector("#etfQuoteStatus"),
     etfChartPanel: document.querySelector("#etfChartPanel"),

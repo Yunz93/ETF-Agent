@@ -11,6 +11,7 @@ import {
   dcaMultiplier,
   normalizeStrategyId,
   POSITION_TOLERANCE_PP,
+  STRATEGY_IDS,
   strategyLabel,
 } from "./strategy.js";
 import { buildPoolHoldingsForAllocation } from "./pool-alloc.js";
@@ -23,14 +24,31 @@ export const STANCE = Object.freeze({
   SKIP: "skip",
 });
 
+function resolveSymbolStrategy(plan, symbol) {
+  const globalId = normalizeStrategyId(plan?.strategy);
+  const overrides = plan?.strategy_overrides;
+  const raw = overrides && typeof overrides === "object" ? overrides[symbol] : null;
+  if (raw == null || raw === "") {
+    return { strategy: globalId, overridden: false };
+  }
+  const id = String(raw || "").trim().toLowerCase();
+  if (!STRATEGY_IDS.includes(id)) {
+    return { strategy: globalId, overridden: false };
+  }
+  return { strategy: id, overridden: true };
+}
+
 /**
  * @param {{ symbol?: string, preferLive?: object|null, plan?: object, holdings?: array }} [opts]
  */
 export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, holdings = null } = {}) {
   const activePlan = plan || state.plan || {};
-  const strategy = normalizeStrategyId(activePlan.strategy);
-  const strategyName = strategyLabel(strategy);
+  const { strategy, overridden } = resolveSymbolStrategy(activePlan, symbol);
+  const strategyName = overridden
+    ? `${strategyLabel(strategy)}(指定)`
+    : strategyLabel(strategy);
   const strategyConfig = activePlan.strategy_config;
+  const strategyOverrides = activePlan.strategy_overrides;
   const poolHoldings =
     holdings ||
     buildPoolHoldingsForAllocation({ preferLive: preferLive || null });
@@ -43,13 +61,16 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
     strategyConfig,
     pePct: holding?.pePct,
     grade: holding?.grade,
+    assetClass: holding?.assetClass,
+    spreadPct: holding?.spreadPct,
   });
 
   const pool = allocatePoolBudget({
     budget,
     holdings: poolHoldings,
-    strategy,
+    strategy: normalizeStrategyId(activePlan.strategy),
     strategyConfig,
+    strategyOverrides,
     preferTargetGap: execution.phase === "initial",
   });
   const mine = symbol ? allocationForSymbol(pool, symbol) : null;
@@ -121,6 +142,9 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
     symbol,
     strategy,
     strategyName,
+    strategyOverridden: overridden,
+    assetClass: holding?.assetClass || null,
+    spreadPct: holding?.spreadPct ?? null,
     stance,
     headline,
     reason,

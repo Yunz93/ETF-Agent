@@ -242,10 +242,51 @@ class AnalyzeTests(unittest.TestCase):
         self.assertTrue(payload["commentary"][-1].startswith("盘面观察"))
         self.assertGreaterEqual(payload["backtest"]["samples"], 0)
         chart = payload["chart"]
+        self.assertEqual(chart["price_basis"], "index")
         self.assertEqual(len(chart["points"]), len(self.index_rows))
         self.assertEqual(chart["available_from"], self.index_rows[0]["date"])
         self.assertEqual(chart["available_to"], self.index_rows[-1]["date"])
         self.assertIsNotNone(chart["markers"]["boll_mid"])
+
+    def test_commentary_uses_index_technicals_separate_from_etf_chart(self):
+        """今日盘面走指数 technicals；ETF 走势图单独用 chart.markers。"""
+        etf_rows = [
+            {
+                **row,
+                "close": row["close"] / 5000,
+                "high": row["high"] / 5000,
+                "low": row["low"] / 5000,
+            }
+            for row in self.index_rows
+        ]
+        etf_quote = {"price": etf_rows[-1]["close"], "change_pct": 0.1, "name": "红利低波ETF", "symbol": "512890"}
+        payload = dividend.analyze_dividend_data(
+            self.index_rows,
+            self.valuation,
+            self.treasury,
+            etf_quote,
+            self.settings,
+            chart_rows=etf_rows,
+        )
+        chart = payload["chart"]
+        commentary = payload["commentary"]
+        self.assertEqual(chart["price_basis"], "etf")
+        self.assertTrue(commentary)
+        self.assertTrue(commentary[-1].startswith("盘面观察"))
+        self.assertFalse(any(line.startswith("走势解读：") for line in commentary))
+        index_ma = payload["technicals"]["ma250"]
+        chart_ma = chart["markers"]["ma250"]
+        self.assertGreater(index_ma, 100)
+        self.assertLess(chart_ma, 10)
+        joined = "\n".join(commentary)
+        self.assertNotIn(f"{chart_ma:.3f}", joined)
+
+    def test_commentary_includes_spread_when_available(self):
+        payload = dividend.analyze_dividend_data(self.index_rows, self.valuation, self.treasury, None, self.settings)
+        commentary = payload["commentary"]
+        self.assertTrue(any("股债利差" in line or "股息率" in line for line in commentary))
+        joined = "\n".join(commentary)
+        self.assertTrue("年线" in joined or "布林" in joined or "RSI" in joined)
 
     def test_note_text_contains_expected_sections(self):
         etf_quote = {"price": 1.168, "change_pct": 0.69, "name": "红利低波ETF", "symbol": "512890"}
@@ -284,6 +325,10 @@ class AnalyzeTests(unittest.TestCase):
         self.assertEqual(chart["symbol"], "512890")
         self.assertEqual(chart["points"][-1]["close"], etf_rows[-1]["close"])
         self.assertLess(chart["markers"]["ma250"], 10)
+        # 盘面仍用指数口径，不跟 ETF 图标记混写
+        joined = "\n".join(payload["commentary"])
+        self.assertNotIn(f"{chart['markers']['ma250']:.3f}", joined)
+        self.assertTrue(payload["commentary"][-1].startswith("盘面观察"))
 
     def test_analyze_degrades_without_valuation_and_bond(self):
         payload = dividend.analyze_dividend_data(self.index_rows, {}, [], None, self.settings)
@@ -392,6 +437,63 @@ class AnalysisRoutingTests(unittest.TestCase):
 
         gold = dividend.resolve_analysis_settings("159937", name="黄金ETF博时")
         self.assertEqual(gold.get("asset_class"), "commodity")
+
+    def test_asset_class_resolution_and_payload(self):
+        gold = dividend.resolve_analysis_settings("159937", name="黄金ETF博时")
+        self.assertEqual(gold.get("asset_class"), "commodity")
+
+        dividend_etf = dividend.resolve_analysis_settings("512890")
+        self.assertEqual(dividend_etf.get("asset_class"), "dividend")
+        low_vol = dividend.resolve_analysis_settings("563020")
+        self.assertEqual(low_vol.get("asset_class"), "dividend")
+
+        ndx = dividend.resolve_analysis_settings("513390")
+        self.assertEqual(ndx.get("asset_class"), "equity_growth")
+        ndx_by_name = dividend.resolve_analysis_settings("999001", name="纳指100ETF")
+        self.assertEqual(ndx_by_name.get("asset_class"), "equity_growth")
+
+        a500 = dividend.resolve_analysis_settings("563360")
+        self.assertEqual(a500.get("asset_class"), "equity_core")
+        hs300 = dividend.resolve_analysis_settings("510300")
+        self.assertEqual(hs300.get("asset_class"), "equity_core")
+
+        # etf_proxy 的 equity 映射为 equity_core
+        proxy_equity = dividend.resolve_analysis_settings("518800", name="证券公司ETF")
+        self.assertEqual(proxy_equity.get("analysis_mode"), "etf_proxy")
+        self.assertEqual(proxy_equity.get("asset_class"), "equity_core")
+
+        # payload 顶层带 asset_class
+        rows = [
+            {
+                "date": "2024-01-02",
+                "close": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "change_pct": 0.0,
+                "pe": 10.0,
+            }
+        ] * 300
+        # 上面写法会共享 dict；改成独立行
+        rows = []
+        start = datetime.date(2023, 1, 3)
+        for i in range(300):
+            close = 100 + i * 0.01
+            rows.append(
+                {
+                    "date": (start + datetime.timedelta(days=i)).isoformat(),
+                    "close": close,
+                    "high": close + 1,
+                    "low": close - 1,
+                    "change_pct": 0.1,
+                    "pe": 10.0,
+                }
+            )
+        settings = dividend.resolve_analysis_settings("512890")
+        payload = dividend.analyze_dividend_data(rows, {"pe": 10.0, "pe_percentile": 0.5}, [], None, settings)
+        self.assertEqual(payload.get("asset_class"), "dividend")
+
+        bare = dividend.analyze_dividend_data(rows, {}, [], None, {"index_name": "测试"})
+        self.assertEqual(bare.get("asset_class"), "equity_core")
 
     def test_missing_danjuan_note(self):
         with_pe = dividend.missing_danjuan_note(True)
