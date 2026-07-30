@@ -81,10 +81,33 @@ export function pickDateTicks(points, count = 5) {
   return ticks;
 }
 
+export function clampAxisLabelX(x, textWidth, canvasWidth, inset = 6) {
+  return clamp(x, inset + textWidth / 2, canvasWidth - inset - textWidth / 2);
+}
+
+export function placeChartTooltip({
+  anchorX,
+  anchorY,
+  tooltipWidth,
+  tooltipHeight,
+  containerWidth,
+  containerHeight,
+  gap = 10,
+  inset = 8,
+}) {
+  const left = clamp(anchorX + gap, inset, containerWidth - tooltipWidth - inset);
+  const above = anchorY - tooltipHeight - gap;
+  const top =
+    above >= inset
+      ? above
+      : clamp(anchorY + gap, inset, containerHeight - tooltipHeight - inset);
+  return { left, top };
+}
+
 export function setupHiDpiCanvas(canvas, cssHeight = 360) {
   const parentWidth = canvas.parentElement?.clientWidth || canvas.clientWidth || 960;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const width = Math.max(320, Math.floor(parentWidth));
+  const width = Math.max(1, Math.floor(parentWidth));
   const height = cssHeight;
   canvas.width = Math.floor(width * dpr);
   canvas.height = Math.floor(height * dpr);
@@ -192,7 +215,8 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
   const markerPalette = {
     buy: buyColor,
     sell: sellColor,
-    add: resolveCssColor("--blue", maColor),
+    ma250: resolveCssColor("--chart-ma250", "#1f8a70"),
+    bollMid: resolveCssColor("--chart-boll-mid", "#8b5cf6"),
     tp: resolveCssColor("--warn", "#c48a1a"),
     sl: resolveCssColor("--danger", "#c44"),
     cost: inkColor,
@@ -301,6 +325,7 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
 
     dateTicks.forEach(({ index, date }) => {
       const x = xAt(index);
+      const dateLabel = formatChartDate(date, ["1w", "1m", "3m"].includes(rangeKey));
       ctx.strokeStyle = gridColor;
       ctx.globalAlpha = 0.4;
       ctx.beginPath();
@@ -311,11 +336,8 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
       ctx.fillStyle = labelColor;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      ctx.fillText(
-        formatChartDate(date, ["1w", "1m", "3m"].includes(rangeKey)),
-        x,
-        height - padY.bottom + 10,
-      );
+      const dateLabelX = clampAxisLabelX(x, ctx.measureText(dateLabel).width, width);
+      ctx.fillText(dateLabel, dateLabelX, height - padY.bottom + 10);
     });
 
     const labelSlots = [];
@@ -447,8 +469,16 @@ export function drawPriceChart(canvas, tooltip, points, markers, currency, error
       const rect = canvas.getBoundingClientRect();
       const tipX = (hx / width) * rect.width;
       const tipY = (hy / height) * rect.height;
-      tooltip.style.left = `${Math.min(Math.max(tipX, 18), rect.width - 18)}px`;
-      tooltip.style.top = `${Math.max(tipY, 28)}px`;
+      const position = placeChartTooltip({
+        anchorX: tipX,
+        anchorY: tipY,
+        tooltipWidth: tooltip.offsetWidth,
+        tooltipHeight: tooltip.offsetHeight,
+        containerWidth: rect.width,
+        containerHeight: rect.height,
+      });
+      tooltip.style.left = `${position.left}px`;
+      tooltip.style.top = `${position.top}px`;
     }
   };
 
