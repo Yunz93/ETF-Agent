@@ -18,6 +18,7 @@
   - 建仓阶段按配置缺口分配；定投阶段按估值/评分/再平衡策略分配，不足经济性最小订单时累计至下期
   - 仓位口径区分：ETF 池总仓位、池内配置权重、单只总资产仓位；买卖记录含手续费并同步含费成本
   - 定投策略可选：定额定投 / 估值定投 / 评分定投 / 再平衡定投 / 自定义 PE 分位倍率网格
+  - 市场情绪 overlay（可选）：A500 / 纳指 / 恒生科技 ETF 真实收盘价衍生波动与回撤温度，仅极端区调节估值/评分/自定义倍率
   - 分析页与全池分配共用同一套策略执行结论（投 / 不投 / 金额），评分仅作诊断
   - 已收录指数使用指数历史与估值分析；其他 ETF 自动降级为自身行情技术面分析
   - 实时行情（腾讯行情主源，东方财富补齐/兜底）
@@ -91,7 +92,7 @@ curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/v0.0.3/packaging/
 
 详见 [docs/DESKTOP.md](docs/DESKTOP.md)。
 
-定投策略增加市场情绪考量的设计提案见 [docs/MARKET_SENTIMENT.md](docs/MARKET_SENTIMENT.md)（情绪 overlay，尚未实现）。
+市场情绪 overlay 说明见 [docs/MARKET_SENTIMENT.md](docs/MARKET_SENTIMENT.md)。
 
 ## 项目结构
 
@@ -103,6 +104,7 @@ stockagent/               # 后端包（纯标准库）
   symbols.py / market_time.py
   indicators.py           # SMA / 年线乖离 / 布林 / RSI / KDJ / 分位（纯计算）
   quotes.py               # ETF 批量行情 + 历史 K 线
+  sentiment_math.py / sentiment.py  # 市场情绪（波动/回撤 overlay）
   dividend.py             # 兼容入口
   dividend_registry.py / dividend_sources.py
   dividend_analysis.py / dividend_service.py
@@ -111,7 +113,7 @@ stockagent/               # 后端包（纯标准库）
 js/                       # 前端 ES modules（index.html → js/main.js）
   main.js / state.js / constants.js / utils.js / chart.js
   navigation.js / events.js / workspace.js / workspace_model.js
-  strategy.js / pool-alloc.js / period-advice.js
+  strategy.js / pool-alloc.js / period-advice.js / market-sentiment.js
   settings.js
   views/                  # dividend / etf / render
 desktop/ packaging/ tests/
@@ -127,6 +129,7 @@ desktop/ packaging/ tests/
 - `GET /api/etf/quotes?symbols=512890,510300`：ETF 批量行情（腾讯主源，东方财富补齐/兜底；60 秒缓存）
 - `GET /api/etf/analysis-map?symbols=512890,513100`：查询 ETF 的指数分析或行情代理模式
 - `GET /api/history?symbol=512890&range=1y`：历史收盘价（Yahoo chart 主源，腾讯 / 东方财富 K 线依次兜底；1m / 3m / 6m / 1y / 5y）
+- `GET /api/market/sentiment?markets=A,HK,US`：市场情绪快照（宽基 ETF 5y 收盘价衍生；`refresh=1` 强刷）
 - `GET/PUT /api/workspace`：ETF 池持久化到项目根目录 `workspace.json`（浏览器 localStorage 仅作缓存与离线兜底）
 - `GET/POST /api/config`：数据源配置（`config.json`；`etf.analysis` 可配置指数代码、可选蛋卷代码与历史行情来源）
 - `GET /api/ai/status`：AI 提供商、模型与密钥配置状态（不返回密钥）

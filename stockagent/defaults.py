@@ -159,6 +159,29 @@ ETF_PRODUCT_FIELDS = (
     "bid_ask_spread_pct",
 )
 
+DEFAULT_SENTIMENT_CONFIG = {
+    "enabled": True,
+    "mode": "overlay",
+    "extremes_only": True,
+    "extreme_low": 25,
+    "extreme_high": 75,
+    "apply_to": ["valuation", "grade", "custom"],
+    "bands": [
+        {"max_score": 20, "mult": 1.30, "label": "极端恐慌"},
+        {"max_score": 40, "mult": 1.15, "label": "偏恐慌"},
+        {"max_score": 60, "mult": 1.00, "label": "中性"},
+        {"max_score": 80, "mult": 0.75, "label": "偏热"},
+        {"max_score": 100, "mult": 0.40, "label": "极端狂热"},
+    ],
+    "market_by_asset_class": {
+        "dividend": "A",
+        "equity_core": "A",
+        "equity_growth": "auto",
+        "commodity": "off",
+        "bond": "off",
+    },
+}
+
 DEFAULT_STRATEGY_CONFIG = {
     "pe_bands": [
         {"max_pct": 20, "mult": 1.5, "label": "低估区"},
@@ -169,6 +192,7 @@ DEFAULT_STRATEGY_CONFIG = {
     ],
     "grade_mult": {"A": 1.5, "B": 1.2, "C": 1.0, "D": 0.5, "E": 0},
     "use_rebalance": True,
+    "sentiment": DEFAULT_SENTIMENT_CONFIG,
 }
 
 DEFAULT_WORKSPACE = {

@@ -30,6 +30,28 @@ export const state = {
       ],
       grade_mult: { A: 1.5, B: 1.2, C: 1.0, D: 0.5, E: 0 },
       use_rebalance: true,
+      sentiment: {
+        enabled: true,
+        mode: "overlay",
+        extremes_only: true,
+        extreme_low: 25,
+        extreme_high: 75,
+        apply_to: ["valuation", "grade", "custom"],
+        bands: [
+          { max_score: 20, mult: 1.3, label: "极端恐慌" },
+          { max_score: 40, mult: 1.15, label: "偏恐慌" },
+          { max_score: 60, mult: 1.0, label: "中性" },
+          { max_score: 80, mult: 0.75, label: "偏热" },
+          { max_score: 100, mult: 0.4, label: "极端狂热" },
+        ],
+        market_by_asset_class: {
+          dividend: "A",
+          equity_core: "A",
+          equity_growth: "auto",
+          commodity: "off",
+          bond: "off",
+        },
+      },
     },
     strategy_overrides: {},
     add_plan: { enabled: true, anchor: "price", levels: null },
@@ -56,6 +78,9 @@ export const state = {
   // 本期执行草稿：[{id, period, symbol, name, suggested_amount, price, shares, fee, date, status, skip_reason?}]
   executionDrafts: [],
   aiReviews: {}, // symbol -> { status, result?, error? }
+  marketSentiment: null,
+  marketSentimentFetchedAt: 0,
+  marketSentimentError: null,
   workspaceSync: {
     status: "idle",
     updatedAt: null,
@@ -106,6 +131,8 @@ export function initEls() {
     planDayHint: document.querySelector("#planDayHint"),
     planStrategy: document.querySelector("#planStrategy"),
     planStrategyHint: document.querySelector("#planStrategyHint"),
+    planSentimentEnabled: document.querySelector("#planSentimentEnabled"),
+    planSentimentHint: document.querySelector("#planSentimentHint"),
     planStrategyCustom: document.querySelector("#planStrategyCustom"),
     planPeBands: document.querySelector("#planPeBands"),
     planGradeMult: document.querySelector("#planGradeMult"),

@@ -70,13 +70,66 @@ export const DEFAULT_GRADE_MULT = Object.freeze({
   E: 0,
 });
 
+export const DEFAULT_SENTIMENT_BANDS = Object.freeze([
+  { max_score: 20, mult: 1.3, label: "极端恐慌" },
+  { max_score: 40, mult: 1.15, label: "偏恐慌" },
+  { max_score: 60, mult: 1.0, label: "中性" },
+  { max_score: 80, mult: 0.75, label: "偏热" },
+  { max_score: 100, mult: 0.4, label: "极端狂热" },
+]);
+
+export const DEFAULT_SENTIMENT_CONFIG = Object.freeze({
+  enabled: true,
+  mode: "overlay",
+  extremes_only: true,
+  extreme_low: 25,
+  extreme_high: 75,
+  apply_to: Object.freeze(["valuation", "grade", "custom"]),
+  bands: DEFAULT_SENTIMENT_BANDS.map((band) => ({ ...band })),
+  market_by_asset_class: Object.freeze({
+    dividend: "A",
+    equity_core: "A",
+    equity_growth: "auto",
+    commodity: "off",
+    bond: "off",
+  }),
+});
+
 export const DEFAULT_STRATEGY_CONFIG = Object.freeze({
   pe_bands: DEFAULT_PE_BANDS.map((band) => ({ ...band })),
   grade_mult: { ...DEFAULT_GRADE_MULT },
   use_rebalance: true,
+  sentiment: {
+    ...DEFAULT_SENTIMENT_CONFIG,
+    apply_to: [...DEFAULT_SENTIMENT_CONFIG.apply_to],
+    bands: DEFAULT_SENTIMENT_BANDS.map((band) => ({ ...band })),
+    market_by_asset_class: { ...DEFAULT_SENTIMENT_CONFIG.market_by_asset_class },
+  },
 });
 
 export const POSITION_TOLERANCE_PP = 5;
+
+const SENTIMENT_ZONE_HINTS = Object.freeze({
+  panic: "极端恐慌，定投可加码",
+  fear: "偏恐慌，定投可小幅加码",
+  neutral: "情绪中性，不调节倍率",
+  greed: "偏热，定投宜减码",
+  euphoria: "极端狂热，定投明显减码",
+  unknown: "情绪数据不可用，按中性",
+});
+
+/** 按指数代码 / 名称推断情绪市场分区。 */
+export function inferSentimentMarket({ indexCode = "", name = "", symbol = "" } = {}) {
+  const code = String(indexCode || "").trim().toUpperCase();
+  const text = `${name} ${symbol}`.toLowerCase();
+  if (["NDX", "SPX", "IXIC", "DJI"].includes(code) || /纳指|纳斯达克|标普|标普500|sp500|s&p/.test(text)) {
+    return "US";
+  }
+  if (["HSI", "HSTECH"].includes(code) || /恒生|港股|hang\s*seng/.test(text)) {
+    return "HK";
+  }
+  return "A";
+}
 
 const GRADE_HINTS = Object.freeze({
   A: "综合评分偏乐观",
@@ -101,16 +154,80 @@ export function strategySummary(strategy) {
   return STRATEGY_PRESETS[id]?.summary || STRATEGY_PRESETS.valuation.summary;
 }
 
-function clampMult(value, fallback = 1) {
+function clampMult(value, fallback = 1, max = 5) {
   const number = Number(value);
   if (!Number.isFinite(number) || number < 0) return fallback;
-  return Math.min(5, Math.round(number * 100) / 100);
+  return Math.min(max, Math.round(number * 100) / 100);
 }
 
 function clampPct(value, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.min(100, Math.max(1, Math.round(number)));
+}
+
+function clampScoreBoundary(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(100, Math.max(0, Math.round(number)));
+}
+
+export function normalizeSentimentConfig(config) {
+  const base = DEFAULT_SENTIMENT_CONFIG;
+  const raw = config && typeof config === "object" ? config : {};
+  const rawBands = Array.isArray(raw.bands) ? raw.bands : null;
+  let bands;
+  if (rawBands && rawBands.length) {
+    bands = rawBands.slice(0, 8).map((band, index) => {
+      const fallback = base.bands[Math.min(index, base.bands.length - 1)];
+      return {
+        max_score: clampScoreBoundary(band?.max_score ?? band?.maxScore, fallback.max_score),
+        mult: clampMult(band?.mult, fallback.mult, 2),
+        label: String(band?.label || fallback.label || "").trim() || fallback.label,
+      };
+    });
+    bands.sort((a, b) => a.max_score - b.max_score);
+    bands[bands.length - 1].max_score = 100;
+  } else {
+    bands = base.bands.map((band) => ({ ...band }));
+  }
+
+  const rawApply = Array.isArray(raw.apply_to) ? raw.apply_to : base.apply_to;
+  const apply_to = rawApply
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter((id) => STRATEGY_IDS.includes(id));
+  const marketRaw =
+    raw.market_by_asset_class && typeof raw.market_by_asset_class === "object"
+      ? raw.market_by_asset_class
+      : {};
+  const market_by_asset_class = { ...base.market_by_asset_class };
+  for (const key of Object.keys(market_by_asset_class)) {
+    const value = String(marketRaw[key] ?? market_by_asset_class[key])
+      .trim()
+      .toLowerCase();
+    if (value === "off" || value === "auto" || value === "a" || value === "hk" || value === "us") {
+      market_by_asset_class[key] = value === "off" || value === "auto" ? value : value.toUpperCase();
+    }
+  }
+
+  let extreme_low = clampScoreBoundary(raw.extreme_low ?? raw.extremeLow, base.extreme_low);
+  let extreme_high = clampScoreBoundary(raw.extreme_high ?? raw.extremeHigh, base.extreme_high);
+  if (extreme_low > extreme_high) {
+    const swap = extreme_low;
+    extreme_low = extreme_high;
+    extreme_high = swap;
+  }
+
+  return {
+    enabled: raw.enabled !== false && raw.enabled !== 0,
+    mode: String(raw.mode || base.mode).trim().toLowerCase() === "off" ? "off" : "overlay",
+    extremes_only: raw.extremes_only !== false && raw.extremes_only !== 0,
+    extreme_low,
+    extreme_high,
+    apply_to: apply_to.length ? apply_to : [...base.apply_to],
+    bands,
+    market_by_asset_class,
+  };
 }
 
 /** 归一化自定义策略配置（非法字段回退默认）。 */
@@ -121,6 +238,7 @@ export function normalizeStrategyConfig(config) {
       pe_bands: base.pe_bands.map((band) => ({ ...band })),
       grade_mult: { ...base.grade_mult },
       use_rebalance: base.use_rebalance,
+      sentiment: normalizeSentimentConfig(base.sentiment),
     };
   }
 
@@ -150,7 +268,72 @@ export function normalizeStrategyConfig(config) {
     pe_bands,
     grade_mult,
     use_rebalance: config.use_rebalance !== false && config.use_rebalance !== 0,
+    sentiment: normalizeSentimentConfig(config.sentiment ?? base.sentiment),
   };
+}
+
+/**
+ * 将情绪快照映射为叠加倍率。
+ * snapshot.score: 0–100，越高越狂热；缺失或降级时返回 1×。
+ */
+export function sentimentMultiplier(snapshot, sentimentConfig) {
+  const config = normalizeSentimentConfig(sentimentConfig);
+  if (!snapshot || snapshot.degraded || snapshot.score == null || !Number.isFinite(Number(snapshot.score))) {
+    return {
+      mult: 1,
+      zone: "unknown",
+      band: "数据不足",
+      hint: SENTIMENT_ZONE_HINTS.unknown,
+      score: null,
+    };
+  }
+  const score = Number(snapshot.score);
+  if (config.extremes_only && score > config.extreme_low && score < config.extreme_high) {
+    return {
+      mult: 1,
+      zone: snapshot.zone || "neutral",
+      band: "中性死区",
+      hint: "非极端情绪，不调节倍率",
+      score,
+    };
+  }
+  for (const band of config.bands) {
+    if (score <= band.max_score) {
+      return {
+        mult: band.mult,
+        zone: snapshot.zone || "neutral",
+        band: band.label,
+        hint: SENTIMENT_ZONE_HINTS[snapshot.zone] || band.label,
+        score,
+      };
+    }
+  }
+  const last = config.bands[config.bands.length - 1];
+  return {
+    mult: last?.mult ?? 1,
+    zone: snapshot.zone || "euphoria",
+    band: last?.label || "极端狂热",
+    hint: SENTIMENT_ZONE_HINTS.euphoria,
+    score,
+  };
+}
+
+/** Resolve which market sentiment bucket applies to a holding. */
+export function sentimentMarketForHolding(item = {}, sentimentConfig, registry = {}) {
+  const config = normalizeSentimentConfig(sentimentConfig);
+  const cls = String(item.assetClass || "").trim().toLowerCase() || "equity_core";
+  const mapped = config.market_by_asset_class[cls] ?? "A";
+  if (mapped === "off") return null;
+  if (mapped === "A" || mapped === "HK" || mapped === "US") return mapped;
+  if (item.sentimentMarket === "A" || item.sentimentMarket === "HK" || item.sentimentMarket === "US") {
+    return item.sentimentMarket;
+  }
+  const reg = registry[item.symbol] || {};
+  return inferSentimentMarket({
+    indexCode: reg.index_code || item.indexCode || "",
+    name: `${item.name || ""} ${reg.index_name || ""} ${reg.etf_name || ""}`,
+    symbol: item.symbol || "",
+  });
 }
 
 function multiplierFromPeBands(pePct, bands) {
@@ -349,6 +532,9 @@ function finalizeEligible({ totalBudget, eligible, skipped, forceFullDeploy, not
       amount,
       band: row.band,
       mult: row.mult,
+      baseMult: row.baseMult ?? row.mult,
+      sentimentMult: row.sentimentMult ?? 1,
+      sentiment: row.sentiment || null,
       targetWeight: row.targetWeight,
       actualWeight: row.actualWeight,
       sharePct: deployTotal > 0 ? (amount / deployTotal) * 100 : 0,
@@ -373,9 +559,11 @@ function finalizeEligible({ totalBudget, eligible, skipped, forceFullDeploy, not
  * - budget：整池每期总预算（不是单只 ETF）
  * - strategy / strategyConfig：策略类型与自定义配置
  * - strategyOverrides：按品种覆盖策略（{ symbol: strategyId }）
+ * - sentimentByMarket：{ A|HK|US: snapshot }，估值/评分/自定义可叠加情绪倍率
+ * - analysisRegistry：用于 equity_growth 的市场分区推断
  * - 某只不建议投（mult=0）时，其份额可让给其他可投品种
  * - 不强制投完（估值/评分/自定义）：整体偏贵时只部署预算的一部分
- * - 定额 / 再平衡：默认打满预算
+ * - 定额 / 再平衡：默认打满预算（默认不叠加情绪）
  *
  * holdings: [{ symbol, name, targetWeight, actualWeight, pePct, grade, assetClass, spreadPct, analyzed }]
  */
@@ -386,12 +574,16 @@ export function allocatePoolBudget({
   strategyConfig,
   preferTargetGap = false,
   strategyOverrides,
+  sentimentByMarket = null,
+  analysisRegistry = null,
 } = {}) {
   const totalBudget = Number(budget);
   const strategyId = normalizeStrategyId(strategy);
   const config = normalizeStrategyConfig(strategyConfig);
   const overrides =
     strategyOverrides && typeof strategyOverrides === "object" ? strategyOverrides : {};
+  const registry =
+    analysisRegistry && typeof analysisRegistry === "object" ? analysisRegistry : {};
   const empty = { ...emptyAllocation(totalBudget), strategy: strategyId };
   if (!Number.isFinite(totalBudget) || totalBudget <= 0 || !holdings.length) return empty;
 
@@ -414,9 +606,56 @@ export function allocatePoolBudget({
       spreadPct: item.spreadPct,
     });
     if (overridden) {
-      return { ...grid, band: `指定 · ${grid.band}` };
+      return { ...grid, band: `指定 · ${grid.band}`, strategyId: id };
     }
-    return grid;
+    return { ...grid, strategyId: id };
+  }
+
+  function withSentiment(item, grid) {
+    const rowStrategyId = grid.strategyId || strategyId;
+    const sentCfg = config.sentiment;
+    const allowed =
+      sentCfg.enabled &&
+      sentCfg.mode === "overlay" &&
+      sentCfg.apply_to.includes(rowStrategyId);
+    if (!allowed || !(grid.mult > 0)) {
+      return {
+        ...grid,
+        baseMult: grid.mult,
+        sentimentMult: 1,
+        sentiment: null,
+      };
+    }
+    const market = sentimentMarketForHolding(item, sentCfg, registry);
+    if (!market) {
+      return {
+        ...grid,
+        baseMult: grid.mult,
+        sentimentMult: 1,
+        sentiment: null,
+      };
+    }
+    const snapshot =
+      sentimentByMarket && typeof sentimentByMarket === "object"
+        ? sentimentByMarket[market]
+        : null;
+    const sent = sentimentMultiplier(snapshot, sentCfg);
+    const mult = Math.round(grid.mult * sent.mult * 1000) / 1000;
+    const hint =
+      sent.mult !== 1
+        ? `${grid.hint || "按策略参与"}；情绪 ${sent.band} ×${sent.mult}`
+        : grid.hint;
+    const band =
+      sent.mult !== 1 && grid.band ? `${grid.band} · 情绪${sent.band}` : grid.band;
+    return {
+      ...grid,
+      mult,
+      band,
+      hint,
+      baseMult: grid.mult,
+      sentimentMult: sent.mult,
+      sentiment: { market, ...sent },
+    };
   }
 
   const n = holdings.length;
@@ -441,10 +680,11 @@ export function allocatePoolBudget({
           ? Number(item.actualWeight)
           : null;
       const deficit = actual == null ? target : Math.max(0, target - actual);
-      const grid =
+      const baseGrid =
         preferTargetGap && strategyId !== "rebalance"
           ? rowMultiplier(item, strategyId)
-          : { mult: 1, band: deficit > 0 ? "待补仓" : "已达标", hint: "" };
+          : { mult: 1, band: deficit > 0 ? "待补仓" : "已达标", hint: "", strategyId };
+      const grid = withSentiment(item, baseGrid);
       const allowed = positionAllowed(target, actual);
       const score =
         !allowed || grid.mult <= 0 ? 0 : (deficit > 0 ? deficit : 0) * grid.mult;
@@ -455,6 +695,9 @@ export function allocatePoolBudget({
         actualWeight: actual,
         analyzed: item.analyzed !== false,
         mult: grid.mult,
+        baseMult: grid.baseMult,
+        sentimentMult: grid.sentimentMult,
+        sentiment: grid.sentiment,
         band:
           !allowed
             ? "超配暂停"
@@ -473,7 +716,9 @@ export function allocatePoolBudget({
             : grid.mult <= 0
               ? grid.hint || "当期不建议新增"
               : deficit > 0
-                ? `低于目标 ${(target - (actual ?? 0)).toFixed(1)} pp`
+                ? grid.sentimentMult !== 1 && grid.hint
+                  ? grid.hint
+                  : `低于目标 ${(target - (actual ?? 0)).toFixed(1)} pp`
                 : actual == null
                   ? "尚无持仓市值，按目标仓位参与"
                   : "已达或高于目标，本期不补",
@@ -523,7 +768,7 @@ export function allocatePoolBudget({
       item.actualWeight != null && Number.isFinite(Number(item.actualWeight))
         ? Number(item.actualWeight)
         : null;
-    const grid = rowMultiplier(item, strategyId);
+    const grid = withSentiment(item, rowMultiplier(item, strategyId));
     const allowed = positionAllowed(target, actual);
     const reb = rebalanceFactor(target, actual, useReb);
     const score = allowed ? (target / 100) * grid.mult * reb : 0;

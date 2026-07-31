@@ -304,6 +304,26 @@ function portfolioTotals() {
   return { totalValue, totalCost, held, quoted };
 }
 
+function syncSentimentForm(config) {
+  const cfg = normalizeStrategyConfig(config);
+  if (els.planSentimentEnabled) els.planSentimentEnabled.checked = cfg.sentiment.enabled !== false;
+  if (els.planSentimentHint) {
+    const items = state.marketSentiment?.items || {};
+    const parts = ["A", "HK", "US"]
+      .map((market) => {
+        const snap = items[market];
+        if (!snap || snap.score == null) return null;
+        return `${market} ${snap.score}`;
+      })
+      .filter(Boolean);
+    els.planSentimentHint.textContent = parts.length
+      ? `当前温度 ${parts.join(" · ")}（宽基 ETF 真实收盘价；仅极端区调节）`
+      : state.marketSentimentError
+        ? `情绪暂不可用：${state.marketSentimentError}`
+        : "A500 / 纳指 / 恒生科技 ETF 收盘价衍生波动与回撤温度";
+  }
+}
+
 function syncCustomStrategyForm(config) {
   const cfg = normalizeStrategyConfig(config);
   if (els.planUseRebalance) els.planUseRebalance.checked = cfg.use_rebalance !== false;
@@ -410,6 +430,14 @@ function readAddPlanConfigFromForm() {
   });
 }
 
+function readSentimentEnabledFromForm(previousConfig) {
+  const previous = normalizeStrategyConfig(previousConfig);
+  return {
+    ...previous.sentiment,
+    enabled: els.planSentimentEnabled ? els.planSentimentEnabled.checked !== false : previous.sentiment.enabled,
+  };
+}
+
 function readCustomStrategyConfigFromForm() {
   const pe_bands = [];
   els.planPeBands?.querySelectorAll(".plan-pe-row").forEach((row) => {
@@ -427,6 +455,7 @@ function readCustomStrategyConfigFromForm() {
     pe_bands: pe_bands.length ? pe_bands : DEFAULT_STRATEGY_CONFIG.pe_bands,
     grade_mult: Object.keys(grade_mult).length ? grade_mult : DEFAULT_STRATEGY_CONFIG.grade_mult,
     use_rebalance: els.planUseRebalance?.checked !== false,
+    sentiment: readSentimentEnabledFromForm(state.plan?.strategy_config),
   });
 }
 
@@ -457,6 +486,7 @@ function syncPlanForm() {
   if (els.planStrategy) els.planStrategy.value = strategy;
   if (els.planStrategyHint) els.planStrategyHint.textContent = strategySummary(strategy);
   if (els.planStrategyCustom) els.planStrategyCustom.hidden = strategy !== "custom";
+  syncSentimentForm(plan.strategy_config);
   syncCustomStrategyForm(plan.strategy_config);
   syncAddPlanForm(plan.add_plan);
   renderInitialSummary();
@@ -498,7 +528,12 @@ export function readPlanFormIntoState() {
   const strategy = normalizeStrategyId(els.planStrategy?.value);
   const previousConfig = state.plan.strategy_config;
   const strategy_config =
-    strategy === "custom" ? readCustomStrategyConfigFromForm() : normalizeStrategyConfig(previousConfig);
+    strategy === "custom"
+      ? readCustomStrategyConfigFromForm()
+      : normalizeStrategyConfig({
+          ...normalizeStrategyConfig(previousConfig),
+          sentiment: readSentimentEnabledFromForm(previousConfig),
+        });
   state.plan = {
     name: String(els.planName?.value || "").trim() || "默认定投计划",
     amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
