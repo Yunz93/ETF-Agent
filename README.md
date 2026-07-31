@@ -91,6 +91,8 @@ curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/v0.0.3/packaging/
 
 详见 [docs/DESKTOP.md](docs/DESKTOP.md)。
 
+定投策略增加市场情绪考量的设计提案见 [docs/MARKET_SENTIMENT.md](docs/MARKET_SENTIMENT.md)（情绪 overlay，尚未实现）。
+
 ## 项目结构
 
 ```text
