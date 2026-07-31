@@ -259,6 +259,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
                 "amount": 5000,
                 "capital_base": 100000,
                 "initial_target_pct": 30,
+                "initial_months": 6,
                 "trading_cost": {
                     "min_commission": 5,
                     "commission_rate_pct": 0.025,
@@ -277,8 +278,18 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         )
         self.assertEqual(plan["capital_base"], 100000)
         self.assertEqual(plan["initial_target_pct"], 30)
+        self.assertEqual(plan["initial_months"], 6)
         self.assertEqual(plan["trading_cost"]["commission_rate_pct"], 0.025)
         self.assertEqual(plan["pending_orders"]["512890"]["remaining"], 2000)
+
+    def test_plan_initial_months_defaults_and_clamps(self):
+        self.assertEqual(workspace_store.normalize_plan({})["initial_months"], 1)
+        self.assertEqual(
+            workspace_store.normalize_plan({"initial_months": 0})["initial_months"], 1
+        )
+        self.assertEqual(
+            workspace_store.normalize_plan({"initial_months": 99})["initial_months"], 36
+        )
 
     def test_save_workspace_preserves_client_iso_updated_at(self):
         stamp = "2026-07-31T01:02:03.456Z"

@@ -165,6 +165,7 @@ test("plan normalization preserves initial build and trading cost settings", () 
     amount: 5000,
     capital_base: 100000,
     initial_target_pct: 30,
+    initial_months: 6,
     trading_cost: {
       min_commission: 5,
       commission_rate_pct: 0.025,
@@ -175,6 +176,9 @@ test("plan normalization preserves initial build and trading cost settings", () 
   assert.equal(plan.amount, 5000);
   assert.equal(plan.capital_base, 100000);
   assert.equal(plan.initial_target_pct, 30);
+  assert.equal(plan.initial_months, 6);
+  assert.equal(normalizePlan({}).initial_months, 1);
+  assert.equal(normalizePlan({ initial_months: 99 }).initial_months, 36);
   assert.equal(plan.trading_cost.min_commission, 5);
   assert.equal(plan.trading_cost.max_fee_ratio_pct, 0.2);
 });

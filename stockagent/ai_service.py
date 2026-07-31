@@ -298,6 +298,11 @@ def _position_snapshot(raw, workspace, symbol=""):
     recurring_cap = recurring_budget + max(0.0, _number(pending.get("carry")))
     capital_base = max(0.0, _number(plan.get("capital_base")))
     initial_target_pct = max(0.0, min(100.0, _number(plan.get("initial_target_pct"))))
+    try:
+        initial_months = int(plan.get("initial_months") or 1)
+    except (TypeError, ValueError):
+        initial_months = 1
+    initial_months = max(1, min(36, initial_months))
     target_amount = capital_base * initial_target_pct / 100.0
     current_value = 0.0
     for item in workspace.get("etfs") or []:
@@ -306,8 +311,12 @@ def _position_snapshot(raw, workspace, symbol=""):
         if shares > 0 and cost > 0:
             current_value += shares * cost
     initial_gap = max(0.0, target_amount - current_value)
+    cadence = str(plan.get("cadence") or "monthly").strip().lower()
+    periods = 4 if cadence == "weekly" else 2 if cadence == "biweekly" else 1
+    period_installment = (target_amount / initial_months) / periods if initial_months else target_amount
+    initial_budget = min(initial_gap, period_installment)
     allowed_budget = (
-        initial_gap
+        initial_budget
         if phase == "initial" and not plan.get("initial_build_completed_at")
         else recurring_cap
     )

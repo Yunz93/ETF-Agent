@@ -43,6 +43,16 @@ def _nonnegative_number(value, fallback=0):
     return round(max(0, number), 6)
 
 
+def _clamp_initial_months(value, fallback=1):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    if number < 1:
+        return fallback
+    return min(36, number)
+
+
 def normalize_trading_cost(payload):
     base = dict(DEFAULT_WORKSPACE["plan"]["trading_cost"])
     source = payload if isinstance(payload, dict) else {}
@@ -326,6 +336,9 @@ def normalize_plan(payload):
         "amount": _positive_number(payload.get("amount")) or 0,
         "capital_base": _nonnegative_number(payload.get("capital_base")),
         "initial_target_pct": _clamp_weight(payload.get("initial_target_pct")),
+        "initial_months": _clamp_initial_months(
+            payload.get("initial_months", payload.get("initialMonths"))
+        ),
         "initial_build_completed_at": (
             str(payload.get("initial_build_completed_at") or "").strip() or None
         ),

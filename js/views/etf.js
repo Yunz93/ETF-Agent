@@ -468,6 +468,10 @@ function syncPlanForm() {
   if (els.planInitialTargetPct) {
     els.planInitialTargetPct.value = plan.initial_target_pct > 0 ? plan.initial_target_pct : "";
   }
+  if (els.planInitialMonths) {
+    const months = Number.parseInt(plan.initial_months, 10);
+    els.planInitialMonths.value = Number.isFinite(months) && months > 0 ? months : 1;
+  }
   if (els.planInitialCompleted) els.planInitialCompleted.checked = Boolean(plan.initial_build_completed_at);
   if (els.planMinCommission) els.planMinCommission.value = tradingCost.min_commission;
   if (els.planCommissionRatePct) els.planCommissionRatePct.value = tradingCost.commission_rate_pct;
@@ -507,12 +511,18 @@ function renderInitialSummary() {
   if (!els.planInitialSummary) return;
   const execution = planExecutionContext({ plan: state.plan, holdings: currentPlanHoldings() });
   if (!execution.configured) {
-    els.planInitialSummary.textContent = "填写总资金与目标仓位后计算建仓额度";
+    els.planInitialSummary.textContent = "填写总资金、目标仓位与建仓月数后计算额度";
     return;
   }
-  const status = execution.markedComplete || execution.reached ? "已完成" : `尚缺 ${money(execution.initialGap)}`;
+  if (execution.markedComplete || execution.reached) {
+    els.planInitialSummary.textContent =
+      `目标 ${money(execution.targetAmount)} · 当前 ${money(execution.currentValue)} · 已完成`;
+    return;
+  }
   els.planInitialSummary.textContent =
-    `目标 ${money(execution.targetAmount)} · 当前 ${money(execution.currentValue)} · ${status}`;
+    `目标 ${money(execution.targetAmount)} · 分 ${execution.initialMonths} 个月` +
+    ` · 每月约 ${money(execution.monthlyInstallment)} · 尚缺 ${money(execution.initialGap)}` +
+    ` · 本期 ${money(execution.budget)}`;
 }
 
 export function readPlanFormIntoState() {
@@ -525,6 +535,9 @@ export function readPlanFormIntoState() {
   const amount = Number(els.planAmount?.value);
   const capitalBase = Number(els.planCapitalBase?.value);
   const initialTargetPct = Number(els.planInitialTargetPct?.value);
+  let initialMonths = Number.parseInt(els.planInitialMonths?.value, 10);
+  if (!Number.isFinite(initialMonths) || initialMonths < 1) initialMonths = 1;
+  initialMonths = Math.min(36, initialMonths);
   const strategy = normalizeStrategyId(els.planStrategy?.value);
   const previousConfig = state.plan.strategy_config;
   const strategy_config =
@@ -542,6 +555,7 @@ export function readPlanFormIntoState() {
       Number.isFinite(initialTargetPct) && initialTargetPct > 0
         ? Math.min(100, initialTargetPct)
         : 0,
+    initial_months: initialMonths,
     initial_build_completed_at: els.planInitialCompleted?.checked
       ? state.plan.initial_build_completed_at || new Date().toISOString()
       : null,

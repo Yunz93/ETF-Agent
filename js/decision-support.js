@@ -92,9 +92,25 @@ export function estimatedTradeFee(amount, tradingCost = {}) {
   return Math.max(minCommission, gross * rate);
 }
 
+/** 建仓月数：1–36，缺省 1（一期打满缺口，兼容旧计划）。 */
+export function normalizeInitialMonths(value) {
+  const number = Number.parseInt(value, 10);
+  if (!Number.isFinite(number) || number < 1) return 1;
+  return Math.min(36, number);
+}
+
+/** 将「按月均分」换算到当前执行频率下的每期额度。 */
+export function periodsPerMonth(cadence) {
+  const id = String(cadence || "monthly").toLowerCase();
+  if (id === "weekly") return 4;
+  if (id === "biweekly") return 2;
+  return 1;
+}
+
 export function planExecutionContext({ plan = {}, holdings = [] } = {}) {
   const capitalBase = Math.max(0, Number(plan.capital_base) || 0);
   const initialTargetPct = Math.min(100, Math.max(0, Number(plan.initial_target_pct) || 0));
+  const initialMonths = normalizeInitialMonths(plan.initial_months ?? plan.initialMonths);
   const currentValue = holdings.reduce(
     (sum, item) => sum + Math.max(0, Number(item.marketValue) || 0),
     0,
@@ -106,12 +122,21 @@ export function planExecutionContext({ plan = {}, holdings = [] } = {}) {
   const markedComplete = Boolean(plan.initial_build_completed_at);
   const phase = configured && !markedComplete && !reached ? "initial" : "recurring";
   const recurringBudget = Math.max(0, Number(plan.amount) || 0);
+  const monthlyInstallment =
+    initialMonths > 0 ? Math.round((targetAmount / initialMonths) * 100) / 100 : targetAmount;
+  const periodInstallment =
+    Math.round((monthlyInstallment / periodsPerMonth(plan.cadence)) * 100) / 100;
+  const initialBudget =
+    phase === "initial" ? Math.min(initialGap, periodInstallment) : 0;
   return {
     phase,
     phaseLabel: phase === "initial" ? "初期建仓" : "周期定投",
-    budget: phase === "initial" ? initialGap : recurringBudget,
+    budget: phase === "initial" ? initialBudget : recurringBudget,
     capitalBase,
     initialTargetPct,
+    initialMonths,
+    monthlyInstallment,
+    periodInstallment,
     targetAmount,
     currentValue,
     currentPositionPct: capitalBase > 0 ? (currentValue / capitalBase) * 100 : null,

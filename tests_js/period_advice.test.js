@@ -96,6 +96,7 @@ test("period advice uses initial build gap instead of recurring budget", () => {
       amount: 5000,
       capital_base: 100000,
       initial_target_pct: 30,
+      initial_months: 1,
       strategy: "fixed",
     },
     holdings: [
@@ -111,4 +112,29 @@ test("period advice uses initial build gap instead of recurring budget", () => {
   assert.equal(advice.pool.budget, 20000);
   assert.equal(advice.amount, 20000);
   assert.match(advice.headline, /建议投入/);
+});
+
+test("period advice uses monthly installment during multi-month initial build", () => {
+  const advice = getPeriodAdvice({
+    symbol: "512890",
+    plan: {
+      amount: 5000,
+      capital_base: 100000,
+      initial_target_pct: 30,
+      initial_months: 6,
+      cadence: "monthly",
+      strategy: "fixed",
+    },
+    holdings: [
+      {
+        symbol: "512890",
+        targetWeight: 100,
+        actualWeight: 100,
+        marketValue: 10000,
+      },
+    ],
+  });
+  assert.equal(advice.execution.phase, "initial");
+  assert.equal(advice.pool.budget, 5000);
+  assert.equal(advice.amount, 5000);
 });

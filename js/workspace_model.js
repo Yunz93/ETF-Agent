@@ -88,6 +88,7 @@ export function normalizePlan(plan) {
     amount: 2000,
     capital_base: 0,
     initial_target_pct: 0,
+    initial_months: 1,
     initial_build_completed_at: null,
     cadence: "monthly",
     day: 1,
@@ -116,6 +117,9 @@ export function normalizePlan(plan) {
   const amount = Number(plan.amount);
   const capitalBase = Number(plan.capital_base);
   const initialTargetPct = Number(plan.initial_target_pct);
+  let initialMonths = Number.parseInt(plan.initial_months ?? plan.initialMonths, 10);
+  if (!Number.isFinite(initialMonths) || initialMonths < 1) initialMonths = base.initial_months;
+  initialMonths = Math.min(36, initialMonths);
   return {
     name: String(plan.name || base.name).trim() || base.name,
     amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
@@ -124,6 +128,7 @@ export function normalizePlan(plan) {
       Number.isFinite(initialTargetPct) && initialTargetPct > 0
         ? Math.min(100, initialTargetPct)
         : 0,
+    initial_months: initialMonths,
     initial_build_completed_at:
       String(plan.initial_build_completed_at || "").trim() || null,
     cadence,
