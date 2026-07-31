@@ -4,6 +4,7 @@ import { bindEvents } from "./events.js";
 import { hydrateWorkspace, renderWorkspaceStatus } from "./workspace.js";
 import { initSidebar, initTheme, switchView } from "./navigation.js";
 import { renderEtfPool, renderSidebarEtfs } from "./views/render.js";
+import { ensureMarketSentiment } from "./market-sentiment.js";
 import "./views/dividend.js";
 import "./views/etf.js";
 
@@ -16,7 +17,10 @@ export async function init() {
   await hydrateWorkspace();
   renderWorkspaceStatus();
   renderSidebarEtfs();
-  await renderEtfPool({ refresh: false }).catch(() => {});
+  await Promise.all([
+    renderEtfPool({ refresh: false }).catch(() => {}),
+    ensureMarketSentiment({ refresh: false }).catch(() => {}),
+  ]);
   switchView("etf");
 }
 

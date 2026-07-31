@@ -8,6 +8,10 @@ import {
   analysisPrefetchIsPreliminary,
   isAnalysisUsable,
 } from "./analysis-cache.js";
+import {
+  analysisRegistryFromConfig,
+  sentimentByMarketFromState,
+} from "./market-sentiment.js";
 
 function cacheKey(symbol) {
   return analysisCacheKey(symbol);
@@ -123,6 +127,8 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
     strategyConfig: plan.strategy_config,
     strategyOverrides: plan.strategy_overrides,
     preferTargetGap: execution.phase === "initial",
+    sentimentByMarket: sentimentByMarketFromState(),
+    analysisRegistry: analysisRegistryFromConfig(),
   });
   const strategyName = strategyLabel(plan.strategy);
   const preliminary = analysisPrefetchIsPreliminary();

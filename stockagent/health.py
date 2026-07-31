@@ -10,6 +10,7 @@ from .paths import CONFIG_PATH, DATA_DIR, WORKSPACE_PATH
 from .config_store import etf_settings, quote_settings
 from .quotes import get_etf_quotes, probe_quote_accuracy
 from .dividend import dividend_settings, fetch_danjuan_valuation, fetch_treasury_yield_history
+from .sentiment import probe_sentiment_sources
 from .http_client import http_get_json
 from .defaults import YAHOO_UA
 from .symbols import as_of
@@ -38,6 +39,7 @@ def get_data_health():
 
     dividend_sources = probe_dividend_sources()
     accuracy = probe_quote_accuracy()
+    sentiment_sources = probe_sentiment_sources()
 
     healthy = (
         bool(rows)
@@ -45,16 +47,19 @@ def get_data_health():
         and accuracy["ok"]
         and all(item["ok"] for item in dividend_sources.values())
     )
+    # Sentiment is soft: report separately; failure does not fail whole health.
     return {
         "status": "ok" if healthy else "degraded",
         "etf_quotes": etf_block,
         "dividend_sources": dividend_sources,
+        "sentiment_sources": sentiment_sources,
         "accuracy": accuracy,
         "timing_notes": {
             "live_max_age_seconds": min(max_age, 900),
             "configured_max_age_seconds": max_age,
             "session_model": "A 股上午/下午两节，午休与休市判定内建",
             "quote_cache_ttl_seconds": 60,
+            "sentiment_cache_ttl_seconds": 1800,
         },
         "checked_at": as_of(None),
     }

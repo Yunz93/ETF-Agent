@@ -11,6 +11,10 @@ import {
 import { allocatePoolBudget } from "./strategy.js";
 import { buildPoolHoldingsForAllocation } from "./pool-alloc.js";
 import { normalizeExecutionDrafts, normalizeTradingCost } from "./workspace_model.js";
+import {
+  analysisRegistryFromConfig,
+  sentimentByMarketFromState,
+} from "./market-sentiment.js";
 
 function todayKey(now = new Date()) {
   const year = now.getFullYear();
@@ -36,6 +40,8 @@ export function buildExecutionDraftsFromAllocation({ now = new Date() } = {}) {
     strategyConfig: plan.strategy_config,
     strategyOverrides: plan.strategy_overrides,
     preferTargetGap: execution.phase === "initial",
+    sentimentByMarket: sentimentByMarketFromState(),
+    analysisRegistry: analysisRegistryFromConfig(),
   });
   const tradingCost = normalizeTradingCost(plan.trading_cost);
   const existing = normalizeExecutionDrafts(state.executionDrafts || []);

@@ -5,8 +5,10 @@ import {
   allocatePoolBudget,
   allocationForSymbol,
   dcaMultiplier,
+  inferSentimentMarket,
   normalizeStrategyConfig,
   rebalanceHint,
+  sentimentMultiplier,
   valuationDcaMultiplier,
 } from "../js/strategy.js";
 
@@ -210,4 +212,89 @@ test("strategyOverrides apply per-symbol multipliers", () => {
   assert.equal(gold.mult, 1);
   assert.match(gold.band, /指定/);
   assert.equal(allocationForSymbol(result, "510300"), null);
+});
+
+test("sentiment disabled keeps allocation identical to baseline", () => {
+  const holdings = [
+    { symbol: "510300", targetWeight: 60, actualWeight: 60, pePct: 0.5, assetClass: "equity_core" },
+    { symbol: "512890", targetWeight: 40, actualWeight: 40, pePct: 0.3, assetClass: "dividend" },
+  ];
+  const baseline = allocatePoolBudget({ budget: 2000, holdings, strategy: "valuation" });
+  const withOff = allocatePoolBudget({
+    budget: 2000,
+    holdings,
+    strategy: "valuation",
+    strategyConfig: { sentiment: { enabled: false } },
+    sentimentByMarket: { A: { score: 10, zone: "panic", degraded: false } },
+  });
+  assert.equal(withOff.deployTotal, baseline.deployTotal);
+  assert.equal(allocationForSymbol(withOff, "510300")?.amount, allocationForSymbol(baseline, "510300")?.amount);
+});
+
+test("extreme panic raises deploy while euphoria lowers it; pause stays zero", () => {
+  // pePct 0.7 → base 0.5× so overlay can still move deployFrac below the 1.0 cap
+  const holdings = [
+    { symbol: "510300", targetWeight: 50, actualWeight: 50, pePct: 0.7, assetClass: "equity_core" },
+    { symbol: "512890", targetWeight: 50, actualWeight: 50, pePct: 0.7, assetClass: "dividend" },
+  ];
+  const neutral = allocatePoolBudget({
+    budget: 2000,
+    holdings,
+    strategy: "valuation",
+    strategyConfig: { sentiment: { enabled: true, extremes_only: true }, use_rebalance: false },
+    sentimentByMarket: { A: { score: 50, zone: "neutral", degraded: false } },
+  });
+  const panic = allocatePoolBudget({
+    budget: 2000,
+    holdings,
+    strategy: "valuation",
+    strategyConfig: { sentiment: { enabled: true, extremes_only: true }, use_rebalance: false },
+    sentimentByMarket: { A: { score: 10, zone: "panic", degraded: false } },
+  });
+  const hot = allocatePoolBudget({
+    budget: 2000,
+    holdings,
+    strategy: "valuation",
+    strategyConfig: { sentiment: { enabled: true, extremes_only: true }, use_rebalance: false },
+    sentimentByMarket: { A: { score: 90, zone: "euphoria", degraded: false } },
+  });
+  assert.ok(panic.deployTotal > neutral.deployTotal);
+  assert.ok(hot.deployTotal < neutral.deployTotal);
+
+  const paused = allocatePoolBudget({
+    budget: 2000,
+    holdings: [{ symbol: "510300", targetWeight: 100, pePct: 0.95, assetClass: "equity_core" }],
+    strategy: "valuation",
+    strategyConfig: { sentiment: { enabled: true } },
+    sentimentByMarket: { A: { score: 5, zone: "panic", degraded: false } },
+  });
+  assert.equal(paused.deployTotal, 0);
+});
+
+test("commodity ignores A-share sentiment overlay", () => {
+  const result = allocatePoolBudget({
+    budget: 1000,
+    strategy: "valuation",
+    strategyConfig: { sentiment: { enabled: true, extremes_only: false } },
+    sentimentByMarket: { A: { score: 10, zone: "panic", degraded: false } },
+    holdings: [{ symbol: "159937", targetWeight: 100, pePct: null, grade: "E", assetClass: "commodity" }],
+  });
+  const gold = allocationForSymbol(result, "159937");
+  assert.equal(gold.mult, 1);
+  assert.equal(gold.sentimentMult, 1);
+});
+
+test("sentimentMultiplier dead zone and market inference", () => {
+  assert.equal(sentimentMultiplier({ score: 50, degraded: false }, { extremes_only: true }).mult, 1);
+  assert.equal(sentimentMultiplier({ score: 12, degraded: false }, { extremes_only: true }).mult, 1.3);
+  assert.equal(inferSentimentMarket({ indexCode: "NDX" }), "US");
+  assert.equal(inferSentimentMarket({ indexCode: "HSTECH" }), "HK");
+  assert.equal(inferSentimentMarket({ indexCode: "000510" }), "A");
+});
+
+test("normalizeStrategyConfig includes sentiment defaults", () => {
+  const cfg = normalizeStrategyConfig(null);
+  assert.equal(cfg.sentiment.enabled, true);
+  assert.equal(cfg.sentiment.extremes_only, true);
+  assert.deepEqual(cfg.sentiment.apply_to, ["valuation", "grade", "custom"]);
 });

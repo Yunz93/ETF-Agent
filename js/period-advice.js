@@ -9,13 +9,20 @@ import {
   allocatePoolBudget,
   allocationForSymbol,
   dcaMultiplier,
+  normalizeStrategyConfig,
   normalizeStrategyId,
   POSITION_TOLERANCE_PP,
+  sentimentMarketForHolding,
+  sentimentMultiplier,
   STRATEGY_IDS,
   strategyLabel,
 } from "./strategy.js";
 import { buildPoolHoldingsForAllocation } from "./pool-alloc.js";
 import { planExecutionContext } from "./decision-support.js";
+import {
+  analysisRegistryFromConfig,
+  sentimentByMarketFromState,
+} from "./market-sentiment.js";
 
 export const STANCE = Object.freeze({
   NEED_BUDGET: "need_budget",
@@ -39,15 +46,21 @@ function resolveSymbolStrategy(plan, symbol) {
 }
 
 /**
- * @param {{ symbol?: string, preferLive?: object|null, plan?: object, holdings?: array }} [opts]
+ * @param {{ symbol?: string, preferLive?: object|null, plan?: object, holdings?: array, sentimentByMarket?: object|null }} [opts]
  */
-export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, holdings = null } = {}) {
+export function getPeriodAdvice({
+  symbol = "",
+  preferLive = null,
+  plan = null,
+  holdings = null,
+  sentimentByMarket = null,
+} = {}) {
   const activePlan = plan || state.plan || {};
   const { strategy, overridden } = resolveSymbolStrategy(activePlan, symbol);
   const strategyName = overridden
     ? `${strategyLabel(strategy)}(指定)`
     : strategyLabel(strategy);
-  const strategyConfig = activePlan.strategy_config;
+  const strategyConfig = normalizeStrategyConfig(activePlan.strategy_config);
   const strategyOverrides = activePlan.strategy_overrides;
   const poolHoldings =
     holdings ||
@@ -55,6 +68,8 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
   const holding = poolHoldings.find((item) => item.symbol === symbol) || null;
   const execution = planExecutionContext({ plan: activePlan, holdings: poolHoldings });
   const budget = execution.budget;
+  const markets = sentimentByMarket || sentimentByMarketFromState();
+  const registry = analysisRegistryFromConfig();
 
   const grid = dcaMultiplier({
     strategy,
@@ -65,6 +80,21 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
     spreadPct: holding?.spreadPct,
   });
 
+  const market = holding
+    ? sentimentMarketForHolding(holding, strategyConfig.sentiment, registry)
+    : null;
+  const sentSnap = market && markets ? markets[market] : null;
+  const sentAllowed =
+    strategyConfig.sentiment.enabled &&
+    strategyConfig.sentiment.mode === "overlay" &&
+    strategyConfig.sentiment.apply_to.includes(strategy);
+  const sent =
+    sentAllowed && grid.mult > 0
+      ? sentimentMultiplier(sentSnap, strategyConfig.sentiment)
+      : { mult: 1, zone: "unknown", band: "未启用", hint: "", score: null };
+  const effectiveMult =
+    grid.mult <= 0 ? 0 : Math.round(grid.mult * (sentAllowed ? sent.mult : 1) * 1000) / 1000;
+
   const pool = allocatePoolBudget({
     budget,
     holdings: poolHoldings,
@@ -72,6 +102,8 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
     strategyConfig,
     strategyOverrides,
     preferTargetGap: execution.phase === "initial",
+    sentimentByMarket: markets,
+    analysisRegistry: registry,
   });
   const mine = symbol ? allocationForSymbol(pool, symbol) : null;
   const amount = mine?.amount ?? 0;
@@ -99,14 +131,23 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
   } else if (amount > 0) {
     stance = STANCE.INVEST;
     headline = `${execution.phase === "initial" ? "建议投入" : "本期建议投入"} ${money(amount)}`;
-    reason = mine?.reason || `${grid.band} · ${grid.mult}×`;
+    reason = mine?.reason || `${grid.band} · ${effectiveMult}×`;
   } else {
     stance = STANCE.SKIP;
     headline = "本期不投";
     reason = skipped?.reason || "本期未分到额度";
   }
 
-  const bullets = [`定投倍率 ${grid.mult}×`];
+  const bullets = [`定投倍率 ${effectiveMult}×`];
+  if (sentAllowed && market) {
+    if (sent.score != null && sent.mult !== 1) {
+      bullets.push(`市场情绪 ${sent.band}（${market} ${sent.score}）· ×${sent.mult}`);
+    } else if (sent.score != null) {
+      bullets.push(`市场情绪 ${sent.band || "中性"}（${market} ${sent.score}）· 不调节`);
+    } else if (strategyConfig.sentiment.enabled) {
+      bullets.push("市场情绪暂不可用 · 按中性");
+    }
+  }
   if (stance === STANCE.INVEST && mine) {
     bullets.push(`约占全池部署 ${mine.sharePct.toFixed(0)}%`);
   } else if (stance === STANCE.SKIP || stance === STANCE.HOLD_CASH) {
@@ -149,7 +190,12 @@ export function getPeriodAdvice({ symbol = "", preferLive = null, plan = null, h
     headline,
     reason,
     amount,
-    mult: grid.mult,
+    mult: effectiveMult,
+    baseMult: grid.mult,
+    sentimentMult: sentAllowed ? sent.mult : 1,
+    sentiment: sentAllowed
+      ? { market, score: sent.score, zone: sent.zone, band: sent.band, hint: sent.hint }
+      : null,
     band: grid.band,
     hint: grid.hint,
     grade: holding?.grade || null,

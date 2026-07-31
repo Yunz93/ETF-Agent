@@ -74,8 +74,12 @@ export function bindEvents() {
     renderDividend({ force: true });
   });
 
-  els.etfRefresh?.addEventListener("click", () => {
-    renderEtfPool({ refresh: true });
+  els.etfRefresh?.addEventListener("click", async () => {
+    const { ensureMarketSentiment } = await import("./market-sentiment.js");
+    await Promise.all([
+      renderEtfPool({ refresh: true }),
+      ensureMarketSentiment({ refresh: true }).catch(() => {}),
+    ]);
   });
 
   const persistPlan = ({ rerender = true } = {}) => {

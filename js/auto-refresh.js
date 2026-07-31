@@ -1,5 +1,6 @@
 import { appConfig, state } from "./state.js";
 import { renderDividend, renderEtfPool } from "./views/render.js";
+import { ensureMarketSentiment } from "./market-sentiment.js";
 
 export const DEFAULT_AUTO_REFRESH_SECONDS = 300;
 export const MIN_AUTO_REFRESH_SECONDS = 30;
@@ -22,13 +23,16 @@ export function autoRefreshSettings(config = appConfig) {
 }
 
 async function refreshCurrentView() {
+  const sentiment = ensureMarketSentiment({ refresh: true }).catch(() => {});
   if (state.activeView === "dividend") {
-    await renderDividend({ force: true });
+    await Promise.all([renderDividend({ force: true }), sentiment]);
     return;
   }
   if (state.activeView === "etf") {
-    await renderEtfPool({ refresh: true });
+    await Promise.all([renderEtfPool({ refresh: true }), sentiment]);
+    return;
   }
+  await sentiment;
 }
 
 function clearRefreshTimer() {
