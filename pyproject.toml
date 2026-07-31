@@ -1,0 +1,9 @@
+[project]
+name = "etf-agent"
+version = "0.1.0"
+description = "指数 ETF 工作台"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.vercel]
+entrypoint = "api.index:handler"
