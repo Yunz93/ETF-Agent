@@ -106,6 +106,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=500)
             return
+        if parsed.path.startswith("/api/"):
+            self.send_json({"error": f"未知接口: {parsed.path}"}, status=404)
+            return
         self.serve_static(parsed.path)
 
     def do_PUT(self):

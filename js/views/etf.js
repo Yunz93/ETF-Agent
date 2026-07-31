@@ -319,7 +319,7 @@ function syncSentimentForm(config) {
     els.planSentimentHint.textContent = parts.length
       ? `当前温度 ${parts.join(" · ")}（宽基 ETF 真实收盘价；仅极端区调节）`
       : state.marketSentimentError
-        ? `情绪暂不可用：${state.marketSentimentError}`
+        ? `情绪暂不可用 · ${state.marketSentimentError}`
         : "A500 / 纳指 / 恒生科技 ETF 收盘价衍生波动与回撤温度";
   }
 }
