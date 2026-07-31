@@ -574,9 +574,10 @@ function finalizeEligible({ totalBudget, eligible, skipped, forceFullDeploy, not
  * - strategyOverrides：按品种覆盖策略（{ symbol: strategyId }）
  * - sentimentByMarket：{ A|HK|US: snapshot }，估值/评分/自定义可叠加情绪倍率
  * - analysisRegistry：用于 equity_growth 的市场分区推断
- * - 建仓期（preferTargetGap）：打满建仓缺口；目标仓位仅作分配指引，按估值/情绪倍率动态调节比例
+ * - 建仓期（preferTargetGap）：有可买品种时打满缺口；目标仓位仅作分配指引，按估值/情绪倍率动态调节
+ * - 全池估值暂停（均 mult=0）时建仓也不买，留现金
  * - 周期定投：超配只软降权，不再硬顶停买；估值暂停（mult=0）仍可把份额让给其他品种
- * - 定额 / 再平衡 / 建仓：默认打满预算
+ * - 定额 / 再平衡 / 有可买的建仓：默认打满预算
  *
  * holdings: [{ symbol, name, targetWeight, actualWeight, pePct, grade, assetClass, spreadPct, analyzed }]
  */
@@ -716,8 +717,7 @@ export function allocatePoolBudget({
 
     const anyAttractive = prepared.some((row) => row.targetWeight > 0 && row.mult > 0);
     const rows = prepared.map((row) => {
-      // 全池都偏贵时：建仓仍打出去，退回目标权重比例（倍率按 1）
-      const effMult = anyAttractive ? row.mult : row.targetWeight > 0 ? 1 : 0;
+      const effMult = row.mult;
       const score = row.targetWeight > 0 && effMult > 0 ? row.targetWeight * effMult * row.tilt : 0;
       const drift =
         row.actualWeight != null && row.targetWeight > 0
@@ -728,12 +728,11 @@ export function allocatePoolBudget({
       if (!(row.targetWeight > 0)) {
         band = "无目标";
         hint = "未设置目标仓位，本期不参与";
-      } else if (!anyAttractive) {
-        band = `${band} · 建仓兜底`;
-        hint = "建仓期估值均偏弱，仍按目标仓位打满缺口";
       } else if (effMult <= 0) {
-        band = row.band || "当期让出额度";
-        hint = row.hint || "估值偏贵，建仓额度让给其他品种";
+        band = row.band || "当期不建议新增";
+        hint = anyAttractive
+          ? row.hint || "估值偏贵，建仓额度让给其他品种"
+          : row.hint || "全池偏贵，建仓期暂不买入、留现金";
       } else if (drift != null && drift > POSITION_TOLERANCE_PP) {
         band = `${band} · 超配少配`;
         hint = `高于目标 ${drift.toFixed(1)} pp，建仓期仍参与但比例下调`;
@@ -769,7 +768,9 @@ export function allocatePoolBudget({
       skipped,
       forceFullDeploy: true,
       strategy: strategyId,
-      note: anyAttractive ? "建仓期按目标×指数吸引力分配，打满缺口" : "建仓期估值偏弱，仍按目标仓位打满缺口",
+      note: anyAttractive
+        ? "建仓期按目标×指数吸引力分配，打满缺口"
+        : "全池偏贵，建仓期建议留现金",
     });
   }
 

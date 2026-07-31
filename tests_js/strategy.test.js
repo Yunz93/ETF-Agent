@@ -149,7 +149,7 @@ test("initial build deploys full gap and tilts by valuation multipliers", () => 
   assert.equal(allocationForSymbol(paused, "512890")?.amount, 20000);
 });
 
-test("initial build still deploys when every name is valuation-paused", () => {
+test("initial build keeps cash when every name is valuation-paused", () => {
   const result = allocatePoolBudget({
     budget: 10000,
     strategy: "valuation",
@@ -160,9 +160,9 @@ test("initial build still deploys when every name is valuation-paused", () => {
       { symbol: "512890", targetWeight: 40, actualWeight: 10, pePct: 0.92 },
     ],
   });
-  assert.equal(result.deployTotal, 10000);
-  assert.ok(allocationForSymbol(result, "510300")?.amount > 0);
-  assert.ok(allocationForSymbol(result, "512890")?.amount > 0);
+  assert.equal(result.deployTotal, 0);
+  assert.equal(result.cashKeep, 10000);
+  assert.match(result.note || "", /留现金/);
 });
 
 test("initial build keeps overweight names but downweights them", () => {
