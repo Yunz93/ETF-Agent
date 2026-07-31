@@ -1766,7 +1766,8 @@ button:active {
   align-items: stretch;
 }
 
-.dividend-hero > .panel-block {
+.dividend-hero > .panel-block,
+.dividend-hero-aside-stack > .panel-block {
   min-width: 0;
   min-height: 0;
   align-self: stretch;
@@ -1774,11 +1775,10 @@ button:active {
   flex-direction: column;
 }
 
-/* 左：本期结论跨两行；右：关键指标 + 分档策略上下叠放 */
-.dividend-hero > .dividend-conclusion-card,
-.dividend-hero > .dividend-advice {
+/* 上排：综合评分 | 关键指标；下排：本期结论 | 持仓(+分档) */
+.dividend-hero > .dividend-score-card {
   grid-column: 1;
-  grid-row: 1 / span 2;
+  grid-row: 1;
 }
 
 .dividend-hero > .dividend-metrics-card {
@@ -1786,23 +1786,32 @@ button:active {
   grid-row: 1;
 }
 
-.dividend-hero > .dividend-add-plan {
-  grid-column: 2;
+.dividend-hero > .dividend-conclusion-card,
+.dividend-hero > .dividend-advice {
+  grid-column: 1;
   grid-row: 2;
 }
 
-.dividend-hero > .dividend-add-plan-empty {
-  min-height: 132px;
-}
-
-.dividend-hero > .dividend-score-card {
-  grid-column: 1;
-  grid-row: 3;
-}
-
-.dividend-hero > .dividend-holdings-card {
+.dividend-hero > .dividend-hero-aside-stack {
   grid-column: 2;
-  grid-row: 3;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  align-self: stretch;
+}
+
+/* 有分档时贴在列底，与左侧本期结论底端对齐；多余高度由持仓卡吸收，避免中间留空条 */
+.dividend-hero-aside-stack > .dividend-holdings-card {
+  flex: 1 1 auto;
+}
+
+.dividend-hero-aside-stack > .dividend-add-plan {
+  margin-top: 0;
+  flex: 0 0 auto;
 }
 
 .dividend-conclusion-card .decision-execution {
@@ -1828,7 +1837,7 @@ button:active {
 }
 
 .dividend-score-card-secondary .dividend-grade-mark {
-  font-size: clamp(44px, 5.5vw, 56px);
+  font-size: clamp(52px, 6.5vw, 64px);
   opacity: 0.95;
   align-self: start;
   margin-top: -2px;
@@ -1979,21 +1988,6 @@ button:active {
 
 .dividend-add-plan > .panel-heading {
   flex: 0 0 auto;
-}
-
-.dividend-add-plan-empty-msg {
-  margin: 0;
-  max-width: 18em;
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-
-/* 空态正文在标题下方剩余区域居中，标题本身固定在顶部 */
-.dividend-add-plan-empty > .dividend-add-plan-empty-msg {
-  margin-top: auto;
-  margin-bottom: auto;
-  text-align: center;
-  align-self: center;
 }
 
 .dividend-add-plan > .dividend-add-levels {
@@ -2721,9 +2715,15 @@ button:active {
     grid-template-columns: 1fr;
   }
 
-  .dividend-hero > .panel-block {
+  .dividend-hero > .panel-block,
+  .dividend-hero > .dividend-hero-aside-stack {
     grid-column: 1;
     grid-row: auto;
+    height: auto;
+  }
+
+  .dividend-hero-aside-stack > .dividend-add-plan {
+    margin-top: 0;
   }
 
   .dividend-metrics {

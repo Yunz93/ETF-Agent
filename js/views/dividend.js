@@ -17,7 +17,7 @@ import {
   returnCorrelation,
   riskMetrics,
 } from "../decision-support.js";
-import { ADD_PLAN_PRESETS, buildAddPlan, normalizeAddPlanConfig } from "../add-plan.js";
+import { ADD_PLAN_PRESETS, buildAddPlan } from "../add-plan.js";
 import {
   analysisCacheKey,
   fetchAnalysis,
@@ -666,49 +666,14 @@ function addPlanHeadingHtml(presetLabel) {
   `;
 }
 
-function addPlanShellHtml(presetLabel, bodyHtml, { empty = false } = {}) {
-  return `
-    <section class="panel-block dividend-add-plan${empty ? " dividend-add-plan-empty" : ""}" aria-label="分档策略">
-      ${addPlanHeadingHtml(presetLabel)}
-      ${bodyHtml}
-    </section>
-  `;
-}
-
 function addPlanHtml(entry, price, advice, payload = null) {
-  // 始终渲染同壳占位，避免分档区时隐时现造成版面跳动（CLS）
+  // 无可分档内容时不渲染，避免空壳占位
   const config = state.plan?.add_plan;
-  if (config && config.enabled === false) {
-    return "";
-  }
-  const cfg = normalizeAddPlanConfig(config);
-  const presetLabel = ADD_PLAN_PRESETS[cfg.preset]?.label || ADD_PLAN_PRESETS.auto.label;
-
-  if (!entry || !(entry.shares > 0)) {
-    return addPlanShellHtml(
-      presetLabel,
-      `<p class="muted dividend-add-plan-empty-msg">暂无可用档位</p>`,
-      { empty: true },
-    );
-  }
-  const canAdd = advice?.canAdd === true;
-  if (!canAdd) {
-    // 主结论已在「本期结论」卡展示，此处只说明分档不可用，不复述不投结论
-    return addPlanShellHtml(
-      presetLabel,
-      `<p class="muted dividend-add-plan-empty-msg">本期未分配到该品种</p>`,
-      { empty: true },
-    );
-  }
-
+  if (config && config.enabled === false) return "";
+  if (!entry || !(entry.shares > 0)) return "";
+  if (advice?.canAdd !== true) return "";
   const amount = Number(advice?.amount) || 0;
-  if (!(amount > 0)) {
-    return addPlanShellHtml(
-      presetLabel,
-      `<p class="muted dividend-add-plan-empty-msg">暂无可用档位</p>`,
-      { empty: true },
-    );
-  }
+  if (!(amount > 0)) return "";
 
   const assetClass = advice?.assetClass || payload?.asset_class || null;
   const plan = buildAddPlan({
@@ -720,15 +685,9 @@ function addPlanHtml(entry, price, advice, payload = null) {
     config,
     tradingCost: state.plan?.trading_cost,
   });
+  if (!plan.applicable || !plan.levels?.length) return "";
 
-  if (!plan.applicable) {
-    return addPlanShellHtml(
-      plan.presetLabel || presetLabel,
-      `<p class="muted dividend-add-plan-empty-msg">${escapeHtml(plan.reason || "暂无可用档位")}</p>`,
-      { empty: true },
-    );
-  }
-
+  const presetLabel = plan.presetLabel || ADD_PLAN_PRESETS.auto.label;
   const levelsHtml = `
     <div class="dividend-add-levels">
       ${plan.levels
@@ -766,7 +725,12 @@ function addPlanHtml(entry, price, advice, payload = null) {
     </div>
   `;
 
-  return addPlanShellHtml(plan.presetLabel || presetLabel, levelsHtml);
+  return `
+    <section class="panel-block dividend-add-plan" aria-label="分档策略">
+      ${addPlanHeadingHtml(presetLabel)}
+      ${levelsHtml}
+    </section>
+  `;
 }
 
 function dcaAdviceHtml(advice, context) {
@@ -1081,7 +1045,7 @@ function paintDividend() {
   const context = decisionContext(advice);
   const addPlanEntry = state.etfs.find((item) => item.symbol === context.symbol);
   const addPlanPrice = payload.etf?.price != null ? payload.etf.price : payload.index?.close;
-  // 始终占位：额度不足 / 无持仓时也渲染空态壳，避免右侧塌缩跳动
+  // 有可用档位才渲染；放在持仓对照同列底部，与本期结论底端对齐
   const addPlan = addPlanHtml(
     addPlanEntry,
     addPlanPrice,
@@ -1094,11 +1058,13 @@ function paintDividend() {
   els.dividendContent.innerHTML = `
     ${errorsHtml()}
     <div class="dividend-hero">
-      ${dcaAdviceHtml(advice, context)}
-      ${metricsCardHtml()}
-      ${addPlan}
       ${scoreCardHtml()}
-      ${holdingsCardHtml(advice, context)}
+      ${metricsCardHtml()}
+      ${dcaAdviceHtml(advice, context)}
+      <div class="dividend-hero-aside-stack">
+        ${holdingsCardHtml(advice, context)}
+        ${addPlan}
+      </div>
     </div>
     <div class="decision-detail-grid">
       ${vehicleQualityHtml(context)}
