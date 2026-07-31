@@ -18,12 +18,19 @@ from .workspace_store import get_workspace
 
 SYSTEM_PROMPT = """你是 ETF Agent 的 ETF 分析器。只能使用输入 JSON 中的事实，
 不得补充新闻、财报、行情或外部知识。你的任务是识别这只 ETF 当前最值得决策的矛盾，并分析规则建议中的明显盲点，而不是取代规则引擎。
-证据必须写成输入字段路径，例如 analysis.valuation.pe_percentile_10y。
 数据不足时降低置信度并保持原建议。不要承诺收益，不要给出确定性买卖指令。
 先根据 ETF 名称、跟踪指数、估值、趋势、交易质量、仓位和数据质量判断本只 ETF 的分析重点。
 不同 ETF 不要套用相同段落：只选择 2 至 4 个真正相关的主题，主题标题必须描述本只 ETF 的具体矛盾，
 不得使用“支持因素”“风险分析”“技术面分析”等通用标题。每个主题都要引用输入中的具体数值或状态并解释其决策影响，
 不要只复述“估值较低、技术面中性、注意风险”等可替换到任何 ETF 的空泛句子。
+
+文案规则（很重要）：
+- summary、focus_title、analysis_sections、watch_items、conditions_to_reverse、data_limitations
+  必须使用中文可读表述，例如「当前仓位」「PE 近十年分位」「年线（MA250）」「规则建议」。
+- 禁止在上述展示字段中写 JSON 字段路径或变量名，例如 position.actual_weight、
+  valuation.pe_percentile_10y、baseline.stance、data_quality.critical_degraded_fields、ma250。
+- evidence 数组才写输入字段路径，例如 analysis.valuation.pe_percentile_10y、position.actual_weight。
+
 只返回 JSON 对象，不要添加 Markdown。对象必须包含以下字段：
 action: "keep" | "increase" | "reduce" | "pause"；
 amount_multiplier: 数字；confidence: "low" | "medium" | "high"；summary、focus_title: 字符串；
@@ -31,9 +38,65 @@ analysis_sections: 由 2 至 4 个对象组成的数组，每个对象包含 tit
 watch_items、evidence、conditions_to_reverse、data_limitations: 字符串数组。
 所有字段都必须出现；数组每项不超过 80 个汉字，最多 3 项，没有内容时返回空数组。"""
 
-AI_ANALYSIS_VERSION = 2
+AI_ANALYSIS_VERSION = 3
 ALLOWED_ACTIONS = {"keep", "increase", "reduce", "pause"}
 ALLOWED_CONFIDENCE = {"low", "medium", "high"}
+
+# Longer keys first so nested paths replace before short suffixes.
+FIELD_LABELS = (
+    ("data_quality.critical_degraded_fields", "关键降级字段"),
+    ("data_quality.degraded_fields", "降级字段"),
+    ("data_quality.may_increase", "是否允许加仓"),
+    ("data_quality.freshness", "行情新鲜度"),
+    ("analysis.valuation.pe_percentile_10y", "PE 近十年分位"),
+    ("analysis.valuation.dividend_yield_pct", "股息率"),
+    ("analysis.technicals.bias_pct", "年线乖离"),
+    ("analysis.technicals.ma250", "年线（MA250）"),
+    ("analysis.technicals.rsi14", "RSI"),
+    ("analysis.technicals.rsi_label", "RSI 状态"),
+    ("analysis.technicals.kdj_label", "KDJ 状态"),
+    ("analysis.spread.percentile", "股债利差历史分位"),
+    ("analysis.spread.value", "股债利差"),
+    ("analysis.score.total", "综合评分"),
+    ("analysis.score.grade", "评分档位"),
+    ("valuation.pe_percentile_10y", "PE 近十年分位"),
+    ("valuation.dividend_yield_pct", "股息率"),
+    ("valuation.pe", "PE"),
+    ("valuation.pb", "PB"),
+    ("technicals.bias_pct", "年线乖离"),
+    ("technicals.ma250", "年线（MA250）"),
+    ("technicals.rsi14", "RSI"),
+    ("technicals.rsi_label", "RSI 状态"),
+    ("technicals.kdj_label", "KDJ 状态"),
+    ("position.actual_weight", "当前仓位"),
+    ("position.target_weight", "目标仓位"),
+    ("position.projected_weight", "投入后仓位"),
+    ("position.execution_budget", "本期可执行预算"),
+    ("position.plan_budget", "每期预算"),
+    ("baseline.remaining_amount", "规则剩余额度"),
+    ("baseline.headline", "规则建议标题"),
+    ("baseline.reason", "规则建议理由"),
+    ("baseline.stance", "规则建议"),
+    ("baseline.amount", "规则建议金额"),
+    ("workspace.plan_budget", "每期预算"),
+    ("workspace.capital_base", "可投资总资金"),
+    ("spread.percentile", "股债利差历史分位"),
+    ("spread.value", "股债利差"),
+    ("score.total", "综合评分"),
+    ("score.grade", "评分档位"),
+    ("pe_percentile_10y", "PE 近十年分位"),
+    ("dividend_yield_pct", "股息率"),
+    ("critical_degraded_fields", "关键降级字段"),
+    ("degraded_fields", "降级字段"),
+    ("actual_weight", "当前仓位"),
+    ("target_weight", "目标仓位"),
+    ("projected_weight", "投入后仓位"),
+    ("bias_pct", "年线乖离"),
+    ("ma250", "年线（MA250）"),
+    ("rsi14", "RSI"),
+)
+
+
 def _number(value, default=0.0):
     try:
         return float(value)
@@ -47,6 +110,23 @@ def _short_list(value, limit=3):
     return [str(item).strip()[:160] for item in value if str(item).strip()][:limit]
 
 
+def humanize_ai_text(text):
+    """Replace machine field paths in user-facing AI prose with Chinese labels."""
+    if text is None:
+        return ""
+    result = str(text)
+    for path, label in FIELD_LABELS:
+        if path in result:
+            result = result.replace(path, label)
+    # Collapse leftover "label=123" wrappers that still look technical.
+    result = result.replace("年线（MA250）=", "年线（MA250） ")
+    return result
+
+
+def _humanize_list(items):
+    return [humanize_ai_text(item) for item in items]
+
+
 def _analysis_sections(value, limit=4):
     if not isinstance(value, list):
         return []
@@ -54,8 +134,8 @@ def _analysis_sections(value, limit=4):
     for raw in value[:limit]:
         if not isinstance(raw, dict):
             continue
-        title = str(raw.get("title") or "").strip()[:40]
-        items = _short_list(raw.get("items"))
+        title = humanize_ai_text(str(raw.get("title") or "").strip())[:40]
+        items = _humanize_list(_short_list(raw.get("items")))
         if title and items:
             sections.append({"title": title, "items": items})
     return sections
@@ -228,7 +308,7 @@ def _validate_proposal(raw, allowed_evidence=None):
             ("主要约束", raw.get("risks")),
         )
         sections = [
-            {"title": title, "items": items}
+            {"title": title, "items": _humanize_list(items)}
             for title, value in legacy_sections
             if (items := _short_list(value))
         ]
@@ -236,15 +316,15 @@ def _validate_proposal(raw, allowed_evidence=None):
         "action": action,
         "amount_multiplier": max(0.0, _number(raw.get("amount_multiplier"), 1)),
         "confidence": confidence,
-        "summary": str(raw.get("summary") or "").strip()[:240],
-        "focus_title": str(raw.get("focus_title") or "").strip()[:80],
+        "summary": humanize_ai_text(str(raw.get("summary") or "").strip())[:240],
+        "focus_title": humanize_ai_text(str(raw.get("focus_title") or "").strip())[:80],
         "analysis_sections": sections,
-        "supporting_factors": _short_list(raw.get("supporting_factors")),
-        "risks": _short_list(raw.get("risks")),
-        "watch_items": _short_list(raw.get("watch_items")),
+        "supporting_factors": _humanize_list(_short_list(raw.get("supporting_factors"))),
+        "risks": _humanize_list(_short_list(raw.get("risks"))),
+        "watch_items": _humanize_list(_short_list(raw.get("watch_items"))),
         "evidence": valid_evidence,
-        "conditions_to_reverse": _short_list(raw.get("conditions_to_reverse")),
-        "data_limitations": data_limitations,
+        "conditions_to_reverse": _humanize_list(_short_list(raw.get("conditions_to_reverse"))),
+        "data_limitations": _humanize_list(data_limitations),
     }
 
 
