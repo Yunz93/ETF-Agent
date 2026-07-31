@@ -116,32 +116,70 @@ test("rebalance hint only appears outside the five-point tolerance", () => {
   );
 });
 
-test("allocation blocks an ETF above the hard position ceiling", () => {
+test("overweight soft-tilts instead of hard-blocking new money", () => {
   const result = allocatePoolBudget({
     budget: 2000,
     strategy: "valuation",
+    strategyConfig: { sentiment: { enabled: false }, use_rebalance: true },
     holdings: [
-      { symbol: "OVER", targetWeight: 40, actualWeight: 45.1, pePct: 0.1 },
-      { symbol: "ROOM", targetWeight: 60, actualWeight: 54.9, pePct: 0.1 },
+      { symbol: "OVER", targetWeight: 40, actualWeight: 55, pePct: 0.1 },
+      { symbol: "ROOM", targetWeight: 60, actualWeight: 45, pePct: 0.1 },
     ],
   });
-  assert.equal(result.allocations.some((item) => item.symbol === "OVER"), false);
-  assert.equal(result.allocations.find((item) => item.symbol === "ROOM")?.amount, result.deployTotal);
-  assert.match(result.skipped.find((item) => item.symbol === "OVER")?.reason || "", /仓位高于目标/);
+  const over = allocationForSymbol(result, "OVER");
+  const room = allocationForSymbol(result, "ROOM");
+  assert.ok(over?.amount > 0);
+  assert.ok(room?.amount > over.amount);
+  assert.match(over.band || "", /超配少配/);
 });
 
-test("initial build prefers target gaps while still respecting valuation pause", () => {
+test("initial build deploys full gap and tilts by valuation multipliers", () => {
   const paused = allocatePoolBudget({
     budget: 20000,
     strategy: "valuation",
     preferTargetGap: true,
+    strategyConfig: { sentiment: { enabled: false } },
     holdings: [
       { symbol: "510300", targetWeight: 60, actualWeight: 10, pePct: 0.9 },
       { symbol: "512890", targetWeight: 40, actualWeight: 5, pePct: 0.2 },
     ],
   });
+  assert.equal(paused.deployTotal, 20000);
   assert.equal(allocationForSymbol(paused, "510300"), null);
-  assert.ok(allocationForSymbol(paused, "512890")?.amount > 0);
+  assert.equal(allocationForSymbol(paused, "512890")?.amount, 20000);
+});
+
+test("initial build keeps cash when every name is valuation-paused", () => {
+  const result = allocatePoolBudget({
+    budget: 10000,
+    strategy: "valuation",
+    preferTargetGap: true,
+    strategyConfig: { sentiment: { enabled: false } },
+    holdings: [
+      { symbol: "510300", targetWeight: 60, actualWeight: 20, pePct: 0.95 },
+      { symbol: "512890", targetWeight: 40, actualWeight: 10, pePct: 0.92 },
+    ],
+  });
+  assert.equal(result.deployTotal, 0);
+  assert.equal(result.cashKeep, 10000);
+  assert.match(result.note || "", /留现金/);
+});
+
+test("initial build keeps overweight names but downweights them", () => {
+  const result = allocatePoolBudget({
+    budget: 10000,
+    strategy: "fixed",
+    preferTargetGap: true,
+    holdings: [
+      { symbol: "OVER", targetWeight: 40, actualWeight: 70 },
+      { symbol: "ROOM", targetWeight: 60, actualWeight: 30 },
+    ],
+  });
+  assert.equal(result.deployTotal, 10000);
+  const over = allocationForSymbol(result, "OVER");
+  const room = allocationForSymbol(result, "ROOM");
+  assert.ok(over?.amount > 0);
+  assert.ok(room.amount > over.amount);
 });
 
 test("commodity valuation uses flat 1x and does not fall back to grade", () => {

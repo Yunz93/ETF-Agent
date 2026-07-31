@@ -319,6 +319,7 @@ class AIPolicyTests(unittest.TestCase):
                     "amount": 5000,
                     "capital_base": 100000,
                     "initial_target_pct": 30,
+                    "initial_months": 1,
                 },
                 "etfs": [{"symbol": "512890", "shares": 10000, "cost": 1}],
             },
@@ -326,6 +327,25 @@ class AIPolicyTests(unittest.TestCase):
         )
         self.assertEqual(snapshot["execution_budget"], 20000)
         self.assertEqual(snapshot["plan_budget"], 5000)
+
+    def test_position_snapshot_spreads_initial_build_across_months(self):
+        from stockagent.ai_service import _position_snapshot
+
+        snapshot = _position_snapshot(
+            {"execution_phase": "initial"},
+            {
+                "plan": {
+                    "amount": 5000,
+                    "capital_base": 100000,
+                    "initial_target_pct": 30,
+                    "initial_months": 6,
+                    "cadence": "monthly",
+                },
+                "etfs": [{"symbol": "512890", "shares": 10000, "cost": 1}],
+            },
+            "512890",
+        )
+        self.assertEqual(snapshot["execution_budget"], 5000)
 
     def test_reduce_action_cannot_raise_amount(self):
         policy = apply_policy(

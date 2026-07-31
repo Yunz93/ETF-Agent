@@ -163,19 +163,21 @@ export function getPeriodAdvice({
     holding?.actualWeight != null && Number.isFinite(Number(holding.actualWeight))
       ? Number(holding.actualWeight)
       : null;
+  const drift =
+    targetWeight != null && actualWeight != null
+      ? Math.round((actualWeight - targetWeight) * 10_000) / 10_000
+      : null;
+  const overweight =
+    drift != null && drift > POSITION_TOLERANCE_PP;
+  // 目标仓位是指引：仅提示超配，不再作为硬顶停买；建仓期更不应锁死。
   const position = holding
     ? {
         targetWeight,
         actualWeight,
-        drift:
-          targetWeight != null && actualWeight != null
-            ? Math.round((actualWeight - targetWeight) * 10_000) / 10_000
-            : null,
+        drift,
         maxWeight: targetWeight != null ? targetWeight + POSITION_TOLERANCE_PP : null,
-        blocked:
-          targetWeight != null &&
-          actualWeight != null &&
-          actualWeight > targetWeight + POSITION_TOLERANCE_PP,
+        overweight,
+        blocked: false,
       }
     : null;
 

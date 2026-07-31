@@ -207,6 +207,7 @@ DEFAULT_WORKSPACE = {
         "amount": 2000,
         "capital_base": 0,
         "initial_target_pct": 0,
+        "initial_months": 1,
         "initial_build_completed_at": None,
         "cadence": "monthly",
         "day": 1,
