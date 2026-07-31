@@ -138,18 +138,29 @@ test("pending order rolls remaining budget into the next period", () => {
   assert.equal(pending.remaining, 1700);
 });
 
-test("projected position detects current and post-buy concentration breach", () => {
-  const result = projectedPosition({
+test("projected position marks overweight without hard-blocking by default", () => {
+  const soft = projectedPosition({
     currentValue: 20_000,
     portfolioValue: 40_000,
     buyAmount: 2_000,
     targetWeight: 30,
   });
-  assert.equal(result.currentWeight, 50);
-  assert.ok(result.projectedWeight > 52);
-  assert.equal(result.maxWeight, 35);
-  assert.equal(result.blocked, true);
-  assert.equal(result.wouldExceed, true);
+  assert.equal(soft.currentWeight, 50);
+  assert.ok(soft.projectedWeight > 52);
+  assert.equal(soft.maxWeight, 35);
+  assert.equal(soft.overweight, true);
+  assert.equal(soft.blocked, false);
+  assert.equal(soft.wouldExceed, false);
+
+  const hard = projectedPosition({
+    currentValue: 20_000,
+    portfolioValue: 40_000,
+    buyAmount: 2_000,
+    targetWeight: 30,
+    enforceCeiling: true,
+  });
+  assert.equal(hard.blocked, true);
+  assert.equal(hard.wouldExceed, true);
 });
 
 test("risk metrics report drawdown and annualized volatility", () => {

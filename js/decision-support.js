@@ -283,19 +283,25 @@ export function projectedPosition({
   buyAmount = 0,
   targetWeight = null,
   tolerance = 5,
+  enforceCeiling = false,
 } = {}) {
   const nextPortfolioValue = Math.max(0, Number(portfolioValue)) + Math.max(0, Number(buyAmount));
   const nextValue = Math.max(0, Number(currentValue)) + Math.max(0, Number(buyAmount));
   const currentWeight = portfolioValue > 0 ? (Number(currentValue) / Number(portfolioValue)) * 100 : null;
   const projectedWeight = nextPortfolioValue > 0 ? (nextValue / nextPortfolioValue) * 100 : null;
   const maxWeight = targetWeight == null ? null : Number(targetWeight) + tolerance;
+  const overTarget = currentWeight != null && maxWeight != null && currentWeight > maxWeight;
+  const wouldOverTarget =
+    projectedWeight != null && maxWeight != null && projectedWeight > maxWeight;
   return {
     currentWeight,
     projectedWeight,
     projectedDrift: projectedWeight != null && targetWeight != null ? projectedWeight - Number(targetWeight) : null,
     maxWeight,
-    blocked: currentWeight != null && maxWeight != null && currentWeight > maxWeight,
-    wouldExceed: projectedWeight != null && maxWeight != null && projectedWeight > maxWeight,
+    overweight: overTarget,
+    // 默认不硬顶；仅调用方显式 enforceCeiling 时才阻断（兼容旧逻辑）。
+    blocked: enforceCeiling ? overTarget : false,
+    wouldExceed: enforceCeiling ? wouldOverTarget : false,
   };
 }
 

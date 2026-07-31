@@ -107,6 +107,7 @@ export const DEFAULT_STRATEGY_CONFIG = Object.freeze({
   },
 });
 
+/** 池内目标权重的软偏离提示阈值（百分点）；不再作为硬顶停买。 */
 export const POSITION_TOLERANCE_PP = 5;
 
 const SENTIMENT_ZONE_HINTS = Object.freeze({
@@ -472,14 +473,26 @@ export function rebalanceHint({ targetWeight, actualWeight, name } = {}) {
 function rebalanceFactor(targetWeight, actualWeight, enabled) {
   if (!enabled || targetWeight == null || actualWeight == null) return 1;
   const drift = actualWeight - targetWeight;
+  if (drift > 15) return 0.35;
   if (drift > 5) return 0.65;
+  if (drift < -15) return 1.45;
   if (drift < -5) return 1.25;
   return 1;
 }
 
-function positionAllowed(targetWeight, actualWeight) {
-  if (targetWeight == null || actualWeight == null) return true;
-  return actualWeight <= targetWeight + POSITION_TOLERANCE_PP;
+/**
+ * 建仓期对目标仓位的软倾斜：低配多给、超配少给，但不归零。
+ * 目标仓位是指引，不是停买硬顶。
+ */
+export function buildGapTilt(targetWeight, actualWeight) {
+  const target = Number(targetWeight);
+  if (!(target > 0)) return 1;
+  if (actualWeight == null || !Number.isFinite(Number(actualWeight))) return 1.2;
+  const drift = Number(actualWeight) - target;
+  if (drift >= 0) {
+    return Math.max(0.2, 1 - drift / Math.max(target, 10));
+  }
+  return Math.min(1.8, 1 + -drift / Math.max(target, 10));
 }
 
 function emptyAllocation(totalBudget) {
@@ -561,9 +574,9 @@ function finalizeEligible({ totalBudget, eligible, skipped, forceFullDeploy, not
  * - strategyOverrides：按品种覆盖策略（{ symbol: strategyId }）
  * - sentimentByMarket：{ A|HK|US: snapshot }，估值/评分/自定义可叠加情绪倍率
  * - analysisRegistry：用于 equity_growth 的市场分区推断
- * - 某只不建议投（mult=0）时，其份额可让给其他可投品种
- * - 不强制投完（估值/评分/自定义）：整体偏贵时只部署预算的一部分
- * - 定额 / 再平衡：默认打满预算（默认不叠加情绪）
+ * - 建仓期（preferTargetGap）：打满建仓缺口；目标仓位仅作分配指引，按估值/情绪倍率动态调节比例
+ * - 周期定投：超配只软降权，不再硬顶停买；估值暂停（mult=0）仍可把份额让给其他品种
+ * - 定额 / 再平衡 / 建仓：默认打满预算
  *
  * holdings: [{ symbol, name, targetWeight, actualWeight, pePct, grade, assetClass, spreadPct, analyzed }]
  */
@@ -668,7 +681,100 @@ export function allocatePoolBudget({
         ? config.use_rebalance
         : true;
 
-  if (strategyId === "rebalance" || preferTargetGap) {
+  // —— 建仓期：打满缺口；目标仓位 × 指数倍率动态分配 ——
+  if (preferTargetGap && strategyId !== "rebalance") {
+    const prepared = holdings.map((item) => {
+      const target = hasTargets
+        ? Number(item.targetWeight) > 0
+          ? Number(item.targetWeight)
+          : 0
+        : equal;
+      const actual =
+        item.actualWeight != null && Number.isFinite(Number(item.actualWeight))
+          ? Number(item.actualWeight)
+          : null;
+      const deficit = actual == null ? target : Math.max(0, target - actual);
+      const grid = withSentiment(item, rowMultiplier(item, strategyId));
+      const tilt = buildGapTilt(target, actual);
+      return {
+        symbol: item.symbol,
+        name: item.name || item.symbol,
+        targetWeight: target,
+        actualWeight: actual,
+        analyzed: item.analyzed !== false,
+        mult: grid.mult,
+        baseMult: grid.baseMult ?? grid.mult,
+        sentimentMult: grid.sentimentMult ?? 1,
+        sentiment: grid.sentiment,
+        band: grid.band,
+        hint: grid.hint,
+        tilt,
+        deficit,
+        reb: 1,
+      };
+    });
+
+    const anyAttractive = prepared.some((row) => row.targetWeight > 0 && row.mult > 0);
+    const rows = prepared.map((row) => {
+      // 全池都偏贵时：建仓仍打出去，退回目标权重比例（倍率按 1）
+      const effMult = anyAttractive ? row.mult : row.targetWeight > 0 ? 1 : 0;
+      const score = row.targetWeight > 0 && effMult > 0 ? row.targetWeight * effMult * row.tilt : 0;
+      const drift =
+        row.actualWeight != null && row.targetWeight > 0
+          ? row.actualWeight - row.targetWeight
+          : null;
+      let band = row.band || "建仓";
+      let hint = row.hint || "按目标仓位参与建仓";
+      if (!(row.targetWeight > 0)) {
+        band = "无目标";
+        hint = "未设置目标仓位，本期不参与";
+      } else if (!anyAttractive) {
+        band = `${band} · 建仓兜底`;
+        hint = "建仓期估值均偏弱，仍按目标仓位打满缺口";
+      } else if (effMult <= 0) {
+        band = row.band || "当期让出额度";
+        hint = row.hint || "估值偏贵，建仓额度让给其他品种";
+      } else if (drift != null && drift > POSITION_TOLERANCE_PP) {
+        band = `${band} · 超配少配`;
+        hint = `高于目标 ${drift.toFixed(1)} pp，建仓期仍参与但比例下调`;
+      } else if (row.deficit > 0) {
+        band = `${band} · 建仓补缺`;
+        hint =
+          row.sentimentMult !== 1 && row.hint
+            ? row.hint
+            : `低于目标 ${row.deficit.toFixed(1)} pp，优先补仓`;
+      }
+      return {
+        ...row,
+        mult: effMult,
+        score,
+        band,
+        hint,
+        positionBlocked: false,
+      };
+    });
+
+    const eligible = rows.filter((row) => row.score > 0);
+    const skipped = rows
+      .filter((row) => row.score <= 0)
+      .map((row) => ({
+        symbol: row.symbol,
+        name: row.name,
+        band: row.band,
+        reason: row.hint,
+      }));
+    return finalizeEligible({
+      totalBudget,
+      eligible,
+      skipped,
+      forceFullDeploy: true,
+      strategy: strategyId,
+      note: anyAttractive ? "建仓期按目标×指数吸引力分配，打满缺口" : "建仓期估值偏弱，仍按目标仓位打满缺口",
+    });
+  }
+
+  // —— 再平衡：按缺口补仓，打满预算；超配不再硬停 ——
+  if (strategyId === "rebalance") {
     const rows = holdings.map((item) => {
       const target = hasTargets
         ? Number(item.targetWeight) > 0
@@ -680,64 +786,44 @@ export function allocatePoolBudget({
           ? Number(item.actualWeight)
           : null;
       const deficit = actual == null ? target : Math.max(0, target - actual);
-      const baseGrid =
-        preferTargetGap && strategyId !== "rebalance"
-          ? rowMultiplier(item, strategyId)
-          : { mult: 1, band: deficit > 0 ? "待补仓" : "已达标", hint: "", strategyId };
-      const grid = withSentiment(item, baseGrid);
-      const allowed = positionAllowed(target, actual);
-      const score =
-        !allowed || grid.mult <= 0 ? 0 : (deficit > 0 ? deficit : 0) * grid.mult;
+      const tilt = buildGapTilt(target, actual);
+      // 明显低配用缺口；已贴近/超配用很小底分，避免完全锁死
+      const score = target > 0 ? (deficit > 0 ? deficit : target * 0.05) * tilt : 0;
+      const drift = actual != null ? actual - target : null;
       return {
         symbol: item.symbol,
         name: item.name || item.symbol,
         targetWeight: target,
         actualWeight: actual,
         analyzed: item.analyzed !== false,
-        mult: grid.mult,
-        baseMult: grid.baseMult,
-        sentimentMult: grid.sentimentMult,
-        sentiment: grid.sentiment,
-        band:
-          !allowed
-            ? "超配暂停"
-            : grid.mult <= 0
-              ? grid.band || "当期不建议新增"
-              : deficit > 0
-                ? preferTargetGap
-                  ? `${grid.band || "待补仓"} · 建仓补缺`
-                  : "待补仓"
-                : actual == null
-                  ? "无持仓权重"
-                  : "已达标",
+        mult: 1,
+        baseMult: 1,
+        sentimentMult: 1,
+        sentiment: null,
+        band: deficit > 0 ? "待补仓" : drift != null && drift > POSITION_TOLERANCE_PP ? "超配少配" : "已达标",
         hint:
-          !allowed
-            ? `当前仓位高于目标 ${POSITION_TOLERANCE_PP} pp 上限`
-            : grid.mult <= 0
-              ? grid.hint || "当期不建议新增"
-              : deficit > 0
-                ? grid.sentimentMult !== 1 && grid.hint
-                  ? grid.hint
-                  : `低于目标 ${(target - (actual ?? 0)).toFixed(1)} pp`
-                : actual == null
-                  ? "尚无持仓市值，按目标仓位参与"
-                  : "已达或高于目标，本期不补",
+          deficit > 0
+            ? `低于目标 ${deficit.toFixed(1)} pp`
+            : drift != null && drift > POSITION_TOLERANCE_PP
+              ? `高于目标 ${drift.toFixed(1)} pp，仅保留很小再平衡份额`
+              : actual == null
+                ? "尚无持仓市值，按目标仓位参与"
+                : "已达或高于目标",
         reb: 1,
         score,
         deficit,
-        positionBlocked: !allowed,
+        positionBlocked: false,
       };
     });
 
-    let eligible = rows.filter((row) => row.score > 0);
-    // 全部达标或无实际权重时：按目标仓位打满（等权兜底）
+    let eligible = rows.filter((row) => row.score > 0 && row.deficit > 0);
     if (!eligible.length) {
       eligible = rows
-        .filter((row) => row.targetWeight > 0 && row.mult > 0 && !row.positionBlocked)
+        .filter((row) => row.targetWeight > 0)
         .map((row) => ({
           ...row,
           score: row.targetWeight * row.mult,
-          band: preferTargetGap ? "按目标建仓" : "按目标",
+          band: "按目标",
           hint: "无明显低配，按目标仓位分配",
         }));
     }
@@ -758,6 +844,7 @@ export function allocatePoolBudget({
     });
   }
 
+  // —— 周期定投：估值调节部署比例；超配软降权 ——
   const rows = holdings.map((item) => {
     const target = hasTargets
       ? Number(item.targetWeight) > 0
@@ -769,9 +856,10 @@ export function allocatePoolBudget({
         ? Number(item.actualWeight)
         : null;
     const grid = withSentiment(item, rowMultiplier(item, strategyId));
-    const allowed = positionAllowed(target, actual);
     const reb = rebalanceFactor(target, actual, useReb);
-    const score = allowed ? (target / 100) * grid.mult * reb : 0;
+    const score = target > 0 && grid.mult > 0 ? (target / 100) * grid.mult * reb : 0;
+    const drift = actual != null && target > 0 ? actual - target : null;
+    const overweight = drift != null && drift > POSITION_TOLERANCE_PP;
     return {
       symbol: item.symbol,
       name: item.name || item.symbol,
@@ -779,7 +867,12 @@ export function allocatePoolBudget({
       actualWeight: actual,
       analyzed: item.analyzed !== false,
       ...grid,
-      positionBlocked: !allowed,
+      band: overweight && grid.mult > 0 ? `${grid.band} · 超配少配` : grid.band,
+      hint:
+        overweight && grid.mult > 0
+          ? `${grid.hint || "按策略参与"}；高于目标 ${drift.toFixed(1)} pp，比例下调`
+          : grid.hint,
+      positionBlocked: false,
       reb,
       score,
     };
@@ -792,11 +885,7 @@ export function allocatePoolBudget({
       symbol: row.symbol,
       name: row.name,
       band: row.band,
-      reason: row.positionBlocked
-        ? `当前仓位高于目标 ${POSITION_TOLERANCE_PP} pp 上限`
-        : row.mult <= 0
-          ? "当期不建议新增"
-          : "吸引力不足",
+      reason: row.mult <= 0 ? "当期不建议新增" : "吸引力不足",
     }));
 
   return finalizeEligible({

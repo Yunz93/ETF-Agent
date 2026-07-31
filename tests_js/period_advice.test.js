@@ -22,23 +22,24 @@ test("period advice invests when strategy allocation assigns amount", () => {
     actualWeight: 44.9,
     drift: 4.9,
     maxWeight: 45,
+    overweight: false,
     blocked: false,
   });
 });
 
-test("period advice blocks new money above the position ceiling", () => {
+test("period advice soft-tilts overweight instead of hard-blocking", () => {
   const advice = getPeriodAdvice({
     symbol: "512890",
     plan: { amount: 2000, strategy: "fixed" },
     holdings: [
-      { symbol: "512890", name: "红利低波", targetWeight: 40, actualWeight: 45.1 },
-      { symbol: "563360", name: "A500", targetWeight: 60, actualWeight: 54.9 },
+      { symbol: "512890", name: "红利低波", targetWeight: 40, actualWeight: 55 },
+      { symbol: "563360", name: "A500", targetWeight: 60, actualWeight: 45 },
     ],
   });
-  assert.equal(advice.stance, STANCE.SKIP);
-  assert.equal(advice.amount, 0);
-  assert.match(advice.reason, /仓位高于目标/);
-  assert.equal(advice.position.blocked, true);
+  assert.equal(advice.stance, STANCE.INVEST);
+  assert.ok(advice.amount > 0);
+  assert.equal(advice.position.blocked, false);
+  assert.equal(advice.position.overweight, true);
 });
 
 test("period advice holds cash when valuation pauses the whole pool", () => {

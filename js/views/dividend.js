@@ -583,20 +583,23 @@ function executionPanelHtml(advice, context) {
         })
       : null;
   const willOrder = order.shares > 0;
+  const overweightHint =
+    position.overweight ||
+    (position.projectedDrift != null && position.projectedDrift > 5);
   const action =
-    position.blocked || position.wouldExceed
-      ? "暂停新增，先恢复仓位约束"
-      : cycle.status === "completed"
-        ? "本期已完成，避免重复买入"
-        : willOrder
-          ? `${order.inefficient ? "仍可买" : "可买"} ${order.shares.toLocaleString("zh-CN")} 份`
-          : order.blockedReason === "fee_inefficient"
-            ? "额度不足，累计至下期"
-            : order.blockedReason === "fee_rate_exceeds_limit"
-              ? "佣金费率高于设定上限，请调整成本参数"
-            : advice.amount > 0
-              ? `不足 ${order.lotSize} 份，继续累计`
-              : "无待成交订单";
+    cycle.status === "completed"
+      ? "本期已完成，避免重复买入"
+      : willOrder
+        ? `${order.inefficient ? "仍可买" : "可买"} ${order.shares.toLocaleString("zh-CN")} 份${
+            overweightHint ? "（已超目标，比例已下调）" : ""
+          }`
+        : order.blockedReason === "fee_inefficient"
+          ? "额度不足，累计至下期"
+          : order.blockedReason === "fee_rate_exceeds_limit"
+            ? "佣金费率高于设定上限，请调整成本参数"
+          : advice.amount > 0
+            ? `不足 ${order.lotSize} 份，继续累计`
+            : "无待成交订单";
 
   const skipOrder = !willOrder && !(advice?.amount > 0 && order.blockedReason);
   const gridRows = [
@@ -841,7 +844,12 @@ function holdingsPanel(symbol, price, advice, context) {
     ["ETF 池总仓位", advice?.execution?.currentPositionPct != null ? `${advice.execution.currentPositionPct.toFixed(1)}%` : "—"],
     ["单只总资产仓位", context.assetPositionPct != null ? `${context.assetPositionPct.toFixed(1)}%` : "—"],
     ["偏离目标", position.drift != null ? `${signed(position.drift, 1)} pp` : "—"],
-    ["允许上限", position.maxWeight != null ? `${position.maxWeight.toFixed(1)}%` : "—"],
+    [
+      "目标带宽",
+      position.maxWeight != null
+        ? `${position.maxWeight.toFixed(1)}%（软指引，非停买硬顶）`
+        : "—",
+    ],
     ["持有份额", entry.shares.toLocaleString("zh-CN")],
     ["成本价（含费）", cost != null ? cost.toFixed(3) : "—"],
     ["现价", price != null ? Number(price).toFixed(3) : "—"],
