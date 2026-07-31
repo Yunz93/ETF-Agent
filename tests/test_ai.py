@@ -5,9 +5,11 @@ from unittest.mock import patch
 
 from stockagent.ai_providers import AIProviderError, _decode_json_text, _openai_request
 from stockagent.ai_service import (
+    SYSTEM_PROMPT,
     _analysis_snapshot,
     _validate_proposal,
     apply_policy,
+    humanize_ai_text,
     review_recommendation,
     test_connection as run_connection_test,
 )
@@ -203,6 +205,56 @@ class AIPolicyTests(unittest.TestCase):
             ["52% 仓位成为首要约束", "年线附近但不宜继续集中"],
         )
 
+    def test_humanize_ai_text_replaces_field_paths(self):
+        text = (
+            "position.actual_weight为52.3%，baseline.stance为skip；"
+            "valuation.pe_percentile_10y为0.69，关注ma250=5675。"
+        )
+        readable = humanize_ai_text(text)
+        self.assertNotIn("position.actual_weight", readable)
+        self.assertNotIn("baseline.stance", readable)
+        self.assertNotIn("valuation.pe_percentile_10y", readable)
+        self.assertNotIn("ma250=", readable)
+        self.assertIn("当前仓位", readable)
+        self.assertIn("规则建议", readable)
+        self.assertIn("PE 近十年分位", readable)
+        self.assertIn("年线（MA250）", readable)
+
+    def test_validate_proposal_humanizes_user_facing_fields_but_keeps_evidence_paths(self):
+        result = _validate_proposal(
+            {
+                "action": "keep",
+                "amount_multiplier": 1,
+                "confidence": "medium",
+                "summary": "position.actual_weight超标且data_quality.critical_degraded_fields含估值。",
+                "focus_title": "baseline.stance为skip",
+                "analysis_sections": [
+                    {
+                        "title": "仓位约束",
+                        "items": ["position.actual_weight为52%，高于目标。"],
+                    }
+                ],
+                "watch_items": ["观察pe_percentile_10y是否回落，指数能否站上ma250"],
+                "evidence": ["position.actual_weight", "valuation.pe_percentile_10y"],
+                "conditions_to_reverse": [],
+                "data_limitations": ["data_quality.critical_degraded_fields含估值"],
+            },
+            {"position.actual_weight", "valuation.pe_percentile_10y"},
+        )
+        self.assertNotIn("position.actual_weight", result["summary"])
+        self.assertIn("当前仓位", result["summary"])
+        self.assertIn("关键降级字段", result["summary"])
+        self.assertIn("规则建议", result["focus_title"])
+        self.assertIn("当前仓位", result["analysis_sections"][0]["items"][0])
+        self.assertIn("PE 近十年分位", result["watch_items"][0])
+        self.assertIn("年线（MA250）", result["watch_items"][0])
+        self.assertEqual(
+            result["evidence"],
+            ["position.actual_weight", "valuation.pe_percentile_10y"],
+        )
+        self.assertIn("字段路径", SYSTEM_PROMPT)
+        self.assertIn("禁止在上述展示字段中写 JSON 字段路径", SYSTEM_PROMPT)
+
     def test_analysis_snapshot_includes_etf_identity_and_distinguishing_metrics(self):
         snapshot = _analysis_snapshot(
             {
@@ -374,7 +426,7 @@ class AIPolicyTests(unittest.TestCase):
         self.assertEqual(result["final_recommendation"]["amount"], 700)
         self.assertEqual(result["ai_proposal"]["focus_title"], "仓位约束压过低估值")
         sent_payload = provider.call_args.args[4]
-        self.assertEqual(sent_payload["output_version"], 2)
+        self.assertEqual(sent_payload["output_version"], 3)
         provider.assert_called_once()
 
 
