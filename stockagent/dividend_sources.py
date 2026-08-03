@@ -278,6 +278,117 @@ def fetch_treasury_yield_history(pages=6, page_size=500):
     rows.sort(key=lambda item: item["date"])
     return rows
 
+
+def fetch_us_treasury_yield_history(pages=4, page_size=500):
+    """东方财富：美国国债收益率。EMG00001310 按期限结构映射为 10 年期。"""
+    rows = []
+    for page in range(1, pages + 1):
+        url = (
+            "https://datacenter-web.eastmoney.com/api/data/v1/get?"
+            + urllib.parse.urlencode(
+                {
+                    "reportName": "RPTA_WEB_TREASURYYIELD",
+                    "columns": "SOLAR_DATE,EMG00001306,EMG00001308,EMG00001310,EMG00001312",
+                    "pageSize": str(page_size),
+                    "pageNumber": str(page),
+                    "sortColumns": "SOLAR_DATE",
+                    "sortTypes": "-1",
+                    "client": "WEB",
+                }
+            )
+        )
+        payload = http_get_json(
+            url,
+            headers=_browser_headers("https://data.eastmoney.com/cjsj/zmgzsyl.html"),
+            timeout=25,
+        )
+        data = ((payload.get("result") or {}).get("data")) or []
+        if not data:
+            break
+        for item in data:
+            date_raw = str(item.get("SOLAR_DATE") or "")[:10]
+            value = item.get("EMG00001310")
+            if value is None or len(date_raw) != 10:
+                continue
+            rows.append(
+                {
+                    "date": date_raw,
+                    "us10y": float(value),
+                    "us2y": float(item["EMG00001306"]) if item.get("EMG00001306") is not None else None,
+                    "us5y": float(item["EMG00001308"]) if item.get("EMG00001308") is not None else None,
+                    "us30y": float(item["EMG00001312"]) if item.get("EMG00001312") is not None else None,
+                }
+            )
+        if len(data) < page_size:
+            break
+    if not rows:
+        raise RuntimeError("东方财富未返回美债收益率数据")
+    rows.sort(key=lambda item: item["date"])
+    return rows
+
+
+def fetch_usd_index_history(limit=320):
+    """东方财富：美元指数（secid=100.UDI）日线收盘价，升序返回。"""
+    params = {
+        "secid": "100.UDI",
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+        "klt": "101",
+        "fqt": "0",
+        "end": "20500101",
+        "lmt": str(max(120, int(limit))),
+    }
+    headers = _browser_headers("https://quote.eastmoney.com/gb/zsUDI.html")
+    last_error = None
+    payload = None
+    attempts = [
+        params,
+        {
+            **params,
+            "beg": "20200101",
+            "lmt": str(max(250, int(limit))),
+        },
+    ]
+    for query in attempts:
+        url = (
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get?"
+            + urllib.parse.urlencode(query)
+        )
+        for attempt in range(3):
+            try:
+                payload = http_get_json(url, headers=headers, timeout=25)
+                if (payload.get("data") or {}).get("klines"):
+                    break
+                payload = None
+            except Exception as exc:
+                last_error = exc
+                payload = None
+                time.sleep(0.5 * (attempt + 1))
+        if payload is not None:
+            break
+    if payload is None:
+        raise RuntimeError(f"美元指数历史不可用：{last_error}")
+    data = payload.get("data") or {}
+    klines = data.get("klines") or []
+    rows = []
+    for line in klines:
+        parts = str(line).split(",")
+        if len(parts) < 3:
+            continue
+        date = parts[0][:10]
+        try:
+            close = float(parts[2])
+        except (TypeError, ValueError):
+            continue
+        if len(date) != 10:
+            continue
+        rows.append({"date": date, "close": close})
+    if len(rows) < 60:
+        raise RuntimeError("东方财富未返回足够的美元指数历史")
+    rows.sort(key=lambda item: item["date"])
+    return rows
+
+
 def fetch_etf_quote(symbol):
     """跟踪 ETF 实时价（腾讯行情）。沪市 ETF 以 5 开头，深市以 1 开头。"""
     from .quotes import fetch_tencent_quotes, quote_from_tencent_item

@@ -23,6 +23,9 @@ SYSTEM_PROMPT = """你是 ETF Agent 的 ETF 分析器。只能使用输入 JSON 
 不同 ETF 不要套用相同段落：只选择 2 至 4 个真正相关的主题，主题标题必须描述本只 ETF 的具体矛盾，
 不得使用“支持因素”“风险分析”“技术面分析”等通用标题。每个主题都要引用输入中的具体数值或状态并解释其决策影响，
 不要只复述“估值较低、技术面中性、注意风险”等可替换到任何 ETF 的空泛句子。
+商品/债券类 ETF（asset_class 为 commodity/bond，或 data_quality.valuation_framework 为 technical）
+没有股票 PE/股息估值口径：not_applicable_fields 中的估值与股债利差属于框架不适用，
+不得据此判定数据质量差、也不得据此削弱或否定规则补仓建议。
 
 文案规则（很重要）：
 - summary、focus_title、analysis_sections、watch_items、conditions_to_reverse、data_limitations
@@ -38,13 +41,15 @@ analysis_sections: 由 2 至 4 个对象组成的数组，每个对象包含 tit
 watch_items、evidence、conditions_to_reverse、data_limitations: 字符串数组。
 所有字段都必须出现；数组每项不超过 80 个汉字，最多 3 项，没有内容时返回空数组。"""
 
-AI_ANALYSIS_VERSION = 3
+AI_ANALYSIS_VERSION = 4
 ALLOWED_ACTIONS = {"keep", "increase", "reduce", "pause"}
 ALLOWED_CONFIDENCE = {"low", "medium", "high"}
 
 # Longer keys first so nested paths replace before short suffixes.
 FIELD_LABELS = (
     ("data_quality.critical_degraded_fields", "关键降级字段"),
+    ("data_quality.not_applicable_fields", "不适用字段"),
+    ("data_quality.valuation_framework", "估值框架"),
     ("data_quality.degraded_fields", "降级字段"),
     ("data_quality.may_increase", "是否允许加仓"),
     ("data_quality.freshness", "行情新鲜度"),
@@ -195,8 +200,16 @@ def _analysis_snapshot(payload):
         "score": {
             "total": (payload.get("score") or {}).get("total"),
             "grade": (payload.get("score") or {}).get("grade"),
+            "framework": (payload.get("score") or {}).get("framework"),
             "components": (payload.get("score") or {}).get("components"),
         },
+        "not_applicable": payload.get("not_applicable") or {},
+        "gold_macro": {
+            key: (payload.get("gold_macro") or {}).get(key)
+            for key in ("score", "mult", "zone", "band", "hint", "degraded", "us10y", "usd_index")
+        }
+        if payload.get("gold_macro")
+        else None,
         "backtest": {
             key: (payload.get("backtest") or {}).get(key)
             for key in (
@@ -254,20 +267,41 @@ def _normalize_baseline(raw, workspace, execution_budget=None):
 
 def _data_quality(analysis):
     errors = analysis.get("errors") if isinstance(analysis.get("errors"), dict) else {}
+    not_applicable = (
+        analysis.get("not_applicable")
+        if isinstance(analysis.get("not_applicable"), dict)
+        else {}
+    )
+    asset_class = str(analysis.get("asset_class") or "").strip().lower()
+    score = analysis.get("score") if isinstance(analysis.get("score"), dict) else {}
+    framework = str(score.get("framework") or "").strip().lower()
+    if framework not in ("technical", "valuation"):
+        framework = (
+            "technical" if asset_class in ("commodity", "bond") else "valuation"
+        )
+    # 商品/债券：估值/国债/指数 PE 为框架不适用，即使仍出现在 errors 也不算关键降级。
+    na_keys = set(not_applicable.keys())
+    if framework == "technical" or asset_class in ("commodity", "bond"):
+        na_keys.update({"valuation", "bond", "index_pe"})
     etf = analysis.get("etf") or {}
     freshness = market_freshness(
         etf.get("market") or "A",
         etf.get("market_timestamp"),
     ).get("status")
     updated_at = analysis.get("updated_at")
+    degraded = sorted(key for key in errors if key not in na_keys)
     critical_errors = sorted(
-        key for key in errors if key in ("etf", "valuation", "index_pe", "bond")
+        key
+        for key in errors
+        if key in ("etf", "valuation", "index_pe", "bond") and key not in na_keys
     )
     return {
         "freshness": freshness,
         "updated_at": updated_at,
-        "degraded_fields": sorted(errors.keys()),
+        "degraded_fields": degraded,
         "critical_degraded_fields": critical_errors,
+        "not_applicable_fields": sorted(na_keys),
+        "valuation_framework": framework,
         "may_increase": not critical_errors and freshness in ("live", "recent_close"),
     }
 

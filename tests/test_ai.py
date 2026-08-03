@@ -7,6 +7,7 @@ from stockagent.ai_providers import AIProviderError, _decode_json_text, _openai_
 from stockagent.ai_service import (
     SYSTEM_PROMPT,
     _analysis_snapshot,
+    _data_quality,
     _validate_proposal,
     apply_policy,
     humanize_ai_text,
@@ -147,6 +148,27 @@ class AIPolicyTests(unittest.TestCase):
             {"max_increase_multiplier": 1.5},
         )
         self.assertEqual(policy["accepted_multiplier"], 1)
+
+    def test_commodity_valuation_na_is_not_critical_degradation(self):
+        quality = _data_quality(
+            {
+                "asset_class": "commodity",
+                "score": {"framework": "technical"},
+                "not_applicable": {
+                    "valuation": "黄金/商品类 ETF 没有 PE、股息率等股票估值口径"
+                },
+                "errors": {"fund_profile": "费率暂不可用"},
+                "etf": {"market": "A", "market_timestamp": None},
+            }
+        )
+        self.assertEqual(quality["valuation_framework"], "technical")
+        self.assertIn("valuation", quality["not_applicable_fields"])
+        self.assertNotIn("valuation", quality["critical_degraded_fields"])
+        self.assertNotIn("valuation", quality["degraded_fields"])
+        self.assertEqual(quality["degraded_fields"], ["fund_profile"])
+        self.assertIn("not_applicable_fields", SYSTEM_PROMPT)
+        self.assertIn("commodity/bond", SYSTEM_PROMPT)
+        self.assertIn("框架不适用", SYSTEM_PROMPT)
 
     def test_unknown_evidence_path_is_removed_and_confidence_is_lowered(self):
         proposal = {
@@ -446,7 +468,7 @@ class AIPolicyTests(unittest.TestCase):
         self.assertEqual(result["final_recommendation"]["amount"], 700)
         self.assertEqual(result["ai_proposal"]["focus_title"], "仓位约束压过低估值")
         sent_payload = provider.call_args.args[4]
-        self.assertEqual(sent_payload["output_version"], 3)
+        self.assertEqual(sent_payload["output_version"], 4)
         provider.assert_called_once()
 
 

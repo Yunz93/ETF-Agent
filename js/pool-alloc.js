@@ -12,6 +12,7 @@ import {
   analysisRegistryFromConfig,
   sentimentByMarketFromState,
 } from "./market-sentiment.js";
+import { goldMacroFromState } from "./gold-macro.js";
 
 function cacheKey(symbol) {
   return analysisCacheKey(symbol);
@@ -68,6 +69,8 @@ export function buildPoolHoldingsForAllocation({ preferLive = null } = {}) {
       grade: analyzed ? cached?.score?.grade : null,
       assetClass: analyzed ? cached?.asset_class || null : null,
       spreadPct: analyzed ? cached?.spread?.percentile ?? null : null,
+      biasPct: analyzed ? cached?.technicals?.bias_pct ?? null : null,
+      goldMacro: analyzed ? cached?.gold_macro || null : null,
       analyzed,
     };
   });
@@ -129,6 +132,7 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
     preferTargetGap: execution.phase === "initial",
     sentimentByMarket: sentimentByMarketFromState(),
     analysisRegistry: analysisRegistryFromConfig(),
+    goldMacro: goldMacroFromState(),
   });
   const strategyName = strategyLabel(plan.strategy);
   const preliminary = analysisPrefetchIsPreliminary();

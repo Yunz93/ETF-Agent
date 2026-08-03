@@ -76,9 +76,11 @@ export function bindEvents() {
 
   els.etfRefresh?.addEventListener("click", async () => {
     const { ensureMarketSentiment } = await import("./market-sentiment.js");
+    const { ensureGoldMacro } = await import("./gold-macro.js");
     await Promise.all([
       renderEtfPool({ refresh: true }),
       ensureMarketSentiment({ refresh: true }).catch(() => {}),
+      ensureGoldMacro({ refresh: true }).catch(() => {}),
     ]);
   });
 

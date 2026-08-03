@@ -82,6 +82,9 @@ export const state = {
   marketSentiment: null,
   marketSentimentFetchedAt: 0,
   marketSentimentError: null,
+  goldMacro: null,
+  goldMacroFetchedAt: 0,
+  goldMacroError: null,
   workspaceSync: {
     status: "idle",
     updatedAt: null,

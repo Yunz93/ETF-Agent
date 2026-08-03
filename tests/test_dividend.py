@@ -437,6 +437,36 @@ class AnalysisRoutingTests(unittest.TestCase):
 
         gold = dividend.resolve_analysis_settings("159937", name="黄金ETF博时")
         self.assertEqual(gold.get("asset_class"), "commodity")
+        self.assertFalse(dividend.valuation_framework_applicable("commodity"))
+        self.assertFalse(dividend.valuation_framework_applicable("bond"))
+        self.assertTrue(dividend.valuation_framework_applicable("equity_core"))
+        self.assertIn("valuation", dividend.not_applicable_valuation_fields("commodity"))
+
+    def test_commodity_uses_technical_score_framework(self):
+        rows = []
+        start = datetime.date(2020, 1, 2)
+        price = 4.0
+        for i in range(320):
+            price *= 1.001 if i % 7 else 0.997
+            rows.append(
+                {
+                    "date": (start + datetime.timedelta(days=i)).isoformat(),
+                    "close": round(price, 4),
+                    "high": round(price * 1.01, 4),
+                    "low": round(price * 0.99, 4),
+                    "change_pct": 0.1,
+                    "pe": None,
+                }
+            )
+        settings = dividend.resolve_analysis_settings("159937", name="黄金ETF博时")
+        payload = dividend.analyze_dividend_data(rows, {}, [], None, settings)
+        self.assertEqual(payload.get("asset_class"), "commodity")
+        self.assertEqual(payload["score"]["framework"], "technical")
+        self.assertIsNotNone(payload["score"]["total"])
+        keys = {item["key"] for item in payload["score"]["components"]}
+        self.assertEqual(keys, {"trend", "technical"})
+        self.assertNotIn("valuation", keys)
+        self.assertNotIn("spread", keys)
 
     def test_asset_class_resolution_and_payload(self):
         gold = dividend.resolve_analysis_settings("159937", name="黄金ETF博时")

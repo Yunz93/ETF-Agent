@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 import {
   allocatePoolBudget,
   allocationForSymbol,
+  commodityDcaMultiplier,
   dcaMultiplier,
+  goldMacroMultiplier,
   inferSentimentMarket,
   normalizeStrategyConfig,
   rebalanceHint,
@@ -182,16 +184,46 @@ test("initial build keeps overweight names but downweights them", () => {
   assert.ok(room.amount > over.amount);
 });
 
-test("commodity valuation uses flat 1x and does not fall back to grade", () => {
-  const result = dcaMultiplier({
+test("commodity valuation uses technical grade, not equity PE pause", () => {
+  const hot = dcaMultiplier({
     strategy: "valuation",
     assetClass: "commodity",
     pePct: null,
     grade: "E",
   });
-  assert.equal(result.mult, 1);
-  assert.match(result.band, /商品类/);
-  assert.match(result.hint, /定额参与/);
+  assert.equal(hot.mult, 0.25);
+  assert.match(hot.band, /商品技术面/);
+  assert.match(hot.hint, /技术面/);
+
+  const dip = dcaMultiplier({
+    strategy: "valuation",
+    assetClass: "commodity",
+    grade: "A",
+  });
+  assert.equal(dip.mult, 1.5);
+
+  const byBias = commodityDcaMultiplier({ biasPct: -14 });
+  assert.equal(byBias.mult, 1.5);
+  assert.match(byBias.band, /深度回调/);
+});
+
+test("commodity multiplies technical grade by gold macro overlay", () => {
+  assert.equal(goldMacroMultiplier({ degraded: true, mult: 1.2 }).mult, 1);
+  const boosted = commodityDcaMultiplier({
+    grade: "C",
+    goldMacro: { degraded: false, mult: 1.2, band: "宏观友好", score: 80 },
+  });
+  assert.equal(boosted.techMult, 1);
+  assert.equal(boosted.macroMult, 1.2);
+  assert.equal(boosted.mult, 1.2);
+  assert.match(boosted.band, /宏观友好/);
+
+  const cooled = commodityDcaMultiplier({
+    grade: "A",
+    goldMacro: { degraded: false, mult: 0.7, band: "宏观逆风", score: 20 },
+  });
+  assert.equal(cooled.techMult, 1.5);
+  assert.equal(cooled.mult, 1.05);
 });
 
 test("dividend valuation mixes PE with spread percentile", () => {
@@ -318,7 +350,8 @@ test("commodity ignores A-share sentiment overlay", () => {
     holdings: [{ symbol: "159937", targetWeight: 100, pePct: null, grade: "E", assetClass: "commodity" }],
   });
   const gold = allocationForSymbol(result, "159937");
-  assert.equal(gold.mult, 1);
+  // 商品走技术面 E=0.25，且不叠加 A 股情绪
+  assert.equal(gold.mult, 0.25);
   assert.equal(gold.sentimentMult, 1);
 });
 
