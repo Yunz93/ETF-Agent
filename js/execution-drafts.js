@@ -10,6 +10,7 @@ import {
 } from "./decision-support.js";
 import { allocatePoolBudget } from "./strategy.js";
 import { buildPoolHoldingsForAllocation } from "./pool-alloc.js";
+import { buildRebalanceSellSuggestions } from "./rebalance-sell.js";
 import { normalizeExecutionDrafts, normalizeTradingCost } from "./workspace_model.js";
 import {
   analysisRegistryFromConfig,
@@ -23,8 +24,8 @@ function todayKey(now = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-function draftId(period, symbol) {
-  return `draft_${period}_${symbol}`;
+function draftId(period, symbol, side = "buy") {
+  return side === "sell" ? `draft_${period}_${symbol}_sell` : `draft_${period}_${symbol}`;
 }
 
 /** 根据当前全池分配生成/刷新本期 pending 草稿（保留已确认/跳过）。 */
@@ -55,7 +56,7 @@ export function buildExecutionDraftsFromAllocation({ now = new Date() } = {}) {
 
   for (const row of pool.allocations || []) {
     if (!(row.amount > 0)) continue;
-    const id = draftId(period.start, row.symbol);
+    const id = draftId(period.start, row.symbol, "buy");
     if (keptIds.has(id)) continue;
     const quote = state.quotesBySymbol[row.symbol];
     const cached = state.analysisCache[row.symbol];
@@ -67,6 +68,7 @@ export function buildExecutionDraftsFromAllocation({ now = new Date() } = {}) {
       period: period.start,
       symbol: row.symbol,
       name: row.name || quote?.name || row.symbol,
+      side: "buy",
       suggested_amount: Math.round(row.amount * 100) / 100,
       price: Math.round(price * 1e6) / 1e6,
       shares: preview.shares,
@@ -75,6 +77,42 @@ export function buildExecutionDraftsFromAllocation({ now = new Date() } = {}) {
       status: "pending",
       skip_reason: "",
       confirmed_trade_id: null,
+      note: "",
+    });
+  }
+
+  // 卖出纪律建议（确认制，绝不自动下单）
+  const holdingsWithShares = holdings.map((item) => {
+    const etf = (state.etfs || []).find((row) => row.symbol === item.symbol);
+    return {
+      ...item,
+      shares: Math.max(0, Number(etf?.shares) || 0) || undefined,
+    };
+  });
+  const sellSuggestions = buildRebalanceSellSuggestions({
+    holdings: holdingsWithShares,
+    quotes: state.quotesBySymbol,
+    plan,
+    now,
+  });
+  for (const row of sellSuggestions) {
+    const id = draftId(period.start, row.symbol, "sell");
+    if (keptIds.has(id)) continue;
+    created.push({
+      id,
+      period: period.start,
+      symbol: row.symbol,
+      name: row.name,
+      side: "sell",
+      suggested_amount: row.suggested_amount,
+      price: row.price,
+      shares: row.shares,
+      fee: row.fee,
+      date,
+      status: "pending",
+      skip_reason: "",
+      confirmed_trade_id: null,
+      note: row.hint || row.band || "",
     });
   }
 

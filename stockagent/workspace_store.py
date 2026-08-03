@@ -128,12 +128,16 @@ def normalize_execution_drafts(payload):
         shares = _positive_number(item.get("shares"))
         fee = _nonnegative_number(item.get("fee"))
         confirmed = str(item.get("confirmed_trade_id") or "").strip() or None
+        side = str(item.get("side") or "buy").strip().lower()
+        if side not in ("buy", "sell"):
+            side = "buy"
         drafts.append(
             {
                 "id": draft_id,
                 "period": period,
                 "symbol": symbol,
                 "name": str(item.get("name") or "").strip(),
+                "side": side,
                 "suggested_amount": round(suggested, 2),
                 "price": round(price, 6),
                 "shares": round(shares, 4),
@@ -142,9 +146,13 @@ def normalize_execution_drafts(payload):
                 "status": status,
                 "skip_reason": str(item.get("skip_reason") or "").strip(),
                 "confirmed_trade_id": confirmed,
+                "note": str(item.get("note") or "").strip(),
             }
         )
-    drafts.sort(key=lambda row: (row["period"], row["symbol"]), reverse=True)
+    drafts.sort(
+        key=lambda row: (row["period"], row["symbol"], 0 if row["side"] == "sell" else 1),
+        reverse=True,
+    )
     return drafts
 
 

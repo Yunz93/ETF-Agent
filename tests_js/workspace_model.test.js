@@ -243,7 +243,20 @@ test("execution drafts normalize and migrate from missing field", () => {
       shares: 900,
       status: "pending",
     },
+    {
+      id: "draft_2026-07-01_512890_sell",
+      period: "2026-07-01",
+      symbol: "512890",
+      side: "sell",
+      suggested_amount: 500,
+      price: 1.1,
+      shares: 400,
+      status: "pending",
+    },
   ]);
-  assert.equal(drafts[0].id, "draft_2026-07-01_512890");
-  assert.equal(drafts[0].date, "2026-07-01");
+  assert.equal(drafts[0].id, "draft_2026-07-01_512890_sell");
+  assert.equal(drafts[0].side, "sell");
+  assert.equal(drafts[1].id, "draft_2026-07-01_512890");
+  assert.equal(drafts[1].side, "buy"); // 缺省兼容旧数据
+  assert.equal(drafts[1].date, "2026-07-01");
 });

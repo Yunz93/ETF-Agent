@@ -383,9 +383,34 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         first = next(item for item in workspace["execution_drafts"] if item["symbol"] == "512890")
         self.assertEqual(first["id"], "draft_2026-07-01_512890")
         self.assertEqual(first["status"], "pending")
+        self.assertEqual(first["side"], "buy")  # 缺省兼容旧数据
         skipped = next(item for item in workspace["execution_drafts"] if item["symbol"] == "510300")
         self.assertEqual(skipped["skip_reason"], "已下单")
         self.assertEqual(workspace["version"], 7)
+
+    def test_execution_drafts_preserve_sell_side(self):
+        workspace = workspace_store.normalize_workspace(
+            {
+                "execution_drafts": [
+                    {
+                        "id": "draft_2026-01-01_512890_sell",
+                        "period": "2026-01-01",
+                        "symbol": "512890",
+                        "side": "sell",
+                        "suggested_amount": 800,
+                        "price": 1.2,
+                        "shares": 600,
+                        "fee": 5,
+                        "status": "pending",
+                        "note": "年度再平衡",
+                    }
+                ]
+            }
+        )
+        self.assertEqual(len(workspace["execution_drafts"]), 1)
+        draft = workspace["execution_drafts"][0]
+        self.assertEqual(draft["side"], "sell")
+        self.assertEqual(draft["note"], "年度再平衡")
 
 
 class ConfigNormalizationTests(unittest.TestCase):

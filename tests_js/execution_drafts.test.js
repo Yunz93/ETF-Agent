@@ -48,8 +48,8 @@ test("buildExecutionDraftsFromAllocation creates lot-sized pending drafts", () =
     "510300": { price: 4.0 },
   };
   state.analysisCache = {
-    "512890": { supported: true, valuation: { pe_percentile_10y: 0.15 }, score: { grade: "A" } },
-    "510300": { supported: true, valuation: { pe_percentile_10y: 0.55 }, score: { grade: "C" } },
+    "512890": { supported: true, valuation: { pe_percentile_10y: 0.15 }, score: { grade: "A" }, asset_class: "dividend" },
+    "510300": { supported: true, valuation: { pe_percentile_10y: 0.55 }, score: { grade: "C" }, asset_class: "equity_core" },
   };
   state.plan = {
     name: "测试",
@@ -87,6 +87,55 @@ test("buildExecutionDraftsFromAllocation creates lot-sized pending drafts", () =
   assert.ok(drafts.every((item) => item.shares % 100 === 0));
   assert.ok(drafts.every((item) => item.status === "pending"));
   assert.ok(drafts.every((item) => item.period === "2026-07-01"));
+  assert.ok(drafts.every((item) => item.side === "buy"));
+});
+
+test("buildExecutionDraftsFromAllocation includes sell-side drafts when overweight rich", () => {
+  state.etfs = [
+    { symbol: "512890", name: "红利低波ETF", shares: 40000, target_weight: 20, cost: 1 },
+    { symbol: "510300", name: "沪深300ETF", shares: 15000, target_weight: 80, cost: 4 },
+  ];
+  state.quotesBySymbol = {
+    "512890": { price: 1.0 },
+    "510300": { price: 4.0 },
+  };
+  // 512890 MV 40000 / total 100000 = 40% vs target 20%, pe rich
+  state.analysisCache = {
+    "512890": {
+      supported: true,
+      valuation: { pe_percentile_10y: 0.92 },
+      score: { grade: "E" },
+      asset_class: "dividend",
+    },
+    "510300": {
+      supported: true,
+      valuation: { pe_percentile_10y: 0.4 },
+      score: { grade: "C" },
+      asset_class: "equity_core",
+    },
+  };
+  state.plan = {
+    amount: 2000,
+    capital_base: 0,
+    initial_target_pct: 0,
+    cadence: "monthly",
+    day: 1,
+    strategy: "fixed",
+    trading_cost: {
+      min_commission: 5,
+      commission_rate_pct: 0.03,
+      max_fee_ratio_pct: 0.25,
+      lot_size: 100,
+    },
+    pending_orders: {},
+  };
+  state.executionDrafts = [];
+  const drafts = buildExecutionDraftsFromAllocation({ now: new Date("2026-07-15T10:00:00") });
+  const sell = drafts.find((item) => item.side === "sell" && item.symbol === "512890");
+  assert.ok(sell);
+  assert.equal(sell.id, "draft_2026-07-01_512890_sell");
+  assert.ok(sell.shares >= 100);
+  assert.match(sell.note, /止盈|高出目标/);
 });
 
 test("updateExecutionDraft preserves confirmed rows when regenerating", () => {

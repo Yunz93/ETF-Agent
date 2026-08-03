@@ -902,17 +902,22 @@ function confirmExecutionDraft(id) {
   if (!draft || draft.status !== "pending") return;
   confirmingDraftId = id;
   activateBuysTab();
-  if (els.tradeType) els.tradeType.value = "buy";
+  const side = draft.side === "sell" ? "sell" : "buy";
+  if (els.tradeType) els.tradeType.value = side;
   if (els.buySymbol) els.buySymbol.value = draft.symbol;
   if (els.buyDate) els.buyDate.value = draft.date;
   if (els.buyPrice) els.buyPrice.value = String(draft.price);
   if (els.buyShares) els.buyShares.value = String(draft.shares);
   if (els.buyFee) els.buyFee.value = draft.fee > 0 ? String(draft.fee) : "";
-  if (els.buyNote) els.buyNote.value = draft.note || `执行清单 ${draft.period}`;
+  if (els.buyNote) {
+    els.buyNote.value =
+      draft.note || (side === "sell" ? `卖出纪律 ${draft.period}` : `执行清单 ${draft.period}`);
+  }
   if (els.buySubmit) els.buySubmit.textContent = "确认入账";
   if (els.buyCancelEdit) els.buyCancelEdit.hidden = false;
   if (els.buyFormStatus) {
-    els.buyFormStatus.textContent = `已预填 ${draft.name || draft.symbol}：可修正成交价后提交入账`;
+    const dir = side === "sell" ? "卖出" : "买入";
+    els.buyFormStatus.textContent = `已预填${dir} ${draft.name || draft.symbol}：可修正成交价后提交入账`;
   }
   els.buyForm?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
@@ -956,6 +961,8 @@ function renderExecDraftPanel() {
         .map((draft) => {
           const statusLabel =
             draft.status === "confirmed" ? "已入账" : draft.status === "skipped" ? "已跳过" : "待执行";
+          const side = draft.side === "sell" ? "sell" : "buy";
+          const sideLabel = side === "sell" ? "卖出" : "买入";
           const actions =
             draft.status === "pending"
               ? `<span class="exec-draft-actions">
@@ -964,8 +971,9 @@ function renderExecDraftPanel() {
                 </span>`
               : `<span class="muted">${escapeHtml(statusLabel)}${draft.skip_reason ? ` · ${escapeHtml(draft.skip_reason)}` : ""}</span>`;
           const orderAmount = (Number(draft.shares) || 0) * (Number(draft.price) || 0);
-          return `<div class="exec-draft-row">
+          return `<div class="exec-draft-row${side === "sell" ? " is-sell" : ""}">
             <div class="exec-draft-main">
+              <span class="trade-type ${side}">${sideLabel}</span>
               <strong>${escapeHtml(draft.name || draft.symbol)}</strong>
               <span class="muted">${escapeHtml(draft.symbol)}</span>
             </div>
@@ -1208,16 +1216,20 @@ export function addBuyRecord() {
   else state.buys = upsertBuy(state.buys, record);
   syncHoldingFromTrades(symbol);
   if (previousSymbol && previousSymbol !== symbol) syncHoldingFromTrades(previousSymbol);
-  if (confirmingDraftId && type === "buy") {
-    state.executionDrafts = updateExecutionDraft(confirmingDraftId, {
-      status: "confirmed",
-      confirmed_trade_id: record.id,
-      price: record.price,
-      shares: record.shares,
-      fee: record.fee,
-      date: record.date,
-    });
-    confirmingDraftId = null;
+  if (confirmingDraftId) {
+    const confirming = (state.executionDrafts || []).find((item) => item.id === confirmingDraftId);
+    const expectedSide = confirming?.side === "sell" ? "sell" : "buy";
+    if (type === expectedSide) {
+      state.executionDrafts = updateExecutionDraft(confirmingDraftId, {
+        status: "confirmed",
+        confirmed_trade_id: record.id,
+        price: record.price,
+        shares: record.shares,
+        fee: record.fee,
+        date: record.date,
+      });
+      confirmingDraftId = null;
+    }
   }
   editingTrade = null;
   persistWorkspace();

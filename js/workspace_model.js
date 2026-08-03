@@ -253,11 +253,13 @@ export function normalizeExecutionDrafts(items = []) {
     const price = Number(item.price);
     const shares = Number(item.shares);
     const fee = Number(item.fee);
+    const side = String(item.side || "buy").trim().toLowerCase() === "sell" ? "sell" : "buy";
     drafts.push({
       id,
       period,
       symbol,
       name: String(item.name || "").trim(),
+      side,
       suggested_amount: Number.isFinite(suggested) && suggested > 0 ? Math.round(suggested * 100) / 100 : 0,
       price: Number.isFinite(price) && price > 0 ? Math.round(price * 1e6) / 1e6 : 0,
       shares: Number.isFinite(shares) && shares > 0 ? Math.round(shares * 1e4) / 1e4 : 0,
@@ -266,11 +268,15 @@ export function normalizeExecutionDrafts(items = []) {
       status,
       skip_reason: String(item.skip_reason || "").trim(),
       confirmed_trade_id: String(item.confirmed_trade_id || "").trim() || null,
+      note: String(item.note || "").trim(),
     });
   }
   drafts.sort((a, b) => {
     if (a.period !== b.period) return a.period < b.period ? 1 : -1;
-    return a.symbol.localeCompare(b.symbol);
+    if (a.symbol !== b.symbol) return a.symbol.localeCompare(b.symbol);
+    // 同品种卖出排在买入前，便于先见纪律项
+    if (a.side !== b.side) return a.side === "sell" ? -1 : 1;
+    return 0;
   });
   return drafts;
 }
