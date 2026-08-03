@@ -5,18 +5,25 @@ from unittest.mock import patch
 
 from stockagent.ai_providers import AIProviderError, _decode_json_text, _openai_request
 from stockagent.ai_service import (
+    CONNECTION_PING_PROMPT,
     SYSTEM_PROMPT,
     _analysis_snapshot,
+    _cache_key,
     _data_quality,
+    _portfolio_snapshot,
+    _position_snapshot,
+    _strip_volatile_quote_fields,
     _validate_proposal,
+    ai_status,
     apply_policy,
     humanize_ai_text,
+    record_ai_usage,
     review_recommendation,
     test_connection as run_connection_test,
 )
 from stockagent.config_store import normalize_config, public_config
 from stockagent.defaults import DEFAULT_CONFIG
-from stockagent.state import AI_REVIEW_CACHE
+from stockagent.state import AI_REVIEW_CACHE, AI_USAGE_SESSION, QUOTE_MARKET_CACHE
 
 
 class AIConfigTests(unittest.TestCase):
@@ -110,10 +117,14 @@ class AIProviderTests(unittest.TestCase):
         },
     )
     def test_connection_accepts_valid_json_without_investment_fields(
-        self, _settings, _request, _key
+        self, _settings, request_review, _key
     ):
         result = run_connection_test("deepseek")
         self.assertTrue(result["ok"])
+        args = request_review.call_args.args
+        self.assertEqual(args[3], CONNECTION_PING_PROMPT)
+        self.assertEqual(args[6], 200)
+        self.assertNotEqual(args[3], SYSTEM_PROMPT)
 
 
 class AIPolicyTests(unittest.TestCase):
@@ -197,6 +208,33 @@ class AIPolicyTests(unittest.TestCase):
         result = _validate_proposal(proposal, {"analysis.valuation.pe"})
         self.assertEqual(result["evidence"], ["analysis.valuation.pe"])
         self.assertEqual(result["confidence"], "low")
+
+    def test_non_keep_action_requires_two_valid_evidence(self):
+        result = _validate_proposal(
+            {
+                "action": "reduce",
+                "amount_multiplier": 0.7,
+                "confidence": "high",
+                "summary": "减仓",
+                "evidence": ["position.actual_weight"],
+                "data_limitations": [],
+            },
+            {"position.actual_weight", "analysis.valuation.pe"},
+        )
+        self.assertEqual(result["confidence"], "low")
+        self.assertIn("证据不足", result["data_limitations"][0])
+
+        ok = _validate_proposal(
+            {
+                "action": "reduce",
+                "amount_multiplier": 0.7,
+                "confidence": "high",
+                "summary": "减仓",
+                "evidence": ["position.actual_weight", "analysis.valuation.pe"],
+            },
+            {"position.actual_weight", "analysis.valuation.pe"},
+        )
+        self.assertEqual(ok["confidence"], "high")
 
     def test_dynamic_analysis_sections_keep_etf_specific_titles(self):
         result = _validate_proposal(
@@ -332,8 +370,6 @@ class AIPolicyTests(unittest.TestCase):
         self.assertEqual(policy["final_amount"], 18000)
 
     def test_position_snapshot_uses_remaining_initial_gap(self):
-        from stockagent.ai_service import _position_snapshot
-
         snapshot = _position_snapshot(
             {"execution_phase": "initial"},
             {
@@ -350,9 +386,33 @@ class AIPolicyTests(unittest.TestCase):
         self.assertEqual(snapshot["execution_budget"], 20000)
         self.assertEqual(snapshot["plan_budget"], 5000)
 
-    def test_position_snapshot_spreads_initial_build_across_months(self):
-        from stockagent.ai_service import _position_snapshot
+    def test_position_snapshot_prefers_cached_market_price(self):
+        QUOTE_MARKET_CACHE.clear()
+        QUOTE_MARKET_CACHE["512890"] = {
+            "expires": 1e18,
+            "payload": {"quotes": [{"symbol": "512890", "price": 2.0}]},
+        }
+        try:
+            snapshot = _position_snapshot(
+                {"execution_phase": "initial"},
+                {
+                    "plan": {
+                        "amount": 5000,
+                        "capital_base": 100000,
+                        "initial_target_pct": 30,
+                        "initial_months": 1,
+                    },
+                    # cost=1 但缓存价=2 → 市值按 2 计，缺口更小
+                    "etfs": [{"symbol": "512890", "shares": 10000, "cost": 1}],
+                },
+                "512890",
+            )
+            # target 30000 - mark 20000 = 10000
+            self.assertEqual(snapshot["execution_budget"], 10000)
+        finally:
+            QUOTE_MARKET_CACHE.clear()
 
+    def test_position_snapshot_spreads_initial_build_across_months(self):
         snapshot = _position_snapshot(
             {"execution_phase": "initial"},
             {
@@ -442,12 +502,13 @@ class AIPolicyTests(unittest.TestCase):
                     },
                 ],
                 "watch_items": ["观察仓位回落"],
-                "evidence": ["position.actual_weight"],
+                "evidence": ["position.actual_weight", "analysis.valuation.pe"],
                 "conditions_to_reverse": ["仓位回到目标附近"],
                 "data_limitations": [],
             },
-            {"total_tokens": 100},
+            {"prompt_tokens": 80, "completion_tokens": 20, "total_tokens": 100},
         )
+        AI_USAGE_SESSION.update({"requests": 0, "prompt_tokens": 0, "completion_tokens": 0})
         result = review_recommendation(
             {
                 "symbol": "512890",
@@ -469,7 +530,52 @@ class AIPolicyTests(unittest.TestCase):
         self.assertEqual(result["ai_proposal"]["focus_title"], "仓位约束压过低估值")
         sent_payload = provider.call_args.args[4]
         self.assertEqual(sent_payload["output_version"], 4)
+        self.assertIn("portfolio", sent_payload)
+        self.assertEqual(sent_payload["portfolio"]["budget"], 2000)
+        self.assertEqual(sent_payload["portfolio"]["weight_basis"], "cost")
         provider.assert_called_once()
+        status = ai_status()
+        self.assertEqual(status["usage_session"]["requests"], 1)
+        self.assertEqual(status["usage_session"]["prompt_tokens"], 80)
+        self.assertEqual(status["usage_session"]["completion_tokens"], 20)
+
+    def test_cache_key_ignores_intraday_quote_fields(self):
+        base = {
+            "analysis": {
+                "etf": {"symbol": "512890", "price": 1.2, "change_pct": 1.1, "volume": 9},
+                "index": {"close": 5000, "change_pct": 0.5},
+            },
+            "baseline": {"amount": 1000},
+        }
+        moved = copy.deepcopy(base)
+        moved["analysis"]["etf"]["price"] = 1.25
+        moved["analysis"]["etf"]["change_pct"] = -0.3
+        moved["analysis"]["index"]["change_pct"] = 1.2
+        self.assertEqual(_cache_key("deepseek", "m", base), _cache_key("deepseek", "m", moved))
+        stripped = _strip_volatile_quote_fields(base)
+        self.assertNotIn("price", stripped["analysis"]["etf"])
+        self.assertIn("price", base["analysis"]["etf"])  # 请求体仍完整
+
+    def test_portfolio_snapshot_uses_cost_weights(self):
+        portfolio = _portfolio_snapshot(
+            {
+                "plan": {"amount": 2000},
+                "etfs": [
+                    {"symbol": "512890", "name": "红利", "shares": 1000, "cost": 1, "target_weight": 40},
+                    {"symbol": "510300", "name": "沪深300", "shares": 500, "cost": 4, "target_weight": 60},
+                ],
+            }
+        )
+        self.assertEqual(portfolio["budget"], 2000)
+        by_symbol = {row["symbol"]: row for row in portfolio["positions"]}
+        self.assertEqual(by_symbol["512890"]["actual_weight_pct"], 33.33)
+        self.assertEqual(by_symbol["510300"]["actual_weight_pct"], 66.67)
+
+    def test_usage_normalizes_openai_response_keys(self):
+        AI_USAGE_SESSION.update({"requests": 0, "prompt_tokens": 0, "completion_tokens": 0})
+        record_ai_usage({"input_tokens": 11, "output_tokens": 7})
+        self.assertEqual(AI_USAGE_SESSION["prompt_tokens"], 11)
+        self.assertEqual(AI_USAGE_SESSION["completion_tokens"], 7)
 
 
 if __name__ == "__main__":

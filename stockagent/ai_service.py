@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import datetime
 import hashlib
 import json
@@ -13,7 +14,7 @@ from .config_store import ai_settings
 from .dividend import get_dividend_dashboard
 from .market_time import market_freshness
 from .secret_store import credential_status, get_api_key
-from .state import AI_REVIEW_CACHE
+from .state import AI_REVIEW_CACHE, AI_USAGE_SESSION, QUOTE_CACHE, QUOTE_MARKET_CACHE
 from .workspace_store import get_workspace
 
 SYSTEM_PROMPT = """你是 ETF Agent 的 ETF 分析器。只能使用输入 JSON 中的事实，
@@ -26,6 +27,7 @@ SYSTEM_PROMPT = """你是 ETF Agent 的 ETF 分析器。只能使用输入 JSON 
 商品/债券类 ETF（asset_class 为 commodity/bond，或 data_quality.valuation_framework 为 technical）
 没有股票 PE/股息估值口径：not_applicable_fields 中的估值与股债利差属于框架不适用，
 不得据此判定数据质量差、也不得据此削弱或否定规则补仓建议。
+可结合 portfolio 指出组合层面矛盾（超配/低配对本期建议的影响）；portfolio.positions 的 actual_weight_pct 为成本口径占比。
 
 文案规则（很重要）：
 - summary、focus_title、analysis_sections、watch_items、conditions_to_reverse、data_limitations
@@ -40,6 +42,13 @@ amount_multiplier: 数字；confidence: "low" | "medium" | "high"；summary、fo
 analysis_sections: 由 2 至 4 个对象组成的数组，每个对象包含 title 和 items，items 为 1 至 3 条字符串；
 watch_items、evidence、conditions_to_reverse、data_limitations: 字符串数组。
 所有字段都必须出现；数组每项不超过 80 个汉字，最多 3 项，没有内容时返回空数组。"""
+
+CONNECTION_PING_PROMPT = (
+    '返回 JSON 最小合法对象：'
+    '{"action":"keep","amount_multiplier":1,"confidence":"low","summary":"ok",'
+    '"focus_title":"ping","analysis_sections":[{"title":"t","items":["i"]}],'
+    '"watch_items":[],"evidence":[],"conditions_to_reverse":[],"data_limitations":[]}'
+)
 
 AI_ANALYSIS_VERSION = 4
 ALLOWED_ACTIONS = {"keep", "increase", "reduce", "pause"}
@@ -85,6 +94,8 @@ FIELD_LABELS = (
     ("baseline.amount", "规则建议金额"),
     ("workspace.plan_budget", "每期预算"),
     ("workspace.capital_base", "可投资总资金"),
+    ("portfolio.positions", "组合持仓"),
+    ("portfolio.budget", "每期预算"),
     ("spread.percentile", "股债利差历史分位"),
     ("spread.value", "股债利差"),
     ("score.total", "综合评分"),
@@ -335,6 +346,12 @@ def _validate_proposal(raw, allowed_evidence=None):
                 "模型引用了不可验证字段，已忽略并保留规则建议。",
             ]
         )
+    # 偏离规则建议时至少需要 2 条合法证据，否则强制低置信度
+    if action != "keep" and len(valid_evidence) < 2:
+        confidence = "low"
+        note = "偏离规则建议但证据不足，已保留规则建议"
+        if note not in data_limitations:
+            data_limitations = _short_list([*data_limitations, note])
     sections = _analysis_sections(raw.get("analysis_sections"))
     if not sections:
         legacy_sections = (
@@ -403,6 +420,48 @@ def apply_policy(baseline, proposal, data_quality, position, settings):
     }
 
 
+def _cached_quote_price(symbol):
+    """从进程内行情缓存取市价；无缓存返回 None（不触发网络请求）。"""
+    code = str(symbol or "").strip()
+    if not code:
+        return None
+
+    def _scan(quotes):
+        for quote in quotes or []:
+            if not isinstance(quote, dict):
+                continue
+            if str(quote.get("symbol") or "").strip() != code:
+                continue
+            price = _number(quote.get("price"))
+            if price > 0:
+                return price
+        return None
+
+    for entry in QUOTE_MARKET_CACHE.values():
+        if not isinstance(entry, dict):
+            continue
+        found = _scan((entry.get("payload") or {}).get("quotes"))
+        if found is not None:
+            return found
+    cached = QUOTE_CACHE.get("payload")
+    if isinstance(cached, dict):
+        found = _scan(cached.get("quotes"))
+        if found is not None:
+            return found
+    return None
+
+
+def _holding_mark_value(item):
+    shares = max(0.0, _number(item.get("shares")))
+    if not (shares > 0):
+        return 0.0
+    price = _cached_quote_price(item.get("symbol"))
+    if price is not None and price > 0:
+        return shares * price
+    cost = max(0.0, _number(item.get("cost")))
+    return shares * cost if cost > 0 else 0.0
+
+
 def _position_snapshot(raw, workspace, symbol=""):
     source = raw if isinstance(raw, dict) else {}
     plan = workspace.get("plan") or {}
@@ -420,10 +479,7 @@ def _position_snapshot(raw, workspace, symbol=""):
     target_amount = capital_base * initial_target_pct / 100.0
     current_value = 0.0
     for item in workspace.get("etfs") or []:
-        shares = max(0.0, _number(item.get("shares")))
-        cost = max(0.0, _number(item.get("cost")))
-        if shares > 0 and cost > 0:
-            current_value += shares * cost
+        current_value += _holding_mark_value(item)
     initial_gap = max(0.0, target_amount - current_value)
     cadence = str(plan.get("cadence") or "monthly").strip().lower()
     periods = 4 if cadence == "weekly" else 2 if cadence == "biweekly" else 1
@@ -448,9 +504,97 @@ def _position_snapshot(raw, workspace, symbol=""):
     }
 
 
+def _strip_volatile_quote_fields(model_input):
+    """缓存键用：剔除盘中高频字段，避免行情跳动刷缓存。"""
+    payload = copy.deepcopy(model_input)
+    analysis = payload.get("analysis")
+    if isinstance(analysis, dict):
+        etf = analysis.get("etf")
+        if isinstance(etf, dict):
+            for key in ("price", "change_pct", "as_of", "market_timestamp", "bid", "ask", "volume"):
+                etf.pop(key, None)
+        index = analysis.get("index")
+        if isinstance(index, dict):
+            index.pop("change_pct", None)
+    return payload
+
+
 def _cache_key(provider, model, payload):
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    stable = _strip_volatile_quote_fields(payload)
+    encoded = json.dumps(stable, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return f"{provider}:{model}:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _normalize_usage(usage):
+    if not isinstance(usage, dict):
+        return {"prompt_tokens": 0, "completion_tokens": 0}
+    prompt = usage.get("prompt_tokens")
+    if prompt is None:
+        prompt = usage.get("input_tokens")
+    completion = usage.get("completion_tokens")
+    if completion is None:
+        completion = usage.get("output_tokens")
+    try:
+        prompt = int(prompt or 0)
+    except (TypeError, ValueError):
+        prompt = 0
+    try:
+        completion = int(completion or 0)
+    except (TypeError, ValueError):
+        completion = 0
+    return {"prompt_tokens": max(0, prompt), "completion_tokens": max(0, completion)}
+
+
+def record_ai_usage(usage):
+    normalized = _normalize_usage(usage)
+    AI_USAGE_SESSION["requests"] = int(AI_USAGE_SESSION.get("requests") or 0) + 1
+    AI_USAGE_SESSION["prompt_tokens"] = int(AI_USAGE_SESSION.get("prompt_tokens") or 0) + normalized[
+        "prompt_tokens"
+    ]
+    AI_USAGE_SESSION["completion_tokens"] = int(AI_USAGE_SESSION.get("completion_tokens") or 0) + normalized[
+        "completion_tokens"
+    ]
+    return normalized
+
+
+def _portfolio_snapshot(workspace):
+    """组合上下文：actual_weight_pct 用 shares×cost 成本口径（离线可算）。"""
+    plan = workspace.get("plan") or {}
+    budget = max(0.0, _number(plan.get("amount")))
+    rows = []
+    total_cost = 0.0
+    prepared = []
+    for item in workspace.get("etfs") or []:
+        symbol = str(item.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        shares = max(0.0, _number(item.get("shares")))
+        cost = max(0.0, _number(item.get("cost")))
+        value = shares * cost if shares > 0 and cost > 0 else 0.0
+        total_cost += value
+        prepared.append(
+            {
+                "symbol": symbol,
+                "name": str(item.get("name") or "").strip(),
+                "target_weight": _number(item.get("target_weight")),
+                "cost_value": value,
+            }
+        )
+    for row in prepared:
+        pct = (row["cost_value"] / total_cost * 100.0) if total_cost > 0 else 0.0
+        rows.append(
+            {
+                "symbol": row["symbol"],
+                "name": row["name"],
+                "target_weight": round(row["target_weight"], 2),
+                "actual_weight_pct": round(pct, 2),
+            }
+        )
+    return {
+        "budget": round(budget, 2),
+        "weight_basis": "cost",
+        "positions": rows,
+    }
 
 
 def review_recommendation(request_payload, force=False):
@@ -483,6 +627,7 @@ def review_recommendation(request_payload, force=False):
         "baseline": baseline,
         "workspace": _workspace_snapshot(workspace, symbol),
         "position": position,
+        "portfolio": _portfolio_snapshot(workspace),
         "data_quality": quality,
     }
     cache_key = _cache_key(provider, model, model_input)
@@ -499,6 +644,7 @@ def review_recommendation(request_payload, force=False):
         int(settings.get("timeout_seconds", 60)),
         int(settings.get("max_output_tokens", 1800)),
     )
+    record_ai_usage(usage)
     proposal = _validate_proposal(raw, _evidence_paths(model_input))
     policy = apply_policy(baseline, proposal, quality, position, settings)
     result = {
@@ -538,6 +684,11 @@ def ai_status():
         "credentials": {
             name: credential_status(name) for name in ("deepseek", "openai")
         },
+        "usage_session": {
+            "requests": int(AI_USAGE_SESSION.get("requests") or 0),
+            "prompt_tokens": int(AI_USAGE_SESSION.get("prompt_tokens") or 0),
+            "completion_tokens": int(AI_USAGE_SESSION.get("completion_tokens") or 0),
+        },
     }
 
 
@@ -552,7 +703,7 @@ def test_connection(provider=None):
         name,
         api_key,
         model,
-        SYSTEM_PROMPT,
+        CONNECTION_PING_PROMPT,
         {
             "analysis": {},
             "baseline": {"amount": 0},
@@ -561,6 +712,7 @@ def test_connection(provider=None):
             "data_quality": {"may_increase": False},
         },
         min(30, int(settings.get("timeout_seconds", 60))),
-        600,
+        200,
     )
+    record_ai_usage(usage)
     return {"ok": True, "provider": name, "model": model, "usage": usage}
