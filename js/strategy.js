@@ -70,6 +70,18 @@ export const DEFAULT_GRADE_MULT = Object.freeze({
   E: 0,
 });
 
+/**
+ * 黄金/商品定投倍率：用技术面档位（超卖加仓、偏热减仓），
+ * E 档保留少量参与以维持对冲仓位纪律，不因「无 PE」而放弃择时。
+ */
+export const COMMODITY_GRADE_MULT = Object.freeze({
+  A: 1.5,
+  B: 1.2,
+  C: 1.0,
+  D: 0.5,
+  E: 0.25,
+});
+
 export const DEFAULT_SENTIMENT_BANDS = Object.freeze([
   { max_score: 20, mult: 1.3, label: "极端恐慌" },
   { max_score: 40, mult: 1.15, label: "偏恐慌" },
@@ -371,10 +383,55 @@ function multiplierFromGrade(grade, gradeMult) {
 }
 
 /**
+ * 黄金/商品：不用 PE，按技术面档位 + 年线乖离调节。
+ * 逻辑是「对冲仓位上的逢低多买、偏热少买」，不是股票估值。
+ */
+export function commodityDcaMultiplier({ grade, biasPct, strategyConfig } = {}) {
+  const config = normalizeStrategyConfig(strategyConfig);
+  const gradeTable = { ...COMMODITY_GRADE_MULT, ...(config.grade_mult || {}) };
+  // 商品 E 档保底 0.25，避免自定义评分表把对冲仓位打到 0
+  if (!(Number(gradeTable.E) > 0)) gradeTable.E = COMMODITY_GRADE_MULT.E;
+
+  const gradeKey = String(grade || "").toUpperCase();
+  if (Object.prototype.hasOwnProperty.call(COMMODITY_GRADE_MULT, gradeKey)) {
+    const fromGrade = multiplierFromGrade(gradeKey, gradeTable);
+    return {
+      ...fromGrade,
+      band: `商品技术面 · ${gradeKey}`,
+      hint: "黄金/商品按技术面强弱调节：超卖加仓、偏热减仓，不用股票估值",
+    };
+  }
+
+  const bias = Number(biasPct);
+  if (Number.isFinite(bias)) {
+    if (bias <= -12) {
+      return { mult: 1.5, band: "商品 · 深度回调", hint: "相对年线显著折价，加仓对冲仓位" };
+    }
+    if (bias <= -5) {
+      return { mult: 1.2, band: "商品 · 回调区", hint: "相对年线折价，适度加仓" };
+    }
+    if (bias <= 8) {
+      return { mult: 1, band: "商品 · 中性", hint: "年线附近震荡，按目标仓位参与" };
+    }
+    if (bias <= 18) {
+      return { mult: 0.5, band: "商品 · 偏强", hint: "相对年线偏贵，降低节奏" };
+    }
+    return { mult: 0.25, band: "商品 · 过热", hint: "相对年线过热，仅保留少量对冲参与" };
+  }
+
+  return {
+    mult: 1,
+    band: "商品类 · 中性兜底",
+    hint: "技术面暂缺，按目标仓位中性参与（非放弃投资逻辑）",
+  };
+}
+
+/**
  * 按策略解析单只倍率。
  * pePct: 0–1 近十年分位；spreadPct: 0–1 股债利差历史分位（越高越便宜）。
+ * biasPct: 年线乖离（%），商品类在无档位时用作技术面代理。
  * assetClass: dividend / commodity / bond / equity_growth / equity_core。
- * 无估值时多数策略退回评分档位；商品/债券类在估值型策略下定额参与。
+ * 无估值时多数策略退回评分档位；商品类走技术面逻辑，债券类定额参与。
  */
 export function dcaMultiplier({
   strategy = "valuation",
@@ -383,6 +440,7 @@ export function dcaMultiplier({
   grade,
   assetClass,
   spreadPct,
+  biasPct,
 } = {}) {
   const id = normalizeStrategyId(strategy);
   const config = normalizeStrategyConfig(strategyConfig);
@@ -395,13 +453,17 @@ export function dcaMultiplier({
     return { mult: 1, band: "再平衡", hint: "按相对目标仓位缺口分配" };
   }
 
-  // 商品/债券：无股票估值口径，估值型策略下定额参与
-  if ((cls === "commodity" || cls === "bond") && (id === "valuation" || id === "grade" || id === "custom")) {
-    const band = cls === "commodity" ? "商品类 · 定额参与" : "债券类 · 定额参与";
+  // 黄金/商品：估值策略下改走技术面择时（不是「没有投资逻辑」）
+  if (cls === "commodity" && (id === "valuation" || id === "grade" || id === "custom")) {
+    return commodityDcaMultiplier({ grade, biasPct, strategyConfig: config });
+  }
+
+  // 债券：利率/久期框架尚未接入，先定额参与目标仓位
+  if (cls === "bond" && (id === "valuation" || id === "grade" || id === "custom")) {
     return {
       mult: 1,
-      band,
-      hint: "无股票估值口径，按目标仓位定额参与，不做估值/评分择时",
+      band: "债券类 · 定额参与",
+      hint: "无股票估值口径，按目标仓位定额参与；利率择时尚未接入",
     };
   }
 
@@ -579,7 +641,7 @@ function finalizeEligible({ totalBudget, eligible, skipped, forceFullDeploy, not
  * - 周期定投：超配只软降权，不再硬顶停买；估值暂停（mult=0）仍可把份额让给其他品种
  * - 定额 / 再平衡 / 有可买的建仓：默认打满预算
  *
- * holdings: [{ symbol, name, targetWeight, actualWeight, pePct, grade, assetClass, spreadPct, analyzed }]
+ * holdings: [{ symbol, name, targetWeight, actualWeight, pePct, grade, assetClass, spreadPct, biasPct, analyzed }]
  */
 export function allocatePoolBudget({
   budget,
@@ -618,6 +680,7 @@ export function allocatePoolBudget({
       grade: item.grade,
       assetClass: item.assetClass,
       spreadPct: item.spreadPct,
+      biasPct: item.biasPct,
     });
     if (overridden) {
       return { ...grid, band: `指定 · ${grid.band}`, strategyId: id };

@@ -78,6 +78,7 @@ export function getPeriodAdvice({
     grade: holding?.grade,
     assetClass: holding?.assetClass,
     spreadPct: holding?.spreadPct,
+    biasPct: holding?.biasPct,
   });
 
   const market = holding

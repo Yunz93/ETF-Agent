@@ -768,9 +768,9 @@ function dcaAdviceHtml(advice, context) {
   if (proxy && active.pePct == null) bullets.push("ETF 口径，无 PE 分位");
   const assetClass = active.assetClass || payload.asset_class || "";
   if (assetClass === "commodity") {
-    bullets.push("商品类无估值口径，按目标仓位定额参与");
+    bullets.push("黄金/商品按技术面择时（超卖加仓、偏热减仓），不用股票估值");
   } else if (assetClass === "bond") {
-    bullets.push("债券类无估值口径，按目标仓位定额参与");
+    bullets.push("债券类无股票估值口径，按目标仓位定额参与");
   }
 
   const strategyAmount = Number(active.amount) || 0;
@@ -800,11 +800,13 @@ function dcaAdviceHtml(advice, context) {
     assetClass === "dividend" && String(active.hint || "").includes("混合");
   const peText = mixedValuation
     ? "PE+利差混合分位"
-    : assetClass === "commodity" || assetClass === "bond"
-      ? active.band || (assetClass === "commodity" ? "商品类 · 定额参与" : "债券类 · 定额参与")
-      : active.pePct != null
-        ? `PE 分位 ${(Number(active.pePct) * 100).toFixed(0)}%`
-        : active.band || "估值未知";
+    : assetClass === "commodity"
+      ? active.band || "商品技术面"
+      : assetClass === "bond"
+        ? active.band || "债券类 · 定额参与"
+        : active.pePct != null
+          ? `PE 分位 ${(Number(active.pePct) * 100).toFixed(0)}%`
+          : active.band || "估值未知";
   // 原因链止于倍率：结论语已在 headline 展示，末步不再复述「本期不投 / 建议投入 ¥x」
   const reasonSteps = [
     active.strategyName || "策略",

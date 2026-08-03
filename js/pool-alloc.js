@@ -68,6 +68,7 @@ export function buildPoolHoldingsForAllocation({ preferLive = null } = {}) {
       grade: analyzed ? cached?.score?.grade : null,
       assetClass: analyzed ? cached?.asset_class || null : null,
       spreadPct: analyzed ? cached?.spread?.percentile ?? null : null,
+      biasPct: analyzed ? cached?.technicals?.bias_pct ?? null : null,
       analyzed,
     };
   });
