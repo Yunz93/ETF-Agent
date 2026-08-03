@@ -14,11 +14,12 @@ export function escapeHtml(value) {
     .replace(/>/g, "&gt;");
 }
 
-export function money(value, currency = "CNY") {
+export function money(value, currency = "CNY", digits = 2) {
   if (value == null || Number.isNaN(Number(value))) return "—";
+  const fractionDigits = Number.isFinite(Number(digits)) ? Math.max(0, Math.min(8, Number(digits))) : 2;
   return `${CURRENCY[currency] || ""}${Number(value).toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   })}`;
 }
 
