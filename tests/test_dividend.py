@@ -141,12 +141,29 @@ class ScoringTests(unittest.TestCase):
         self.assertGreater(dividend.score_trend(-4), dividend.score_trend(0))
         self.assertGreater(dividend.score_trend(0), dividend.score_trend(8))
 
+    def test_score_weights_v2(self):
+        from stockagent.dividend_constants import SCORE_WEIGHTS
+
+        self.assertEqual(
+            SCORE_WEIGHTS,
+            {"spread": 0.40, "valuation": 0.30, "trend": 0.20, "technical": 0.10},
+        )
+        self.assertAlmostEqual(sum(SCORE_WEIGHTS.values()), 1.0)
+
     def test_combine_score_renormalizes_missing(self):
         full = dividend.combine_score({"spread": 80, "valuation": 80, "trend": 80, "technical": 80})
         partial = dividend.combine_score({"spread": 80, "valuation": None, "trend": 80, "technical": 80})
         self.assertEqual(full, 80.0)
         self.assertEqual(partial, 80.0)
         self.assertIsNone(dividend.combine_score({"spread": None, "valuation": None, "trend": None, "technical": None}))
+        # 权重倾斜：利差高分应拉动综合分高于估值高分（同其余分项）
+        mixed_spread = dividend.combine_score(
+            {"spread": 100, "valuation": 0, "trend": 50, "technical": 50}
+        )
+        mixed_val = dividend.combine_score(
+            {"spread": 0, "valuation": 100, "trend": 50, "technical": 50}
+        )
+        self.assertGreater(mixed_spread, mixed_val)
 
     def test_grade_bands(self):
         self.assertEqual(dividend.grade_for_score(88)["grade"], "A")

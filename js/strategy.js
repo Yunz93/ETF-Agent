@@ -534,11 +534,25 @@ export function dcaMultiplier({
     return multiplierFromGrade(grade, DEFAULT_GRADE_MULT);
   }
 
+  // 成长类：定额 + 极端高估保护（不再使用 GROWTH_PE_BANDS 网格）
   if (cls === "equity_growth") {
-    return (
-      multiplierFromPeBands(pePct, GROWTH_PE_BANDS) ||
-      multiplierFromGrade(grade, DEFAULT_GRADE_MULT)
-    );
+    const p = Number(pePct);
+    if (Number.isFinite(p)) {
+      const pct01 = p <= 1 ? p : p / 100;
+      if (pct01 >= 0.95) {
+        const pctLabel = Math.round(pct01 * 100);
+        return {
+          mult: 0.5,
+          band: "极端高估保护",
+          hint: `PE 近十年分位 ${pctLabel}%，极端高估保护降至 0.5×`,
+        };
+      }
+    }
+    return {
+      mult: 1,
+      band: "成长定额",
+      hint: "成长类不做估值择时，按目标仓位定额参与",
+    };
   }
 
   return (
@@ -761,7 +775,8 @@ export function allocatePoolBudget({
         ? sentimentByMarket[market]
         : null;
     const sent = sentimentMultiplier(snapshot, sentCfg);
-    const mult = Math.round(grid.mult * sent.mult * 1000) / 1000;
+    // 组合倍率硬顶 1.8×（三位小数四舍五入）
+    const mult = Math.round(Math.min(1.8, grid.mult * sent.mult) * 1000) / 1000;
     const hint =
       sent.mult !== 1
         ? `${grid.hint || "按策略参与"}；情绪 ${sent.band} ×${sent.mult}`

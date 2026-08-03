@@ -5,10 +5,10 @@ BACKTEST_SCORE_BAND = 5.0
 TEN_YEARS_TRADING_DAYS = 2500
 
 SCORE_WEIGHTS = {
-    "spread": 0.35,
-    "valuation": 0.20,
-    "trend": 0.25,
-    "technical": 0.20,
+    "spread": 0.40,
+    "valuation": 0.30,
+    "trend": 0.20,
+    "technical": 0.10,
 }
 
 # 商品/债券等无股票估值口径：诊断评分只保留趋势与短线技术。

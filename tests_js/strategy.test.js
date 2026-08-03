@@ -252,19 +252,46 @@ test("dividend valuation mixes PE with spread percentile", () => {
   assert.match(spreadOnly.hint, /混合/);
 });
 
-test("equity_growth uses GROWTH_PE_BANDS and keeps 0.25x above 95%", () => {
-  assert.equal(
-    dcaMultiplier({ strategy: "valuation", assetClass: "equity_growth", pePct: 0.2 }).mult,
-    1.3,
-  );
-  assert.equal(
-    dcaMultiplier({ strategy: "valuation", assetClass: "equity_growth", pePct: 0.96 }).mult,
-    0.25,
-  );
+test("equity_growth uses flat 1x with extreme 0.5x protection at ≥95%", () => {
+  const cheap = dcaMultiplier({ strategy: "valuation", assetClass: "equity_growth", pePct: 0.2 });
+  assert.equal(cheap.mult, 1);
+  assert.equal(cheap.band, "成长定额");
+  assert.match(cheap.hint, /不做估值择时/);
+
+  const extreme = dcaMultiplier({ strategy: "valuation", assetClass: "equity_growth", pePct: 0.96 });
+  assert.equal(extreme.mult, 0.5);
+  assert.equal(extreme.band, "极端高估保护");
+  assert.match(extreme.hint, /96%/);
+
+  const missing = dcaMultiplier({ strategy: "valuation", assetClass: "equity_growth", pePct: null });
+  assert.equal(missing.mult, 1);
+  assert.equal(missing.band, "成长定额");
+
+  // 宽基仍走 DEFAULT_PE_BANDS，高估归零
   assert.equal(
     dcaMultiplier({ strategy: "valuation", assetClass: "equity_core", pePct: 0.96 }).mult,
     0,
   );
+});
+
+test("withSentiment caps combined multiplier at 1.8x", () => {
+  const result = allocatePoolBudget({
+    budget: 2000,
+    strategy: "valuation",
+    strategyConfig: {
+      sentiment: { enabled: true, extremes_only: false },
+      use_rebalance: false,
+    },
+    sentimentByMarket: { A: { score: 10, zone: "panic", degraded: false } },
+    holdings: [
+      // pePct 0.1 → base 1.5×；恐慌 1.3× → 1.95 封顶为 1.8
+      { symbol: "510300", targetWeight: 100, actualWeight: 50, pePct: 0.1, assetClass: "equity_core" },
+    ],
+  });
+  const row = allocationForSymbol(result, "510300");
+  assert.equal(row.baseMult, 1.5);
+  assert.equal(row.sentimentMult, 1.3);
+  assert.equal(row.mult, 1.8);
 });
 
 test("strategyOverrides apply per-symbol multipliers", () => {
