@@ -254,17 +254,22 @@ def compute_score_series(index_rows, spread_series, framework="valuation"):
     return scores
 
 def backtest_forward_returns(index_rows, scores, target_score, horizon=BACKTEST_HORIZON_DAYS, band=BACKTEST_SCORE_BAND):
-    """历史上评分落在 target±band 区间的日子，往后 horizon 个交易日的收益分布。"""
+    """历史上评分落在 target±band 区间的非重叠样本：相邻采样点至少间隔 horizon 个交易日。"""
     closes = [row["close"] for row in index_rows]
     n = len(closes)
     samples = []
     if target_score is None:
         return {"horizon_days": horizon, "band": band, "samples": 0}
+    # index_rows 已按日期升序；命中后跳过 horizon，避免重叠前向窗口
+    last_taken = -horizon
     for i in range(n - horizon):
         score = scores[i]
         if score is None or abs(score - target_score) > band:
             continue
+        if i - last_taken < horizon:
+            continue
         samples.append(closes[i + horizon] / closes[i] - 1)
+        last_taken = i
     if not samples:
         return {"horizon_days": horizon, "band": band, "samples": 0}
     avg = sum(samples) / len(samples)
@@ -462,7 +467,7 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
         "percentile": round(spread_percentile, 4) if spread_percentile is not None else None,
         "label": percentile_label(spread_percentile),
         "bond_yield": round(bond_yield, 2) if bond_yield is not None else None,
-        "note": "历史分位按「当前股息率×当前PE」回推派息水平近似计算",
+        "note": "利差历史分位按当前派息水平回推近似，含轻微前视偏差",
     }
     bond_block = {
         "yield10y": round(bond_yield, 2) if bond_yield is not None else None,

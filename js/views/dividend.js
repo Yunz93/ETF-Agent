@@ -163,11 +163,15 @@ function scoreCardHtml() {
     })
     .join("");
   const backtestLine = backtest.samples
-    ? `同评分 ±${backtest.band} · ${backtest.samples} 日样本 · ${backtest.horizon_days} 日均 <strong>${fmtSigned(backtest.avg_return_pct, 1, "%")}</strong> · 胜率 <strong>${fmt(backtest.win_rate_pct, 0, "%")}</strong>（${escapeHtml(backtest.label || "")} · ${fmtSigned(backtest.worst_pct, 1, "%")} ~ ${fmtSigned(backtest.best_pct, 1, "%")}）`
-    : "历史同评分样本不足，暂无回测参考。";
+    ? `同评分 ±${backtest.band} · ${backtest.samples} 独立样本 · ${backtest.horizon_days} 日均 <strong>${fmtSigned(backtest.avg_return_pct, 1, "%")}</strong> · 胜率 <strong>${fmt(backtest.win_rate_pct, 0, "%")}</strong>（${escapeHtml(backtest.label || "")} · ${fmtSigned(backtest.worst_pct, 1, "%")} ~ ${fmtSigned(backtest.best_pct, 1, "%")}）`
+    : "历史同评分独立样本不足，暂无回测参考。";
   const kicker = technicalFramework
     ? `${grade} 档 · 技术面诊断（无估值权重）`
     : `${grade} 档 · 诊断辅助`;
+  const spreadNote = (currentPayload()?.spread?.note || "").trim();
+  const caveat = spreadNote
+    ? `<p class="muted dividend-backtest-caveat">${escapeHtml(spreadNote)}</p>`
+    : `<p class="muted dividend-backtest-caveat">利差历史分位按当前派息水平回推近似，含轻微前视偏差</p>`;
   return `
     <section class="panel-block dividend-score-card dividend-score-card-secondary ${tone}" aria-label="综合评分" title="${escapeAttr(GRADE_GUIDE)}">
       <div class="panel-heading">
@@ -184,6 +188,7 @@ function scoreCardHtml() {
       </div>
       <div class="dividend-components">${components}</div>
       <p class="muted dividend-backtest-line">${backtestLine}</p>
+      ${caveat}
     </section>
   `;
 }

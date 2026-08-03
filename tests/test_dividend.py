@@ -200,7 +200,7 @@ class SpreadSeriesTests(unittest.TestCase):
 
 class BacktestTests(unittest.TestCase):
     def test_forward_returns_and_win_rate(self):
-        # 收盘价单调 +1%/天 → 任意起点 60 天收益为正
+        # 收盘价单调 +1%/天 → 任意起点 60 天收益为正；非重叠采样
         rows = []
         close = 100.0
         for i in range(400):
@@ -208,9 +208,17 @@ class BacktestTests(unittest.TestCase):
             close *= 1.01
         scores = [70.0] * 400
         result = dividend.backtest_forward_returns(rows, scores, 70.0, horizon=60, band=5)
-        self.assertEqual(result["samples"], 340)
+        # 0,60,120,180,240,300 → 6 个独立样本（相邻至少间隔 horizon）
+        self.assertEqual(result["samples"], 6)
         self.assertEqual(result["win_rate_pct"], 100.0)
         self.assertGreater(result["avg_return_pct"], 0)
+
+    def test_non_overlapping_samples_respect_horizon(self):
+        rows = [{"date": str(i), "close": 100 + i, "high": 100, "low": 100} for i in range(200)]
+        scores = [50.0] * 200
+        result = dividend.backtest_forward_returns(rows, scores, 50.0, horizon=60, band=5)
+        # 0,60,120 → 最多 3 个（200-60=140 可起点）
+        self.assertEqual(result["samples"], 3)
 
     def test_no_samples_outside_band(self):
         rows = [{"date": str(i), "close": 100.0, "high": 100.0, "low": 100.0} for i in range(200)]
@@ -355,6 +363,26 @@ class AnalyzeTests(unittest.TestCase):
         self.assertIsNotNone(payload["valuation"]["pe_percentile_10y"])
         self.assertIsNotNone(payload["score"]["total"])
         self.assertIn("今日盘面：", payload["note_text"])
+        self.assertIn("前视偏差", payload["spread"]["note"])
+
+    def test_a500_csindex_pe_rows_yield_percentile(self):
+        """563360 danjuan_code 为空时，csindex 风格含 pe 的 index_rows 仍能算近十年分位。"""
+        settings = {
+            "index_code": "000510",
+            "index_name": "中证A500",
+            "index_full_name": "中证A500",
+            "danjuan_code": "",
+            "etf_symbol": "563360",
+            "etf_name": "A500ETF华泰柏瑞",
+            "history_source": "csindex",
+        }
+        index_rows = synthetic_index_rows(days=900)
+        self.assertTrue(all(row.get("pe") is not None for row in index_rows[:10]))
+        payload = dividend.analyze_dividend_data(index_rows, {}, [], None, settings)
+        self.assertIsNotNone(payload["valuation"]["pe"])
+        self.assertIsNotNone(payload["valuation"]["pe_percentile_10y"])
+        self.assertGreaterEqual(payload["valuation"]["pe_percentile_10y"], 0)
+        self.assertLessEqual(payload["valuation"]["pe_percentile_10y"], 1)
 
 
 class AnalysisRoutingTests(unittest.TestCase):

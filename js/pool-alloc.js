@@ -82,6 +82,44 @@ function dataStatusBadge(analyzed) {
     : `<span class="pool-alloc-badge is-neutral" title="暂无分析，按中性倍率参与分配">中性兜底</span>`;
 }
 
+/**
+ * 同指数多 ETF：对费率较高者标注提示（无 annual_fee_pct 数据则不显示）。
+ * @returns {Record<string, string>}
+ */
+export function sameIndexHigherFeeHints({
+  symbols = [],
+  analysisRegistry = {},
+  products = {},
+} = {}) {
+  const byIndex = new Map();
+  for (const raw of symbols) {
+    const symbol = String(raw || "").trim();
+    if (!symbol) continue;
+    const indexCode = String(analysisRegistry[symbol]?.index_code || "").trim();
+    if (!indexCode) continue;
+    if (!byIndex.has(indexCode)) byIndex.set(indexCode, []);
+    byIndex.get(indexCode).push(symbol);
+  }
+  const hints = {};
+  for (const group of byIndex.values()) {
+    if (group.length < 2) continue;
+    const withFee = group
+      .map((symbol) => {
+        const fee = Number(products[symbol]?.annual_fee_pct);
+        return Number.isFinite(fee) && fee >= 0 ? { symbol, fee } : null;
+      })
+      .filter(Boolean);
+    if (withFee.length < 2) continue;
+    const minFee = Math.min(...withFee.map((row) => row.fee));
+    for (const row of withFee) {
+      if (row.fee > minFee + 1e-12) {
+        hints[row.symbol] = "同指数有更低费率品种";
+      }
+    }
+  }
+  return hints;
+}
+
 function progressNoteHtml(holdings) {
   const total = holdings.length;
   const analyzed = holdings.filter((item) => item.analyzed).length;
@@ -139,6 +177,11 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
   const strategyName = strategyLabel(plan.strategy);
   const preliminary = analysisPrefetchIsPreliminary();
   const analyzedMap = Object.fromEntries(holdings.map((item) => [item.symbol, item.analyzed]));
+  const feeHints = sameIndexHigherFeeHints({
+    symbols: holdings.map((item) => item.symbol),
+    analysisRegistry: analysisRegistryFromConfig(),
+    products: appConfig?.etf?.products || {},
+  });
 
   if (!(execution.budget > 0) || !holdings.length) {
     return `
@@ -208,9 +251,12 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
             const active = highlightSymbol && row.symbol === highlightSymbol ? " is-current" : "";
             const analyzed = Boolean(analyzedMap[row.symbol]);
             const amountClass = preliminary ? "num is-preliminary" : "num";
+            const feeHint = feeHints[row.symbol]
+              ? `<em class="pool-alloc-fee-hint muted">${escapeHtml(feeHints[row.symbol])}</em>`
+              : "";
             const nameCell = clickable
-              ? `<button class="link-button pool-alloc-name" type="button" data-analyze="${escapeAttr(row.symbol)}">${escapeHtml(row.name)}${dataStatusBadge(analyzed)}</button>`
-              : `<span>${escapeHtml(row.name)}${dataStatusBadge(analyzed)}</span>`;
+              ? `<button class="link-button pool-alloc-name" type="button" data-analyze="${escapeAttr(row.symbol)}">${escapeHtml(row.name)}${dataStatusBadge(analyzed)}${feeHint}</button>`
+              : `<span>${escapeHtml(row.name)}${dataStatusBadge(analyzed)}${feeHint}</span>`;
             return `<div class="dca-alloc-row${active}">${nameCell}<span>${escapeHtml(row.band || "—")}</span><span class="${amountClass}">${row.amount > 0 ? money(row.amount) : "不投"}</span></div>`;
           })
           .join("")}
