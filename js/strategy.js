@@ -382,47 +382,88 @@ function multiplierFromGrade(grade, gradeMult) {
   };
 }
 
+/** 宏观快照 → 叠加倍率；缺失/降级时中性 1×。 */
+export function goldMacroMultiplier(snapshot) {
+  if (!snapshot || typeof snapshot !== "object" || snapshot.degraded) {
+    return { mult: 1, zone: "unknown", band: "宏观中性", hint: "" };
+  }
+  const mult = Number(snapshot.mult);
+  if (!Number.isFinite(mult) || mult <= 0) {
+    return { mult: 1, zone: "unknown", band: "宏观中性", hint: "" };
+  }
+  return {
+    mult: Math.round(mult * 1000) / 1000,
+    zone: snapshot.zone || "neutral",
+    band: snapshot.band || "宏观",
+    hint: snapshot.hint || "",
+    score: snapshot.score ?? null,
+  };
+}
+
+function clampCommodityMult(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.round(Math.max(0.2, Math.min(1.8, n)) * 1000) / 1000;
+}
+
 /**
- * 黄金/商品：不用 PE，按技术面档位 + 年线乖离调节。
- * 逻辑是「对冲仓位上的逢低多买、偏热少买」，不是股票估值。
+ * 黄金/商品：技术面档位/年线乖离 × 宏观（美债+美元）软叠加。
+ * 逻辑是「对冲仓位逢低多买、偏热少买」，再按利率/美元环境微调。
  */
-export function commodityDcaMultiplier({ grade, biasPct, strategyConfig } = {}) {
+export function commodityDcaMultiplier({ grade, biasPct, goldMacro, strategyConfig } = {}) {
   const config = normalizeStrategyConfig(strategyConfig);
   const gradeTable = { ...COMMODITY_GRADE_MULT, ...(config.grade_mult || {}) };
   // 商品 E 档保底 0.25，避免自定义评分表把对冲仓位打到 0
   if (!(Number(gradeTable.E) > 0)) gradeTable.E = COMMODITY_GRADE_MULT.E;
 
+  let tech;
   const gradeKey = String(grade || "").toUpperCase();
   if (Object.prototype.hasOwnProperty.call(COMMODITY_GRADE_MULT, gradeKey)) {
     const fromGrade = multiplierFromGrade(gradeKey, gradeTable);
-    return {
+    tech = {
       ...fromGrade,
       band: `商品技术面 · ${gradeKey}`,
       hint: "黄金/商品按技术面强弱调节：超卖加仓、偏热减仓，不用股票估值",
     };
+  } else {
+    const bias = Number(biasPct);
+    if (Number.isFinite(bias)) {
+      if (bias <= -12) {
+        tech = { mult: 1.5, band: "商品 · 深度回调", hint: "相对年线显著折价，加仓对冲仓位" };
+      } else if (bias <= -5) {
+        tech = { mult: 1.2, band: "商品 · 回调区", hint: "相对年线折价，适度加仓" };
+      } else if (bias <= 8) {
+        tech = { mult: 1, band: "商品 · 中性", hint: "年线附近震荡，按目标仓位参与" };
+      } else if (bias <= 18) {
+        tech = { mult: 0.5, band: "商品 · 偏强", hint: "相对年线偏贵，降低节奏" };
+      } else {
+        tech = { mult: 0.25, band: "商品 · 过热", hint: "相对年线过热，仅保留少量对冲参与" };
+      }
+    } else {
+      tech = {
+        mult: 1,
+        band: "商品类 · 中性兜底",
+        hint: "技术面暂缺，按目标仓位中性参与（非放弃投资逻辑）",
+      };
+    }
   }
 
-  const bias = Number(biasPct);
-  if (Number.isFinite(bias)) {
-    if (bias <= -12) {
-      return { mult: 1.5, band: "商品 · 深度回调", hint: "相对年线显著折价，加仓对冲仓位" };
-    }
-    if (bias <= -5) {
-      return { mult: 1.2, band: "商品 · 回调区", hint: "相对年线折价，适度加仓" };
-    }
-    if (bias <= 8) {
-      return { mult: 1, band: "商品 · 中性", hint: "年线附近震荡，按目标仓位参与" };
-    }
-    if (bias <= 18) {
-      return { mult: 0.5, band: "商品 · 偏强", hint: "相对年线偏贵，降低节奏" };
-    }
-    return { mult: 0.25, band: "商品 · 过热", hint: "相对年线过热，仅保留少量对冲参与" };
-  }
-
+  const macro = goldMacroMultiplier(goldMacro);
+  const mult = clampCommodityMult(tech.mult * macro.mult);
+  const band =
+    macro.mult !== 1 && tech.band ? `${tech.band} · ${macro.band}` : tech.band;
+  const hint =
+    macro.mult !== 1
+      ? `${tech.hint}；${macro.hint || macro.band} ×${macro.mult}`
+      : tech.hint;
   return {
-    mult: 1,
-    band: "商品类 · 中性兜底",
-    hint: "技术面暂缺，按目标仓位中性参与（非放弃投资逻辑）",
+    ...tech,
+    mult,
+    band,
+    hint,
+    techMult: tech.mult,
+    macroMult: macro.mult,
+    goldMacro: macro,
   };
 }
 
@@ -441,6 +482,7 @@ export function dcaMultiplier({
   assetClass,
   spreadPct,
   biasPct,
+  goldMacro,
 } = {}) {
   const id = normalizeStrategyId(strategy);
   const config = normalizeStrategyConfig(strategyConfig);
@@ -453,9 +495,9 @@ export function dcaMultiplier({
     return { mult: 1, band: "再平衡", hint: "按相对目标仓位缺口分配" };
   }
 
-  // 黄金/商品：估值策略下改走技术面择时（不是「没有投资逻辑」）
+  // 黄金/商品：估值策略下改走技术面择时 + 宏观软叠加
   if (cls === "commodity" && (id === "valuation" || id === "grade" || id === "custom")) {
-    return commodityDcaMultiplier({ grade, biasPct, strategyConfig: config });
+    return commodityDcaMultiplier({ grade, biasPct, goldMacro, strategyConfig: config });
   }
 
   // 债券：利率/久期框架尚未接入，先定额参与目标仓位
@@ -652,6 +694,7 @@ export function allocatePoolBudget({
   strategyOverrides,
   sentimentByMarket = null,
   analysisRegistry = null,
+  goldMacro = null,
 } = {}) {
   const totalBudget = Number(budget);
   const strategyId = normalizeStrategyId(strategy);
@@ -681,6 +724,7 @@ export function allocatePoolBudget({
       assetClass: item.assetClass,
       spreadPct: item.spreadPct,
       biasPct: item.biasPct,
+      goldMacro: item.goldMacro || goldMacro,
     });
     if (overridden) {
       return { ...grid, band: `指定 · ${grid.band}`, strategyId: id };

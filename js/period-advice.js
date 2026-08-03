@@ -23,6 +23,7 @@ import {
   analysisRegistryFromConfig,
   sentimentByMarketFromState,
 } from "./market-sentiment.js";
+import { goldMacroFromState } from "./gold-macro.js";
 
 export const STANCE = Object.freeze({
   NEED_BUDGET: "need_budget",
@@ -46,7 +47,7 @@ function resolveSymbolStrategy(plan, symbol) {
 }
 
 /**
- * @param {{ symbol?: string, preferLive?: object|null, plan?: object, holdings?: array, sentimentByMarket?: object|null }} [opts]
+ * @param {{ symbol?: string, preferLive?: object|null, plan?: object, holdings?: array, sentimentByMarket?: object|null, goldMacro?: object|null }} [opts]
  */
 export function getPeriodAdvice({
   symbol = "",
@@ -54,6 +55,7 @@ export function getPeriodAdvice({
   plan = null,
   holdings = null,
   sentimentByMarket = null,
+  goldMacro = null,
 } = {}) {
   const activePlan = plan || state.plan || {};
   const { strategy, overridden } = resolveSymbolStrategy(activePlan, symbol);
@@ -69,6 +71,7 @@ export function getPeriodAdvice({
   const execution = planExecutionContext({ plan: activePlan, holdings: poolHoldings });
   const budget = execution.budget;
   const markets = sentimentByMarket || sentimentByMarketFromState();
+  const macro = goldMacro || holding?.goldMacro || goldMacroFromState();
   const registry = analysisRegistryFromConfig();
 
   const grid = dcaMultiplier({
@@ -79,6 +82,7 @@ export function getPeriodAdvice({
     assetClass: holding?.assetClass,
     spreadPct: holding?.spreadPct,
     biasPct: holding?.biasPct,
+    goldMacro: macro,
   });
 
   const market = holding
@@ -105,6 +109,7 @@ export function getPeriodAdvice({
     preferTargetGap: execution.phase === "initial",
     sentimentByMarket: markets,
     analysisRegistry: registry,
+    goldMacro: macro,
   });
   const mine = symbol ? allocationForSymbol(pool, symbol) : null;
   const amount = mine?.amount ?? 0;
@@ -140,6 +145,22 @@ export function getPeriodAdvice({
   }
 
   const bullets = [`定投倍率 ${effectiveMult}×`];
+  if (holding?.assetClass === "commodity" || grid.macroMult != null) {
+    const macroMult = grid.macroMult;
+    const macroBand = grid.goldMacro?.band || macro?.band;
+    const macroScore = grid.goldMacro?.score ?? macro?.score;
+    if (macroMult != null && macroMult !== 1) {
+      bullets.push(
+        `黄金宏观 ${macroBand || "调节"}` +
+          (macroScore != null ? `（${macroScore}）` : "") +
+          ` · ×${macroMult}`,
+      );
+    } else if (holding?.assetClass === "commodity" && macro && !macro.degraded && macroScore != null) {
+      bullets.push(`黄金宏观 ${macroBand || "中性"}（${macroScore}）· 不调节`);
+    } else if (holding?.assetClass === "commodity" && macro?.degraded) {
+      bullets.push("黄金宏观暂不可用 · 按中性");
+    }
+  }
   if (sentAllowed && market) {
     if (sent.score != null && sent.mult !== 1) {
       bullets.push(`市场情绪 ${sent.band}（${market} ${sent.score}）· ×${sent.mult}`);
@@ -194,7 +215,10 @@ export function getPeriodAdvice({
     reason,
     amount,
     mult: effectiveMult,
-    baseMult: grid.mult,
+    baseMult: grid.techMult ?? grid.baseMult ?? grid.mult,
+    techMult: grid.techMult ?? null,
+    macroMult: grid.macroMult ?? null,
+    goldMacro: grid.goldMacro || (macro && !macro.degraded ? macro : null),
     sentimentMult: sentAllowed ? sent.mult : 1,
     sentiment: sentAllowed
       ? { market, score: sent.score, zone: sent.zone, band: sent.band, hint: sent.hint }

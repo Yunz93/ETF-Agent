@@ -19,6 +19,7 @@ from .dividend_sources import (
     fetch_treasury_yield_history,
     fill_missing_pe,
 )
+from .gold_macro import get_gold_macro
 from .symbols import as_of
 
 DIVIDEND_CACHE = {}
@@ -174,6 +175,18 @@ def get_dividend_dashboard(refresh=False, symbol=None):
                     f"该指数日线来自{index_source}，无每日 PE；"
                     "历史 PE 按当前估值随价格回推（盈利恒定近似），利差分位与回测仅供参考"
                 )
+    if str(asset_class or "").strip().lower() == "commodity":
+        try:
+            payload["gold_macro"] = get_gold_macro(refresh=refresh)
+        except Exception as exc:
+            payload["gold_macro"] = {
+                "degraded": True,
+                "mult": 1.0,
+                "band": "宏观暂缺",
+                "hint": f"黄金宏观层不可用：{exc}",
+                "score": None,
+            }
+
     if errors:
         payload["errors"] = errors
     if not_applicable:
@@ -198,6 +211,14 @@ def get_dividend_dashboard(refresh=False, symbol=None):
             "role": "基金规模、管理费与托管费",
         },
     ]
+    if payload.get("gold_macro"):
+        payload["sources"].append(
+            {
+                "name": "东方财富（美债/美元指数）",
+                "url": "https://data.eastmoney.com/cjsj/zmgzsyl.html",
+                "role": "黄金宏观层：美债10年收益率 + 美元指数",
+            }
+        )
 
     ttl = int(settings.get("cache_seconds", 1800))
     DIVIDEND_CACHE[cache_key] = {"payload": payload, "expires": now + ttl}

@@ -768,7 +768,15 @@ function dcaAdviceHtml(advice, context) {
   if (proxy && active.pePct == null) bullets.push("ETF 口径，无 PE 分位");
   const assetClass = active.assetClass || payload.asset_class || "";
   if (assetClass === "commodity") {
-    bullets.push("黄金/商品按技术面择时（超卖加仓、偏热减仓），不用股票估值");
+    bullets.push("黄金/商品：技术面择时 + 美债/美元宏观软叠加，不用股票估值");
+    const macro = active.goldMacro || payload.gold_macro;
+    if (macro && !macro.degraded && macro.score != null) {
+      const us = macro.us10y?.value != null ? `美债 ${macro.us10y.value}%` : "";
+      const usd =
+        macro.usd_index?.value != null ? `美元指数 ${macro.usd_index.value}` : "";
+      const parts = [macro.band || "宏观", us, usd].filter(Boolean);
+      bullets.push(`宏观 ${parts.join(" · ")} · ×${macro.mult ?? 1}`);
+    }
   } else if (assetClass === "bond") {
     bullets.push("债券类无股票估值口径，按目标仓位定额参与");
   }

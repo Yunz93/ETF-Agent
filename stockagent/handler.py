@@ -14,6 +14,7 @@ from .workspace_store import get_workspace, save_workspace
 from .dividend import analysis_support_map, get_dividend_dashboard
 from .quotes import get_etf_quotes, get_price_history, get_single_quote
 from .sentiment import get_market_sentiment
+from .gold_macro import get_gold_macro
 from .health import get_data_health, get_runtime_info
 from .ai_providers import AIProviderError
 from .ai_service import ai_status, review_recommendation, test_connection
@@ -76,6 +77,10 @@ class Handler(BaseHTTPRequestHandler):
                 markets = query.get("markets", ["A,HK,US"])[0]
                 refresh = query.get("refresh", ["0"])[0] in ("1", "true")
                 self.send_json(get_market_sentiment(markets=markets, refresh=refresh))
+                return
+            if parsed.path == "/api/market/gold-macro":
+                refresh = query.get("refresh", ["0"])[0] in ("1", "true")
+                self.send_json(get_gold_macro(refresh=refresh))
                 return
             if parsed.path == "/api/workspace":
                 self.send_json(get_workspace())

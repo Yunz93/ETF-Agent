@@ -6,6 +6,7 @@ import {
   allocationForSymbol,
   commodityDcaMultiplier,
   dcaMultiplier,
+  goldMacroMultiplier,
   inferSentimentMarket,
   normalizeStrategyConfig,
   rebalanceHint,
@@ -204,6 +205,25 @@ test("commodity valuation uses technical grade, not equity PE pause", () => {
   const byBias = commodityDcaMultiplier({ biasPct: -14 });
   assert.equal(byBias.mult, 1.5);
   assert.match(byBias.band, /深度回调/);
+});
+
+test("commodity multiplies technical grade by gold macro overlay", () => {
+  assert.equal(goldMacroMultiplier({ degraded: true, mult: 1.2 }).mult, 1);
+  const boosted = commodityDcaMultiplier({
+    grade: "C",
+    goldMacro: { degraded: false, mult: 1.2, band: "宏观友好", score: 80 },
+  });
+  assert.equal(boosted.techMult, 1);
+  assert.equal(boosted.macroMult, 1.2);
+  assert.equal(boosted.mult, 1.2);
+  assert.match(boosted.band, /宏观友好/);
+
+  const cooled = commodityDcaMultiplier({
+    grade: "A",
+    goldMacro: { degraded: false, mult: 0.7, band: "宏观逆风", score: 20 },
+  });
+  assert.equal(cooled.techMult, 1.5);
+  assert.equal(cooled.mult, 1.05);
 });
 
 test("dividend valuation mixes PE with spread percentile", () => {

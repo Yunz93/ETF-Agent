@@ -204,6 +204,12 @@ def _analysis_snapshot(payload):
             "components": (payload.get("score") or {}).get("components"),
         },
         "not_applicable": payload.get("not_applicable") or {},
+        "gold_macro": {
+            key: (payload.get("gold_macro") or {}).get(key)
+            for key in ("score", "mult", "zone", "band", "hint", "degraded", "us10y", "usd_index")
+        }
+        if payload.get("gold_macro")
+        else None,
         "backtest": {
             key: (payload.get("backtest") or {}).get(key)
             for key in (
