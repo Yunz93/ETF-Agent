@@ -401,7 +401,7 @@ export function dcaMultiplier({
     return {
       mult: 1,
       band,
-      hint: "无股票估值口径,按目标仓位定额参与,不做估值/评分择时",
+      hint: "无股票估值口径，按目标仓位定额参与，不做估值/评分择时",
     };
   }
 

@@ -11,10 +11,12 @@ from .dividend_constants import (
     DISCLAIMER,
     GRADE_BANDS,
     SCORE_WEIGHTS,
+    TECH_GRADE_BANDS,
+    TECH_SCORE_WEIGHTS,
     TEN_YEARS_TRADING_DAYS,
     WEEKDAY_ZH,
 )
-from .dividend_registry import dividend_settings
+from .dividend_registry import dividend_settings, valuation_framework_applicable
 from .indicators import RollingPercentile, bias_pct, bollinger, kdj, percentile_rank, rsi, sma, sma_series
 from .symbols import as_of
 
@@ -85,11 +87,12 @@ def score_technical(rsi_value, kdj_values):
         return None
     return sum(parts) / len(parts)
 
-def combine_score(components):
+def combine_score(components, weights=None):
     """按权重合成综合评分；缺失分项按剩余权重归一。"""
+    active_weights = weights or SCORE_WEIGHTS
     total = 0.0
     weight_sum = 0.0
-    for key, weight in SCORE_WEIGHTS.items():
+    for key, weight in active_weights.items():
         value = components.get(key)
         if value is None:
             continue
@@ -99,13 +102,14 @@ def combine_score(components):
         return None
     return round(total / weight_sum, 1)
 
-def grade_for_score(score):
+def grade_for_score(score, framework="valuation"):
     if score is None:
         return {"grade": None, "action": "数据不足"}
-    for threshold, grade, action in GRADE_BANDS:
+    bands = TECH_GRADE_BANDS if framework == "technical" else GRADE_BANDS
+    for threshold, grade, action in bands:
         if score >= threshold:
             return {"grade": grade, "action": action}
-    return {"grade": "E", "action": GRADE_BANDS[-1][2]}
+    return {"grade": "E", "action": bands[-1][2]}
 
 def kdj_state_label(kdj_values):
     if not kdj_values:
@@ -168,13 +172,15 @@ def build_spread_series(index_rows, dividend_yield, current_pe, treasury_rows):
         series.append(payout / pe - last_yield)
     return series
 
-def compute_score_series(index_rows, spread_series):
+def compute_score_series(index_rows, spread_series, framework="valuation"):
     """逐日复算综合评分（分位只用截至当日的历史），用于回测。"""
     closes = [row["close"] for row in index_rows]
     highs = [row["high"] for row in index_rows]
     lows = [row["low"] for row in index_rows]
     pes = [row.get("pe") for row in index_rows]
     n = len(closes)
+    technical_only = framework == "technical"
+    weights = TECH_SCORE_WEIGHTS if technical_only else SCORE_WEIGHTS
 
     ma250 = sma_series(closes, 250)
 
@@ -226,15 +232,25 @@ def compute_score_series(index_rows, spread_series):
         if ma250[i]:
             bias = (closes[i] / ma250[i] - 1) * 100
         components = {
-            "spread": score_spread(spread, spread_pct) if spread is not None else None,
-            "valuation": score_valuation(pe_pct),
+            "spread": None
+            if technical_only
+            else (score_spread(spread, spread_pct) if spread is not None else None),
+            "valuation": None if technical_only else score_valuation(pe_pct),
             "trend": score_trend(bias),
-            "technical": score_technical(rsi_values[i], {"k": k_values[i]} if k_values[i] is not None else None),
+            "technical": score_technical(
+                rsi_values[i],
+                {"k": k_values[i]} if k_values[i] is not None else None,
+            ),
         }
-        # 至少要有趋势 + 一个估值维度才算有效评分
-        if components["trend"] is None or (components["spread"] is None and components["valuation"] is None):
+        if technical_only:
+            if components["trend"] is None and components["technical"] is None:
+                continue
+        elif components["trend"] is None or (
+            components["spread"] is None and components["valuation"] is None
+        ):
+            # 估值框架：至少要有趋势 + 一个估值维度
             continue
-        scores[i] = combine_score(components)
+        scores[i] = combine_score(components, weights=weights)
     return scores
 
 def backtest_forward_returns(index_rows, scores, target_score, horizon=BACKTEST_HORIZON_DAYS, band=BACKTEST_SCORE_BAND):
@@ -455,14 +471,25 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
     }
 
     # ---- 综合评分 ----
+    asset_class = settings.get("asset_class") or "equity_core"
+    framework = "technical" if not valuation_framework_applicable(asset_class) else "valuation"
+    score_weights = TECH_SCORE_WEIGHTS if framework == "technical" else SCORE_WEIGHTS
     components = {
-        "spread": score_spread(spread_value, spread_percentile) if spread_value is not None else None,
-        "valuation": score_valuation(pe_percentile, valuation.get("pb")) if pe_percentile is not None else None,
+        "spread": None
+        if framework == "technical"
+        else (score_spread(spread_value, spread_percentile) if spread_value is not None else None),
+        "valuation": None
+        if framework == "technical"
+        else (
+            score_valuation(pe_percentile, valuation.get("pb"))
+            if pe_percentile is not None
+            else None
+        ),
         "trend": score_trend(bias),
         "technical": score_technical(rsi14, kdj_values),
     }
-    total = combine_score(components)
-    grade = grade_for_score(total)
+    total = combine_score(components, weights=score_weights)
+    grade = grade_for_score(total, framework=framework)
     component_labels = {
         "spread": "股债性价比",
         "valuation": "估值水位",
@@ -473,19 +500,22 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
         "total": total,
         "grade": grade["grade"],
         "action": grade["action"],
+        "framework": framework,
         "components": [
             {
                 "key": key,
                 "label": component_labels[key],
                 "score": round(components[key], 1) if components[key] is not None else None,
-                "weight": SCORE_WEIGHTS[key],
+                "weight": score_weights[key],
+                "applicable": key in score_weights,
             }
-            for key in SCORE_WEIGHTS
+            for key in ("spread", "valuation", "trend", "technical")
+            if key in score_weights
         ],
     }
 
     # ---- 历史同评分回测 ----
-    scores = compute_score_series(index_rows, spread_series)
+    scores = compute_score_series(index_rows, spread_series, framework=framework)
     backtest = backtest_forward_returns(index_rows, scores, total)
     backtest["label"] = win_rate_label(backtest.get("win_rate_pct"))
 

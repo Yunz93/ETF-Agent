@@ -149,6 +149,7 @@ function scoreCardHtml() {
   const backtest = payload.backtest || {};
   const tone = GRADE_TONES[score.grade] || "grade-c";
   const grade = score.grade || "—";
+  const technicalFramework = score.framework === "technical";
   const components = (score.components || [])
     .map((component) => {
       const width = component.score == null ? 0 : Math.max(2, Math.min(100, component.score));
@@ -164,6 +165,9 @@ function scoreCardHtml() {
   const backtestLine = backtest.samples
     ? `同评分 ±${backtest.band} · ${backtest.samples} 日样本 · ${backtest.horizon_days} 日均 <strong>${fmtSigned(backtest.avg_return_pct, 1, "%")}</strong> · 胜率 <strong>${fmt(backtest.win_rate_pct, 0, "%")}</strong>（${escapeHtml(backtest.label || "")} · ${fmtSigned(backtest.worst_pct, 1, "%")} ~ ${fmtSigned(backtest.best_pct, 1, "%")}）`
     : "历史同评分样本不足，暂无回测参考。";
+  const kicker = technicalFramework
+    ? `${grade} 档 · 技术面诊断（无估值权重）`
+    : `${grade} 档 · 诊断辅助`;
   return `
     <section class="panel-block dividend-score-card dividend-score-card-secondary ${tone}" aria-label="综合评分" title="${escapeAttr(GRADE_GUIDE)}">
       <div class="panel-heading">
@@ -174,7 +178,7 @@ function scoreCardHtml() {
       <div class="dividend-score-main">
         <div class="dividend-grade-mark" aria-hidden="true">${escapeHtml(grade)}</div>
         <div class="dividend-score-copy">
-          <p class="dividend-grade-kicker">${escapeHtml(grade)} 档 · 诊断辅助</p>
+          <p class="dividend-grade-kicker">${escapeHtml(kicker)}</p>
           <strong class="dividend-score-total">${score.total == null ? "—" : Math.round(score.total)}</strong>
         </div>
       </div>
@@ -215,6 +219,10 @@ function metricsHtml() {
     : "指数收盘（中证指数官网）";
   const changeClass = change > 0 ? "up" : change < 0 ? "down" : "";
   const pePct = valuation.pe_percentile_10y;
+  const technicalFramework =
+    payload.score?.framework === "technical" ||
+    payload.asset_class === "commodity" ||
+    payload.asset_class === "bond";
   // 年线数字与上方图表同口径：有 ETF 图标记用 ETF MA250，否则明确标「指数」
   const chartMa = chartMarkers.ma250;
   let biasValue = technicals.bias_pct;
@@ -227,22 +235,36 @@ function metricsHtml() {
   } else {
     maSub = "MA250 —";
   }
+  const valuationCard = technicalFramework
+    ? {
+        label: "估值口径",
+        value: "不适用",
+        sub: payload.asset_class === "bond" ? "债券类无股票 PE/股息" : "商品类无股票 PE/股息",
+      }
+    : {
+        label: "PE 近 10 年分位",
+        value: pePct == null ? "—" : `${Math.round(pePct * 100)}<em>%</em>`,
+        sub: `PE ${fmt(valuation.pe, 2)} · PB ${fmt(valuation.pb, 2)}`,
+      };
+  const spreadCard = technicalFramework
+    ? {
+        label: "股债利差",
+        value: "不适用",
+        sub: "非股票估值框架，不参与定投倍率",
+      }
+    : {
+        label: "股债利差",
+        value: fmt(spread.value, 2),
+        sub: `股息 ${fmt(valuation.dividend_yield_pct, 2, "%")} / 国债 ${fmt(bond.yield10y, 2, "%")}<br><span class="metric-sub-keep">${escapeHtml(spread.label || "—")}</span>`,
+      };
   const cards = [
-    {
-      label: "PE 近 10 年分位",
-      value: pePct == null ? "—" : `${Math.round(pePct * 100)}<em>%</em>`,
-      sub: `PE ${fmt(valuation.pe, 2)} · PB ${fmt(valuation.pb, 2)}`,
-    },
+    valuationCard,
     {
       label: "年线乖离",
       value: fmtSigned(biasValue, 2, "%"),
       sub: maSub,
     },
-    {
-      label: "股债利差",
-      value: fmt(spread.value, 2),
-      sub: `股息 ${fmt(valuation.dividend_yield_pct, 2, "%")} / 国债 ${fmt(bond.yield10y, 2, "%")}<br><span class="metric-sub-keep">${escapeHtml(spread.label || "—")}</span>`,
-    },
+    spreadCard,
     {
       label: "现价 / 单日",
       value: `${fmt(price, priceDigits)} <em class="${changeClass}">${fmtSigned(change, 2, "%")}</em>`,
@@ -778,9 +800,11 @@ function dcaAdviceHtml(advice, context) {
     assetClass === "dividend" && String(active.hint || "").includes("混合");
   const peText = mixedValuation
     ? "PE+利差混合分位"
-    : active.pePct != null
-      ? `PE 分位 ${(Number(active.pePct) * 100).toFixed(0)}%`
-      : active.band || "估值未知";
+    : assetClass === "commodity" || assetClass === "bond"
+      ? active.band || (assetClass === "commodity" ? "商品类 · 定额参与" : "债券类 · 定额参与")
+      : active.pePct != null
+        ? `PE 分位 ${(Number(active.pePct) * 100).toFixed(0)}%`
+        : active.band || "估值未知";
   // 原因链止于倍率：结论语已在 headline 展示，末步不再复述「本期不投 / 建议投入 ¥x」
   const reasonSteps = [
     active.strategyName || "策略",
@@ -928,7 +952,17 @@ function riskAndConfidenceHtml(context) {
   const payload = currentPayload() || {};
   const risk = context.risk;
   const correlation = context.strongestCorrelation;
-  const errorCount = Object.keys(payload.errors || {}).length;
+  const technicalFramework =
+    payload.score?.framework === "technical" ||
+    payload.asset_class === "commodity" ||
+    payload.asset_class === "bond";
+  const naKeys = new Set(Object.keys(payload.not_applicable || {}));
+  if (technicalFramework) {
+    naKeys.add("valuation");
+    naKeys.add("bond");
+    naKeys.add("index_pe");
+  }
+  const errorCount = Object.keys(payload.errors || {}).filter((key) => !naKeys.has(key)).length;
   const dataDate = String(payload.index?.date || "").slice(0, 10);
   const dataTime = dataDate ? new Date(`${dataDate}T00:00:00`).getTime() : Number.NaN;
   const stale = Number.isFinite(dataTime) && Date.now() - dataTime > 5 * 86_400_000;
@@ -936,8 +970,11 @@ function riskAndConfidenceHtml(context) {
     ? "数据已陈旧"
     : errorCount
       ? `${errorCount} 项降级`
-      : "数据完整";
+      : technicalFramework
+        ? "技术面完整"
+        : "数据完整";
   const analysisMode = payload.analysis_mode === "etf_proxy" ? "ETF 行情代理" : "完整指数映射";
+  const frameworkNote = technicalFramework ? " · 估值框架不适用" : "";
   const rows = [
     ["年化波动", risk ? `${fmt(risk.annualizedVolatilityPct, 1)}%` : "—"],
     ["最大回撤", risk ? `${fmtSigned(risk.maxDrawdownPct, 1, "%")}` : "—"],
@@ -960,7 +997,7 @@ function riskAndConfidenceHtml(context) {
       <dl class="decision-quality-grid">
         ${rows.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join("")}
       </dl>
-      <p class="muted decision-card-note">${escapeHtml(analysisMode)} · 行情 ${escapeHtml(payload.etf?.as_of || payload.updated_at || "时间未知")} · 指数 ${escapeHtml(payload.index?.date || "日期未知")}</p>
+      <p class="muted decision-card-note">${escapeHtml(analysisMode)}${frameworkNote} · 行情 ${escapeHtml(payload.etf?.as_of || payload.updated_at || "时间未知")} · 指数 ${escapeHtml(payload.index?.date || "日期未知")}</p>
     </section>
   `;
 }
@@ -976,10 +1013,37 @@ function sourcesHtml() {
 }
 
 function errorsHtml() {
-  const errors = (currentPayload() || {}).errors || {};
-  const entries = Object.values(errors);
-  if (!entries.length) return "";
-  return `<p class="dividend-degraded muted">部分数据降级：${entries.map((entry) => escapeHtml(entry)).join("；")}</p>`;
+  const payload = currentPayload() || {};
+  const technicalFramework =
+    payload.score?.framework === "technical" ||
+    payload.asset_class === "commodity" ||
+    payload.asset_class === "bond";
+  const naMap = { ...(payload.not_applicable || {}) };
+  const errors = { ...(payload.errors || {}) };
+  if (technicalFramework) {
+    for (const key of ["valuation", "bond", "index_pe"]) {
+      if (errors[key] && !naMap[key]) naMap[key] = errors[key];
+      delete errors[key];
+    }
+  }
+  const naEntries = Object.values(naMap);
+  const errorEntries = Object.values(errors);
+  const parts = [];
+  if (naEntries.length) {
+    parts.push(
+      `<p class="dividend-framework-note muted">框架说明：${naEntries
+        .map((entry) => escapeHtml(entry))
+        .join("；")}</p>`,
+    );
+  }
+  if (errorEntries.length) {
+    parts.push(
+      `<p class="dividend-degraded muted">部分数据降级：${errorEntries
+        .map((entry) => escapeHtml(entry))
+        .join("；")}</p>`,
+    );
+  }
+  return parts.join("");
 }
 
 function buildIndexChartMarkers(payload) {

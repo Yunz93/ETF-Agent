@@ -67,6 +67,22 @@ PROXY_VALUATION_NOTES = {
     "equity": "该 ETF 暂未收录指数估值映射，本页以行情技术面为主（PE/股债利差暂缺）；可在 config.json 的 etf.analysis 添加映射",
 }
 
+# 商品/债券：股票估值框架本身不适用，不得记为「关键降级」。
+VALUATION_NA_ASSET_CLASSES = frozenset({"commodity", "bond"})
+
+
+def valuation_framework_applicable(asset_class):
+    """股票 PE/股息/股债利差框架是否适用于该资产类别。"""
+    return str(asset_class or "").strip().lower() not in VALUATION_NA_ASSET_CLASSES
+
+
+def not_applicable_valuation_fields(asset_class):
+    """对该资产类别预期缺失、不应计入数据降级的字段。"""
+    if not valuation_framework_applicable(asset_class):
+        return frozenset({"valuation", "bond", "index_pe"})
+    return frozenset()
+
+
 def proxy_asset_class(name):
     text = str(name or "")
     for asset_class, keywords in PROXY_ASSET_RULES:

@@ -8,6 +8,7 @@ from .dividend_registry import (
     proxy_valuation_note,
     resolve_analysis_settings,
     unsupported_analysis_payload,
+    valuation_framework_applicable,
 )
 from .dividend_sources import (
     fetch_danjuan_valuation,
@@ -99,12 +100,19 @@ def get_dividend_dashboard(refresh=False, symbol=None):
             errors["etf_history"] = f"ETF 历史价格暂不可用，走势图临时使用指数点位：{exc}"
 
     valuation = None
+    not_applicable = {}
     danjuan_code = str(settings.get("danjuan_code") or "").strip()
+    asset_class = settings.get("asset_class")
     if danjuan_code:
         try:
             valuation = fetch_danjuan_valuation(danjuan_code)
         except Exception as exc:
             errors["valuation"] = f"蛋卷估值不可用，改用指数源 PE：{exc}"
+    elif proxy and not valuation_framework_applicable(asset_class):
+        # 黄金/商品、债券：估值框架本身不适用，记入说明而非数据降级。
+        not_applicable["valuation"] = proxy_valuation_note(
+            settings.get("etf_name") or etf_name
+        )
     elif proxy:
         errors["valuation"] = proxy_valuation_note(settings.get("etf_name") or etf_name)
     else:
@@ -168,6 +176,8 @@ def get_dividend_dashboard(refresh=False, symbol=None):
                 )
     if errors:
         payload["errors"] = errors
+    if not_applicable:
+        payload["not_applicable"] = not_applicable
     index_source_url = {
         "中证指数官网": "https://www.csindex.com.cn/",
         "新浪财经": "https://finance.sina.com.cn/",
