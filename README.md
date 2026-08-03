@@ -43,6 +43,14 @@ python3 server.py
 
 然后访问 `http://localhost:5174`。后端仅使用 Python 标准库，无第三方运行时依赖。
 
+### 部署到 Vercel
+
+静态页由 CDN 托管，`/api/*` 走 Python Serverless（`api/index.py`）。可写数据目录为 `/tmp/stockagent`（实例间不持久；浏览器 localStorage 会缓存工作区）。
+
+```bash
+npx vercel --prod
+```
+
 单元测试（不依赖外网）：
 
 ```bash
