@@ -4,10 +4,13 @@ import assert from "node:assert/strict";
 import { state } from "../js/state.js";
 import { normalizeExecutionDrafts } from "../js/workspace_model.js";
 import {
+  bookCashReserveSell,
   buildExecutionDraftsFromAllocation,
   executionDraftSummary,
+  settleCashReserveOnPeriodComplete,
   updateExecutionDraft,
 } from "../js/execution-drafts.js";
+import { normalizePlan } from "../js/workspace_model.js";
 
 test("execution draft normalization pads symbols and drops invalid rows", () => {
   const drafts = normalizeExecutionDrafts([
@@ -172,4 +175,78 @@ test("updateExecutionDraft preserves confirmed rows when regenerating", () => {
   state.executionDrafts = regenerated;
   const summary = executionDraftSummary(new Date("2026-07-15T10:00:00"));
   assert.equal(summary.pending, regenerated.filter((item) => item.status === "pending").length);
+});
+
+test("cash reserve books keep once when period completes under budget", () => {
+  state.etfs = [{ symbol: "512890", name: "红利", shares: 0, target_weight: 100 }];
+  state.quotesBySymbol = { "512890": { price: 1 } };
+  state.analysisCache = {};
+  state.plan = normalizePlan({
+    amount: 3000,
+    cadence: "monthly",
+    day: 1,
+    strategy: "fixed",
+    cash_reserve: { balance: 100, history: [] },
+  });
+  state.executionDrafts = [
+    {
+      id: "draft_2026-07-01_512890",
+      period: "2026-07-01",
+      symbol: "512890",
+      side: "buy",
+      price: 1,
+      shares: 1000,
+      fee: 5,
+      status: "confirmed",
+      date: "2026-07-15",
+    },
+  ];
+  const settled = settleCashReserveOnPeriodComplete({ now: new Date("2026-07-15") });
+  assert.ok(settled);
+  assert.equal(settled.cash_reserve.balance, 2100); // 100 + (3000-1000)
+  assert.equal(settled.cash_reserve.history.length, 1);
+  assert.equal(settled.cash_reserve.history[0].type, "keep");
+  state.plan = settled;
+  assert.equal(settleCashReserveOnPeriodComplete({ now: new Date("2026-07-15") }), null);
+});
+
+test("cash reserve books sell proceeds and release over budget", () => {
+  const sellBooked = bookCashReserveSell({
+    draft: {
+      side: "sell",
+      status: "confirmed",
+      period: "2026-07-01",
+      price: 2,
+      shares: 500,
+      fee: 5,
+    },
+    plan: normalizePlan({ cash_reserve: { balance: 0, history: [] } }),
+  });
+  assert.equal(sellBooked.cash_reserve.balance, 995);
+  assert.equal(sellBooked.cash_reserve.history[0].type, "sell");
+
+  state.etfs = [{ symbol: "512890", shares: 0, target_weight: 100 }];
+  state.plan = normalizePlan({
+    amount: 1000,
+    cadence: "monthly",
+    day: 1,
+    strategy: "fixed",
+    cash_reserve: { balance: 5000, history: [] },
+  });
+  state.executionDrafts = [
+    {
+      id: "draft_2026-07-01_512890",
+      period: "2026-07-01",
+      symbol: "512890",
+      side: "buy",
+      price: 1,
+      shares: 2500,
+      status: "confirmed",
+      date: "2026-07-15",
+    },
+  ];
+  const released = settleCashReserveOnPeriodComplete({ now: new Date("2026-07-15") });
+  assert.ok(released);
+  assert.equal(released.cash_reserve.history.some((row) => row.type === "release"), true);
+  assert.equal(released.cash_reserve.balance, 3500); // 5000 - (2500-1000)
 });

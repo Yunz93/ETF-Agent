@@ -123,6 +123,7 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
   const dayLabel = plan.cadence === "monthly" ? `${plan.day || 1} 号` : `周${plan.day || 1}`;
   const holdings = buildPoolHoldingsForAllocation();
   const execution = planExecutionContext({ plan, holdings });
+  const cashBalance = Number(plan.cash_reserve?.balance) || 0;
   const pool = allocatePoolBudget({
     budget: execution.budget,
     holdings,
@@ -133,6 +134,7 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
     sentimentByMarket: sentimentByMarketFromState(),
     analysisRegistry: analysisRegistryFromConfig(),
     goldMacro: goldMacroFromState(),
+    cashReserve: cashBalance,
   });
   const strategyName = strategyLabel(plan.strategy);
   const preliminary = analysisPrefetchIsPreliminary();
@@ -196,6 +198,7 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
         <div class="pool-alloc-metric"><span>${execution.phase === "initial" ? "建仓缺口" : "本期预算"}</span><strong>${money(pool.budget)}</strong></div>
         <div class="pool-alloc-metric"><span>建议部署${prelimTag}</span><strong>${money(pool.deployTotal)}</strong></div>
         <div class="pool-alloc-metric"><span>留现金</span><strong>${money(pool.cashKeep)}</strong></div>
+        <div class="pool-alloc-metric"><span>现金池</span><strong>${money(cashBalance)}</strong></div>
       </div>
       ${draftStatus}
       <div class="dca-alloc-table" aria-label="各品种建议金额">

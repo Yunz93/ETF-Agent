@@ -59,6 +59,26 @@ export function normalizeTradingCost(value) {
   };
 }
 
+const CASH_RESERVE_TYPES = new Set(["keep", "release", "sell"]);
+
+/** 现金池：旧数据缺字段时补默认（纯增量）。 */
+export function normalizeCashReserve(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const balance = nonnegative(source.balance, 0);
+  const history = [];
+  for (const item of Array.isArray(source.history) ? source.history : []) {
+    if (!item || typeof item !== "object") continue;
+    const period = String(item.period || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) continue;
+    const type = String(item.type || "").trim().toLowerCase();
+    if (!CASH_RESERVE_TYPES.has(type)) continue;
+    const amount = nonnegative(item.amount, 0);
+    if (!(amount > 0)) continue;
+    history.push({ period, amount: Math.round(amount * 100) / 100, type });
+  }
+  return { balance: Math.round(balance * 100) / 100, history };
+}
+
 function normalizePendingOrders(value) {
   if (!value || typeof value !== "object") return {};
   return Object.fromEntries(
@@ -99,6 +119,7 @@ export function normalizePlan(plan) {
     add_plan: { ...DEFAULT_ADD_PLAN },
     trading_cost: normalizeTradingCost(null),
     pending_orders: {},
+    cash_reserve: normalizeCashReserve(null),
   };
   if (!plan || typeof plan !== "object") {
     return {
@@ -106,6 +127,7 @@ export function normalizePlan(plan) {
       strategy_config: normalizeStrategyConfig(null),
       strategy_overrides: {},
       add_plan: { ...DEFAULT_ADD_PLAN },
+      cash_reserve: normalizeCashReserve(null),
     };
   }
   let cadence = String(plan.cadence || base.cadence).toLowerCase();
@@ -142,6 +164,7 @@ export function normalizePlan(plan) {
     add_plan: normalizeAddPlanConfig(plan.add_plan ?? plan.addPlan),
     trading_cost: normalizeTradingCost(plan.trading_cost),
     pending_orders: normalizePendingOrders(plan.pending_orders),
+    cash_reserve: normalizeCashReserve(plan.cash_reserve ?? plan.cashReserve),
   };
 }
 

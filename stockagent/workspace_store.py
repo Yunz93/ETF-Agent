@@ -306,6 +306,29 @@ def normalize_add_plan(payload):
     return {"enabled": enabled, "anchor": anchor, "preset": preset, "levels": levels}
 
 
+def normalize_cash_reserve(payload):
+    """纯增量：旧数据缺字段时补默认现金池。"""
+    base = {"balance": 0.0, "history": []}
+    if not isinstance(payload, dict):
+        return base
+    balance = _nonnegative_number(payload.get("balance"), 0)
+    history = []
+    for item in payload.get("history") or []:
+        if not isinstance(item, dict):
+            continue
+        period = str(item.get("period") or "").strip()
+        if len(period) != 10 or period[4] != "-" or period[7] != "-":
+            continue
+        entry_type = str(item.get("type") or "").strip().lower()
+        if entry_type not in ("keep", "release", "sell"):
+            continue
+        amount = _nonnegative_number(item.get("amount"), 0)
+        if amount <= 0:
+            continue
+        history.append({"period": period, "amount": round(amount, 2), "type": entry_type})
+    return {"balance": round(balance, 2), "history": history}
+
+
 def normalize_plan(payload):
     base = dict(DEFAULT_WORKSPACE["plan"])
     if not isinstance(payload, dict):
@@ -314,6 +337,7 @@ def normalize_plan(payload):
             "strategy_config": normalize_strategy_config(base.get("strategy_config")),
             "strategy_overrides": {},
             "add_plan": normalize_add_plan(base.get("add_plan")),
+            "cash_reserve": normalize_cash_reserve(base.get("cash_reserve")),
         }
     name = str(payload.get("name") or base["name"]).strip() or base["name"]
     cadence = str(payload.get("cadence") or base["cadence"]).strip().lower()
@@ -359,6 +383,7 @@ def normalize_plan(payload):
         "add_plan": normalize_add_plan(raw_add_plan),
         "trading_cost": normalize_trading_cost(payload.get("trading_cost")),
         "pending_orders": normalize_pending_orders(payload.get("pending_orders")),
+        "cash_reserve": normalize_cash_reserve(payload.get("cash_reserve")),
     }
 
 
@@ -459,7 +484,7 @@ def normalize_workspace(payload):
     if isinstance(payload.get("prefs"), dict):
         workspace["prefs"] = payload["prefs"]
 
-    workspace["version"] = 7
+    workspace["version"] = 8
     workspace["updated_at"] = payload.get("updated_at") or as_of(None)
     return workspace
 

@@ -5,6 +5,7 @@ import {
   allocatePoolBudget,
   allocationForSymbol,
   commodityDcaMultiplier,
+  computeCashRelease,
   dcaMultiplier,
   goldMacroMultiplier,
   inferSentimentMarket,
@@ -395,4 +396,59 @@ test("normalizeStrategyConfig includes sentiment defaults", () => {
   assert.equal(cfg.sentiment.enabled, true);
   assert.equal(cfg.sentiment.extremes_only, true);
   assert.deepEqual(cfg.sentiment.apply_to, ["valuation", "grade", "custom"]);
+});
+
+test("computeCashRelease thresholds and initial-build disable", () => {
+  assert.equal(computeCashRelease({ budget: 2000, cashReserve: 10000, poolBaseMult: 1.1 }), 0);
+  assert.equal(computeCashRelease({ budget: 2000, cashReserve: 10000, poolBaseMult: 1.2 }), 2000);
+  assert.equal(computeCashRelease({ budget: 2000, cashReserve: 10000, poolBaseMult: 1.4 }), 4000);
+  assert.equal(computeCashRelease({ budget: 2000, cashReserve: 1500, poolBaseMult: 1.5 }), 1500);
+  assert.equal(
+    computeCashRelease({
+      budget: 2000,
+      cashReserve: 10000,
+      poolBaseMult: 1.5,
+      preferTargetGap: true,
+    }),
+    0,
+  );
+  assert.equal(computeCashRelease({ budget: 2000, cashReserve: 0, poolBaseMult: 1.5 }), 0);
+});
+
+test("allocatePoolBudget merges cash release and caps at 3x budget", () => {
+  const cheap = [
+    { symbol: "510300", targetWeight: 50, actualWeight: 50, pePct: 0.1, assetClass: "equity_core" },
+    { symbol: "512890", targetWeight: 50, actualWeight: 50, pePct: 0.1, assetClass: "dividend" },
+  ];
+  const withReserve = allocatePoolBudget({
+    budget: 2000,
+    holdings: cheap,
+    strategy: "valuation",
+    strategyConfig: { sentiment: { enabled: false }, use_rebalance: false },
+    cashReserve: 10000,
+  });
+  assert.ok(withReserve.poolBaseMult >= 1.4);
+  assert.equal(withReserve.cashRelease, 4000);
+  assert.equal(withReserve.deployTotal, 6000); // 2000 + 4000
+  assert.match(withReserve.note, /低估释放现金池/);
+
+  const capped = allocatePoolBudget({
+    budget: 2000,
+    holdings: cheap,
+    strategy: "valuation",
+    strategyConfig: { sentiment: { enabled: false }, use_rebalance: false },
+    cashReserve: 100000,
+  });
+  // 预算内满配 + 2×释放，硬顶 3×budget
+  assert.equal(capped.deployTotal, 6000);
+  assert.equal(capped.cashRelease, 4000);
+
+  const initial = allocatePoolBudget({
+    budget: 2000,
+    holdings: cheap,
+    strategy: "valuation",
+    preferTargetGap: true,
+    cashReserve: 10000,
+  });
+  assert.equal(initial.cashRelease, 0);
 });

@@ -110,6 +110,7 @@ export function getPeriodAdvice({
     sentimentByMarket: markets,
     analysisRegistry: registry,
     goldMacro: macro,
+    cashReserve: Number(activePlan.cash_reserve?.balance) || 0,
   });
   const mine = symbol ? allocationForSymbol(pool, symbol) : null;
   const amount = mine?.amount ?? 0;

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   chooseWorkspaceSource,
   normalizeBuys,
+  normalizeCashReserve,
   normalizeExecutionDrafts,
   normalizeSells,
   normalizePlan,
@@ -158,6 +159,26 @@ test("plan normalization defaults and sanitizes add_plan", () => {
 
   assert.equal(normalizePlan({ add_plan: { anchor: "nope" } }).add_plan.anchor, "price");
   assert.equal(normalizePlan({ addPlan: { enabled: 0 } }).add_plan.enabled, false);
+});
+
+test("cash_reserve normalizes and migrates missing field", () => {
+  assert.deepEqual(normalizeCashReserve(undefined), { balance: 0, history: [] });
+  assert.deepEqual(normalizePlan({}).cash_reserve, { balance: 0, history: [] });
+  const plan = normalizePlan({
+    cash_reserve: {
+      balance: 1500.5,
+      history: [
+        { period: "2026-06-01", amount: 500, type: "keep" },
+        { period: "bad", amount: 1, type: "keep" },
+        { period: "2026-06-01", amount: 200, type: "nope" },
+        { period: "2026-07-01", amount: 300, type: "release" },
+      ],
+    },
+  });
+  assert.equal(plan.cash_reserve.balance, 1500.5);
+  assert.equal(plan.cash_reserve.history.length, 2);
+  assert.equal(plan.cash_reserve.history[0].type, "keep");
+  assert.equal(plan.cash_reserve.history[1].type, "release");
 });
 
 test("plan normalization preserves initial build and trading cost settings", () => {

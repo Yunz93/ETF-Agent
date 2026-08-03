@@ -91,7 +91,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(second["shares"], 0)
         self.assertEqual(second["cost"], 0)
         self.assertEqual(second["target_weight"], 100)
-        self.assertEqual(workspace["version"], 7)
+        self.assertEqual(workspace["version"], 8)
         self.assertEqual(workspace["plan"]["name"], "测试计划")
         self.assertEqual(workspace["plan"]["amount"], 3000)
         self.assertEqual(workspace["plan"]["cadence"], "weekly")
@@ -211,7 +211,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
                 ],
             }
         )
-        self.assertEqual(workspace["version"], 7)
+        self.assertEqual(workspace["version"], 8)
         self.assertEqual(len(workspace["buys"]), 1)
         self.assertEqual(workspace["buys"][0]["symbol"], "510300")
         self.assertTrue(workspace_store.workspace_has_user_data(workspace))
@@ -251,7 +251,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(workspace["buys"][0]["shares"], 1000)
         self.assertEqual(workspace["buys"][1]["id"], "keep")
         self.assertEqual(workspace["buys"][1]["symbol"], "510300")
-        self.assertEqual(workspace["version"], 7)
+        self.assertEqual(workspace["version"], 8)
 
     def test_plan_normalizes_initial_build_and_trading_cost(self):
         plan = workspace_store.normalize_plan(
@@ -386,7 +386,30 @@ class WorkspaceNormalizationTests(unittest.TestCase):
         self.assertEqual(first["side"], "buy")  # 缺省兼容旧数据
         skipped = next(item for item in workspace["execution_drafts"] if item["symbol"] == "510300")
         self.assertEqual(skipped["skip_reason"], "已下单")
-        self.assertEqual(workspace["version"], 7)
+        self.assertEqual(workspace["version"], 8)
+
+    def test_cash_reserve_migrates_and_normalizes(self):
+        empty = workspace_store.normalize_workspace({"plan": {}})
+        self.assertEqual(empty["plan"]["cash_reserve"], {"balance": 0, "history": []})
+        self.assertEqual(empty["version"], 8)
+        workspace = workspace_store.normalize_workspace(
+            {
+                "plan": {
+                    "cash_reserve": {
+                        "balance": 800,
+                        "history": [
+                            {"period": "2026-05-01", "amount": 200, "type": "keep"},
+                            {"period": "2026-05-01", "amount": -1, "type": "keep"},
+                            {"period": "x", "amount": 1, "type": "sell"},
+                        ],
+                    }
+                }
+            }
+        )
+        reserve = workspace["plan"]["cash_reserve"]
+        self.assertEqual(reserve["balance"], 800)
+        self.assertEqual(len(reserve["history"]), 1)
+        self.assertEqual(reserve["history"][0]["type"], "keep")
 
     def test_execution_drafts_preserve_sell_side(self):
         workspace = workspace_store.normalize_workspace(

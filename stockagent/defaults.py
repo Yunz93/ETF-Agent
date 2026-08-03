@@ -196,7 +196,7 @@ DEFAULT_STRATEGY_CONFIG = {
 }
 
 DEFAULT_WORKSPACE = {
-    "version": 7,
+    "version": 8,
     "updated_at": None,
     "etfs": [],
     "buys": [],
@@ -223,6 +223,7 @@ DEFAULT_WORKSPACE = {
             "lot_size": 100,
         },
         "pending_orders": {},
+        "cash_reserve": {"balance": 0, "history": []},
     },
     "prefs": {},
 }

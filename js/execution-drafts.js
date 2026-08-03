@@ -11,7 +11,12 @@ import {
 import { allocatePoolBudget } from "./strategy.js";
 import { buildPoolHoldingsForAllocation } from "./pool-alloc.js";
 import { buildRebalanceSellSuggestions } from "./rebalance-sell.js";
-import { normalizeExecutionDrafts, normalizeTradingCost } from "./workspace_model.js";
+import {
+  normalizeCashReserve,
+  normalizeExecutionDrafts,
+  normalizePlan,
+  normalizeTradingCost,
+} from "./workspace_model.js";
 import {
   analysisRegistryFromConfig,
   sentimentByMarketFromState,
@@ -43,6 +48,7 @@ export function buildExecutionDraftsFromAllocation({ now = new Date() } = {}) {
     preferTargetGap: execution.phase === "initial",
     sentimentByMarket: sentimentByMarketFromState(),
     analysisRegistry: analysisRegistryFromConfig(),
+    cashReserve: Number(plan.cash_reserve?.balance) || 0,
   });
   const tradingCost = normalizeTradingCost(plan.trading_cost);
   const existing = normalizeExecutionDrafts(state.executionDrafts || []);
@@ -147,6 +153,91 @@ export function updateExecutionDraft(id, patch) {
   const drafts = normalizeExecutionDrafts(state.executionDrafts || []);
   const next = drafts.map((item) => (item.id === id ? { ...item, ...patch, id: item.id } : item));
   return normalizeExecutionDrafts(next);
+}
+
+function appendCashHistory(reserve, { period, amount, type }) {
+  const next = normalizeCashReserve(reserve);
+  const amt = Math.round(Math.max(0, Number(amount) || 0) * 100) / 100;
+  if (!(amt > 0) || !period) return next;
+  if (type === "keep" && next.history.some((row) => row.period === period && row.type === "keep")) {
+    return next;
+  }
+  if (type === "release" && next.history.some((row) => row.period === period && row.type === "release")) {
+    return next;
+  }
+  let balance = next.balance;
+  if (type === "release") balance = Math.max(0, Math.round((balance - amt) * 100) / 100);
+  else balance = Math.round((balance + amt) * 100) / 100;
+  return {
+    balance,
+    history: [...next.history, { period, amount: amt, type }],
+  };
+}
+
+/**
+ * 卖出草稿确认后：卖出所得入账现金池（type sell）。
+ * @returns {object|null} 更新后的 plan，若无需变更则 null
+ */
+export function bookCashReserveSell({ draft, plan = state.plan } = {}) {
+  if (!draft || draft.side !== "sell" || draft.status !== "confirmed") return null;
+  const period = draft.period;
+  const gross = (Number(draft.price) || 0) * (Number(draft.shares) || 0);
+  const fee = Math.max(0, Number(draft.fee) || 0);
+  const proceeds = Math.round(Math.max(0, gross - fee) * 100) / 100;
+  if (!(proceeds > 0) || !period) return null;
+  const current = normalizePlan(plan);
+  const cash_reserve = appendCashHistory(current.cash_reserve, {
+    period,
+    amount: proceeds,
+    type: "sell",
+  });
+  return { ...current, cash_reserve };
+}
+
+/**
+ * 本期全部草稿处理完毕时：未用预算入账 keep；超预算买入扣减 release。
+ * @returns {object|null} 更新后的 plan
+ */
+export function settleCashReserveOnPeriodComplete({ now = new Date(), plan = state.plan } = {}) {
+  const current = normalizePlan(plan);
+  const period = planPeriod(current, now).start;
+  const drafts = normalizeExecutionDrafts(state.executionDrafts || []).filter(
+    (item) => item.period === period,
+  );
+  if (!drafts.length) return null;
+  if (drafts.some((item) => item.status === "pending")) return null;
+
+  const holdings = buildPoolHoldingsForAllocation();
+  const execution = planExecutionContext({ plan: current, holdings });
+  const budget = Math.max(0, Number(execution.budget) || 0);
+
+  const buyExecuted = drafts
+    .filter((item) => item.side !== "sell" && item.status === "confirmed")
+    .reduce((sum, item) => sum + (Number(item.price) || 0) * (Number(item.shares) || 0), 0);
+
+  let cash_reserve = normalizeCashReserve(current.cash_reserve);
+  const keepAmt = Math.round(Math.max(0, budget - buyExecuted) * 100) / 100;
+  if (keepAmt > 0) {
+    cash_reserve = appendCashHistory(cash_reserve, { period, amount: keepAmt, type: "keep" });
+  }
+  const overBudget = Math.round(Math.max(0, buyExecuted - budget) * 100) / 100;
+  if (overBudget > 0) {
+    const releaseAmt = Math.min(cash_reserve.balance, overBudget);
+    if (releaseAmt > 0) {
+      cash_reserve = appendCashHistory(cash_reserve, {
+        period,
+        amount: releaseAmt,
+        type: "release",
+      });
+    }
+  }
+  if (
+    cash_reserve.balance === (current.cash_reserve?.balance || 0) &&
+    cash_reserve.history.length === (current.cash_reserve?.history || []).length
+  ) {
+    return null;
+  }
+  return { ...current, cash_reserve };
 }
 
 export { normalizeExecutionDrafts };

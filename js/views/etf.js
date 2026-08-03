@@ -15,8 +15,10 @@ import { persistWorkspace } from "../workspace.js";
 import { poolAllocationHtml } from "../pool-alloc.js";
 import { ensurePoolAnalysisPrefetch } from "../analysis-cache.js";
 import {
+  bookCashReserveSell,
   buildExecutionDraftsFromAllocation,
   executionDraftSummary,
+  settleCashReserveOnPeriodComplete,
   updateExecutionDraft,
 } from "../execution-drafts.js";
 import { normalizeTradingCost, upsertBuy, upsertSell } from "../workspace_model.js";
@@ -922,6 +924,11 @@ function confirmExecutionDraft(id) {
   els.buyForm?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
+function applyCashReserveSettlement() {
+  const settled = settleCashReserveOnPeriodComplete();
+  if (settled) state.plan = settled;
+}
+
 function skipExecutionDraft(id) {
   const draft = (state.executionDrafts || []).find((item) => item.id === id);
   if (!draft || draft.status !== "pending") return;
@@ -930,6 +937,7 @@ function skipExecutionDraft(id) {
     status: "skipped",
     skip_reason: String(reason).trim(),
   });
+  applyCashReserveSettlement();
   persistWorkspace();
   renderPoolAllocation();
   renderExecDraftPanel();
@@ -1228,7 +1236,13 @@ export function addBuyRecord() {
         fee: record.fee,
         date: record.date,
       });
+      const confirmed = (state.executionDrafts || []).find((item) => item.id === confirmingDraftId);
+      if (confirmed?.side === "sell") {
+        const withSell = bookCashReserveSell({ draft: confirmed });
+        if (withSell) state.plan = withSell;
+      }
       confirmingDraftId = null;
+      applyCashReserveSettlement();
     }
   }
   editingTrade = null;

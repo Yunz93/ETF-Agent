@@ -618,6 +618,8 @@ function emptyAllocation(totalBudget) {
     budget: Number.isFinite(totalBudget) && totalBudget > 0 ? totalBudget : 0,
     deployTotal: 0,
     cashKeep: Number.isFinite(totalBudget) && totalBudget > 0 ? Math.round(totalBudget) : 0,
+    cashRelease: 0,
+    poolBaseMult: null,
     deployFrac: 0,
     allocations: [],
     skipped: [],
@@ -625,12 +627,51 @@ function emptyAllocation(totalBudget) {
   };
 }
 
-function finalizeEligible({ totalBudget, eligible, skipped, forceFullDeploy, note, strategy }) {
+/** 周期定投阶段：按池加权基础倍率决定可从现金池释放的额度。 */
+export function computeCashRelease({ budget, cashReserve, poolBaseMult, preferTargetGap = false } = {}) {
+  if (preferTargetGap) return 0;
+  const totalBudget = Number(budget);
+  const balance = Number(cashReserve);
+  const W = Number(poolBaseMult);
+  if (!(totalBudget > 0) || !(balance > 0) || !Number.isFinite(W)) return 0;
+  let multiple = 0;
+  if (W >= 1.4) multiple = 2;
+  else if (W >= 1.2) multiple = 1;
+  if (!(multiple > 0)) return 0;
+  return Math.min(balance, Math.round(totalBudget * multiple));
+}
+
+function poolWeightedBaseMult(rows) {
+  let weightSum = 0;
+  let weighted = 0;
+  for (const row of rows) {
+    const target = Number(row.targetWeight);
+    const base = Number(row.baseMult);
+    if (!(target > 0) || !Number.isFinite(base)) continue;
+    weightSum += target;
+    weighted += target * base;
+  }
+  if (!(weightSum > 0)) return null;
+  return Math.round((weighted / weightSum) * 1000) / 1000;
+}
+
+function finalizeEligible({
+  totalBudget,
+  eligible,
+  skipped,
+  forceFullDeploy,
+  note,
+  strategy,
+  cashRelease = 0,
+  poolBaseMult = null,
+}) {
   if (!eligible.length) {
     return {
       ...emptyAllocation(totalBudget),
       budget: Math.round(totalBudget),
       cashKeep: Math.round(totalBudget),
+      cashRelease: 0,
+      poolBaseMult,
       skipped,
       strategy,
       note: note || "当期均偏弱，建议留现金。",
@@ -646,7 +687,11 @@ function finalizeEligible({ totalBudget, eligible, skipped, forceFullDeploy, not
       eligible.reduce((sum, row) => sum + (row.targetWeight / eligTargetSum) * row.mult * row.reb, 0) || 0;
     deployFrac = Math.max(0, Math.min(1, intensity));
   }
-  const deployTotal = Math.round(totalBudget * deployFrac);
+  const fromBudget = Math.round(totalBudget * deployFrac);
+  const requestedRelease = Math.max(0, Math.round(Number(cashRelease) || 0));
+  // 总部署硬顶 3×budget
+  const deployTotal = Math.min(fromBudget + requestedRelease, Math.round(totalBudget * 3));
+  const appliedRelease = Math.max(0, deployTotal - fromBudget);
   const scoreSum = eligible.reduce((sum, row) => sum + row.score, 0) || 1;
   let allocated = 0;
   const allocations = eligible.map((row, index) => {
@@ -673,15 +718,22 @@ function finalizeEligible({ totalBudget, eligible, skipped, forceFullDeploy, not
     };
   });
 
+  const noteParts = [];
+  if (deployFrac < 0.999) noteParts.push("未部署部分留现金");
+  else if (note) noteParts.push(note);
+  if (appliedRelease > 0) noteParts.push(`低估释放现金池 ¥${appliedRelease.toLocaleString("zh-CN")}`);
+
   return {
     budget: Math.round(totalBudget),
     deployTotal,
-    cashKeep: Math.round(totalBudget - deployTotal),
+    cashKeep: Math.round(totalBudget - fromBudget),
+    cashRelease: appliedRelease,
+    poolBaseMult,
     deployFrac,
     allocations,
     skipped,
     strategy,
-    note: deployFrac < 0.999 ? "未部署部分留现金" : note || "",
+    note: noteParts.join(" · "),
   };
 }
 
@@ -696,6 +748,7 @@ function finalizeEligible({ totalBudget, eligible, skipped, forceFullDeploy, not
  * - 全池估值暂停（均 mult=0）时建仓也不买，留现金
  * - 周期定投：超配只软降权，不再硬顶停买；估值暂停（mult=0）仍可把份额让给其他品种
  * - 定额 / 再平衡 / 有可买的建仓：默认打满预算
+ * - cashReserve：现金池余额；周期定投阶段可按池加权基础倍率释放，建仓期不启用
  *
  * holdings: [{ symbol, name, targetWeight, actualWeight, pePct, grade, assetClass, spreadPct, biasPct, analyzed }]
  */
@@ -709,6 +762,7 @@ export function allocatePoolBudget({
   sentimentByMarket = null,
   analysisRegistry = null,
   goldMacro = null,
+  cashReserve = 0,
 } = {}) {
   const totalBudget = Number(budget);
   const strategyId = normalizeStrategyId(strategy);
@@ -717,6 +771,7 @@ export function allocatePoolBudget({
     strategyOverrides && typeof strategyOverrides === "object" ? strategyOverrides : {};
   const registry =
     analysisRegistry && typeof analysisRegistry === "object" ? analysisRegistry : {};
+  const reserveBalance = Math.max(0, Number(cashReserve) || 0);
   const empty = { ...emptyAllocation(totalBudget), strategy: strategyId };
   if (!Number.isFinite(totalBudget) || totalBudget <= 0 || !holdings.length) return empty;
 
@@ -890,6 +945,8 @@ export function allocatePoolBudget({
       skipped,
       forceFullDeploy: true,
       strategy: strategyId,
+      cashRelease: 0,
+      poolBaseMult: poolWeightedBaseMult(rows),
       note: anyAttractive
         ? "建仓期按目标×指数吸引力分配，打满缺口"
         : "全池偏贵，建仓期建议留现金",
@@ -958,12 +1015,22 @@ export function allocatePoolBudget({
         band: row.band,
         reason: row.hint,
       }));
+    const rebRows = rows;
+    const poolBaseMult = poolWeightedBaseMult(rebRows);
+    const cashRelease = computeCashRelease({
+      budget: totalBudget,
+      cashReserve: reserveBalance,
+      poolBaseMult,
+      preferTargetGap: false,
+    });
     return finalizeEligible({
       totalBudget,
       eligible,
       skipped,
       forceFullDeploy: true,
       strategy: strategyId,
+      cashRelease,
+      poolBaseMult,
     });
   }
 
@@ -1011,12 +1078,21 @@ export function allocatePoolBudget({
       reason: row.mult <= 0 ? "当期不建议新增" : "吸引力不足",
     }));
 
+  const poolBaseMult = poolWeightedBaseMult(rows);
+  const cashRelease = computeCashRelease({
+    budget: totalBudget,
+    cashReserve: reserveBalance,
+    poolBaseMult,
+    preferTargetGap: false,
+  });
   return finalizeEligible({
     totalBudget,
     eligible,
     skipped,
     forceFullDeploy: strategyId === "fixed",
     strategy: strategyId,
+    cashRelease,
+    poolBaseMult,
   });
 }
 
