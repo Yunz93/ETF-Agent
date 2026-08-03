@@ -970,7 +970,7 @@ function renderExecDraftPanel() {
               <span class="muted">${escapeHtml(draft.symbol)}</span>
             </div>
             <div class="exec-draft-meta">
-              <span>${draft.shares.toLocaleString("zh-CN")} 份 × ${money(draft.price)} ≈ ${money(orderAmount)}</span>
+              <span>${draft.shares.toLocaleString("zh-CN")} 份 × ${money(draft.price, "CNY", 3)} ≈ ${money(orderAmount)}</span>
               <span>费 ${money(draft.fee)}</span>
             </div>
             ${actions}
@@ -1068,7 +1068,7 @@ export function renderBuys() {
             <button class="link-button etf-name" data-analyze="${escapeAttr(trade.symbol)}" type="button">${escapeHtml(name)}</button>
             <span class="muted"> ${escapeHtml(trade.symbol)}</span>
           </td>
-          <td class="num">${money(trade.price)}</td>
+          <td class="num">${money(trade.price, "CNY", 3)}</td>
           <td class="num">${trade.shares}</td>
           <td class="num">${money(amount)}</td>
           <td class="num">${money(fee)}</td>
