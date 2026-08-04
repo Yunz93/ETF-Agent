@@ -265,7 +265,7 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
           <h2 class="section-title">全池本期分配</h2>
             <p class="muted">${
               execution.phase === "initial"
-                ? `目标 ${money(execution.targetAmount)} · 分 ${execution.initialMonths} 个月 · 本期 ${money(execution.budget)} · 尚缺 ${money(execution.initialGap)}`
+                ? `目标 ${money(execution.targetAmount)} · 分 ${execution.initialMonths} 个月 · 本期 ${money(execution.budget)} · 尚缺 ${money(execution.initialGap)} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}执行`
                 : `${escapeHtml(plan.name || "定投计划")} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}`
             }</p>
         </div>

@@ -148,7 +148,7 @@ test("completed initial build stays in recurring mode after a drawdown", () => {
   assert.equal(context.budget, 5000);
 });
 
-test("pending order does not roll remaining into next-period carry", () => {
+test("recurring pending order does not roll remaining into next period", () => {
   const plan = {
     cadence: "monthly",
     day: 1,
@@ -167,10 +167,39 @@ test("pending order does not roll remaining into next-period carry", () => {
     recommendedAmount: 900,
     buys: [],
     now: new Date(2026, 6, 10),
+    phase: "recurring",
   });
   assert.equal(pending.carry, 0);
+  assert.equal(pending.rolled, 0);
   assert.equal(pending.scheduled, 900);
   assert.equal(pending.remaining, 900);
+});
+
+test("initial build rolls prior-period remaining so sub-lot dust can accumulate", () => {
+  const plan = {
+    cadence: "monthly",
+    day: 1,
+    pending_orders: {
+      "512890": {
+        period: "2026-06-01",
+        carry: 0,
+        scheduled: 800,
+        remaining: 800,
+      },
+    },
+  };
+  const pending = pendingOrderState({
+    plan,
+    symbol: "512890",
+    recommendedAmount: 900,
+    buys: [],
+    now: new Date(2026, 6, 10),
+    phase: "initial",
+  });
+  assert.equal(pending.carry, 0);
+  assert.equal(pending.rolled, 800);
+  assert.equal(pending.scheduled, 1700);
+  assert.equal(pending.remaining, 1700);
 });
 
 test("legacy stored carry is ignored within the same period", () => {

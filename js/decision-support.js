@@ -159,11 +159,23 @@ export function pendingOrderState({
   symbol = "",
   recommendedAmount = 0,
   now = new Date(),
+  phase = null,
 } = {}) {
   const period = planPeriod(plan, now);
   const existing = plan.pending_orders?.[symbol] || {};
-  // Phase 7：废弃跨期 carry；未花预算统一入现金池。旧数据 carry 读入视为 0。
-  const scheduled = Math.max(0, Number(recommendedAmount) || 0);
+  // Phase 7：废弃通用跨期 carry（旧字段读入视为 0）。
+  // 建仓期例外：上期未花完的「不足一手」余量滚入本期，避免每月薄切永远买不进。
+  const baseScheduled = Math.max(0, Number(recommendedAmount) || 0);
+  let rolled = 0;
+  if (
+    phase === "initial" &&
+    existing.period &&
+    existing.period !== period.start &&
+    Number(existing.remaining) > 0
+  ) {
+    rolled = Math.max(0, Number(existing.remaining) || 0);
+  }
+  const scheduled = Math.round((baseScheduled + rolled) * 100) / 100;
   const executed = buys
     .filter((buy) => buy.symbol === symbol && buy.date >= period.start && buy.date < period.end)
     .reduce(
@@ -174,8 +186,9 @@ export function pendingOrderState({
   const record = {
     period: period.start,
     carry: 0,
-    scheduled: Math.round(scheduled * 100) / 100,
+    scheduled,
     remaining: Math.round(remaining * 100) / 100,
+    rolled: Math.round(rolled * 100) / 100,
   };
   return {
     ...record,

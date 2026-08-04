@@ -491,6 +491,7 @@ function decisionContext(advice) {
     buys: state.buys,
     symbol,
     recommendedAmount: advice?.amount || 0,
+    phase: advice?.execution?.phase || null,
   });
   if (pending?.changed) {
     state.plan.pending_orders = {
@@ -610,6 +611,7 @@ function executionPanelHtml(advice, context) {
   const overweightHint =
     position.overweight ||
     (position.projectedDrift != null && position.projectedDrift > 5);
+  const lotBlocked = !willOrder && order.blockedReason === "insufficient_lot";
   const action =
     cycle.status === "completed"
       ? "本期已完成，避免重复买入"
@@ -621,22 +623,36 @@ function executionPanelHtml(advice, context) {
           ? "额度不足一整手"
           : order.blockedReason === "fee_rate_exceeds_limit"
             ? "佣金费率高于设定上限，请调整成本参数"
-          : advice.amount > 0
-            ? `不足 ${order.lotSize} 份，暂不买入`
-            : "无待成交订单";
+          : lotBlocked
+            ? initial
+              ? `不足 ${order.lotSize} 份，暂不买入（余量计入下期）`
+              : `不足 ${order.lotSize} 份，暂不买入`
+            : advice.amount > 0
+              ? `不足 ${order.lotSize} 份，暂不买入`
+              : "无待成交订单";
 
   const skipOrder = !willOrder && !(advice?.amount > 0 && order.blockedReason);
+  const rolled = Math.max(0, Number(context.pending?.rolled) || 0);
   const gridRows = [
     `<div><dt>当前阶段</dt><dd>${initial ? "初期建仓" : "周期定投"}</dd></div>`,
-    `<div><dt>${initial ? "建仓目标" : "计划执行日"}</dt><dd>${initial ? money(advice.execution.targetAmount) : escapeHtml(cycle.scheduled)}</dd></div>`,
-    `<div><dt>${initial ? "当前仓位" : "本期已买"}</dt><dd>${initial ? fmt(advice.execution.currentPositionPct, 1, "%") : money(executed)}</dd></div>`,
+    `<div><dt>计划执行日</dt><dd>${escapeHtml(cycle.scheduled)}</dd></div>`,
   ];
+  if (initial) {
+    gridRows.push(
+      `<div><dt>建仓目标</dt><dd>${money(advice.execution.targetAmount)}</dd></div>`,
+      `<div><dt>当前仓位</dt><dd>${fmt(advice.execution.currentPositionPct, 1, "%")}</dd></div>`,
+    );
+  } else {
+    gridRows.push(`<div><dt>本期已买</dt><dd>${money(executed)}</dd></div>`);
+  }
   if (truncated) {
     gridRows.push(`<div><dt>策略分配</dt><dd>${money(strategyAmount)}</dd></div>`);
-    // 周期定投第三格已是「本期已买」；初期建仓第三格是仓位，这里补已买依据
     if (initial) {
       gridRows.push(`<div><dt>本期已买</dt><dd>${money(executed)}</dd></div>`);
     }
+  }
+  if (rolled > 0) {
+    gridRows.push(`<div><dt>上期滚入</dt><dd>${money(rolled)}</dd></div>`);
   }
   // 历史留存只展示一次现金池余额（>0）；不再展示跨期 carry
   if (cashReserveBalance > 0) {
@@ -655,8 +671,6 @@ function executionPanelHtml(advice, context) {
       }</dd></div>`,
       `<div><dt>取整余款</dt><dd>${money(order.cashRemainder)}</dd></div>`,
     );
-  } else if (!willOrder) {
-    gridRows.push(`<div><dt>下期执行日</dt><dd>${escapeHtml(cycle.scheduled)}</dd></div>`);
   }
   gridRows.push(`<div><dt>最近买入</dt><dd>${escapeHtml(lastBuyText)}</dd></div>`);
 
