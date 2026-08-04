@@ -75,53 +75,106 @@ def _deepseek_request(api_key, model, system_prompt, user_payload, timeout, max_
     return _decode_json_text(content), response.get("usage") or {}
 
 
-def _openai_request(api_key, model, system_prompt, user_payload, timeout, max_tokens):
-    schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "required": [
-            "action",
-            "amount_multiplier",
-            "confidence",
-            "summary",
-            "focus_title",
-            "analysis_sections",
-            "watch_items",
-            "evidence",
-            "conditions_to_reverse",
-            "data_limitations",
-        ],
-        "properties": {
-            "action": {"type": "string", "enum": ["keep", "increase", "reduce", "pause"]},
-            "amount_multiplier": {"type": "number"},
-            "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
-            "summary": {"type": "string"},
-            "focus_title": {"type": "string"},
-            "analysis_sections": {
-                "type": "array",
-                "minItems": 2,
-                "maxItems": 4,
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["title", "items"],
-                    "properties": {
-                        "title": {"type": "string"},
-                        "items": {
-                            "type": "array",
-                            "minItems": 1,
-                            "maxItems": 3,
-                            "items": {"type": "string"},
-                        },
+RECOMMENDATION_REVIEW_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "action",
+        "amount_multiplier",
+        "confidence",
+        "summary",
+        "focus_title",
+        "analysis_sections",
+        "watch_items",
+        "evidence",
+        "conditions_to_reverse",
+        "data_limitations",
+    ],
+    "properties": {
+        "action": {"type": "string", "enum": ["keep", "increase", "reduce", "pause"]},
+        "amount_multiplier": {"type": "number"},
+        "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        "summary": {"type": "string"},
+        "focus_title": {"type": "string"},
+        "analysis_sections": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["title", "items"],
+                "properties": {
+                    "title": {"type": "string"},
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 3,
+                        "items": {"type": "string"},
                     },
                 },
             },
-            "watch_items": {"type": "array", "items": {"type": "string"}},
-            "evidence": {"type": "array", "items": {"type": "string"}},
-            "conditions_to_reverse": {"type": "array", "items": {"type": "string"}},
-            "data_limitations": {"type": "array", "items": {"type": "string"}},
         },
-    }
+        "watch_items": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "conditions_to_reverse": {"type": "array", "items": {"type": "string"}},
+        "data_limitations": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+PORTFOLIO_REVIEW_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "action",
+        "confidence",
+        "summary",
+        "focus_title",
+        "analysis_sections",
+        "per_symbol_adjustments",
+        "watch_items",
+        "evidence",
+        "conditions_to_reverse",
+        "data_limitations",
+    ],
+    "properties": {
+        "action": {"type": "string", "enum": ["keep", "adjust"]},
+        "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+        "summary": {"type": "string"},
+        "focus_title": {"type": "string"},
+        "analysis_sections": RECOMMENDATION_REVIEW_SCHEMA["properties"]["analysis_sections"],
+        "per_symbol_adjustments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["symbol", "multiplier", "reason"],
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "multiplier": {"type": "number"},
+                    "reason": {"type": "string"},
+                },
+            },
+        },
+        "watch_items": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "conditions_to_reverse": {"type": "array", "items": {"type": "string"}},
+        "data_limitations": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+
+def _openai_request(
+    api_key,
+    model,
+    system_prompt,
+    user_payload,
+    timeout,
+    max_tokens,
+    response_schema=None,
+    schema_name="recommendation_review",
+):
+    schema = response_schema or RECOMMENDATION_REVIEW_SCHEMA
     body = {
         "model": model,
         "instructions": system_prompt,
@@ -130,7 +183,7 @@ def _openai_request(api_key, model, system_prompt, user_payload, timeout, max_to
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "recommendation_review",
+                "name": schema_name,
                 "strict": True,
                 "schema": schema,
             }
@@ -152,7 +205,17 @@ def _openai_request(api_key, model, system_prompt, user_payload, timeout, max_to
     return _decode_json_text(text), response.get("usage") or {}
 
 
-def request_review(provider, api_key, model, system_prompt, user_payload, timeout, max_tokens):
+def request_review(
+    provider,
+    api_key,
+    model,
+    system_prompt,
+    user_payload,
+    timeout,
+    max_tokens,
+    response_schema=None,
+    schema_name="recommendation_review",
+):
     try:
         if provider == "deepseek":
             return _deepseek_request(
@@ -160,7 +223,14 @@ def request_review(provider, api_key, model, system_prompt, user_payload, timeou
             )
         if provider == "openai":
             return _openai_request(
-                api_key, model, system_prompt, user_payload, timeout, max_tokens
+                api_key,
+                model,
+                system_prompt,
+                user_payload,
+                timeout,
+                max_tokens,
+                response_schema=response_schema,
+                schema_name=schema_name,
             )
         raise AIProviderError("不支持的大模型提供商", status=400, code="invalid_provider")
     except AIProviderError:

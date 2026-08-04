@@ -2238,10 +2238,37 @@ button:active {
   color: inherit;
 }
 
+.pool-alloc-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .pool-alloc-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+@media (max-width: 720px) {
+  .pool-alloc-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ai-portfolio-card {
+  margin-top: 4px;
+}
+
+.ai-portfolio-adjustments {
+  margin-top: 8px;
+}
+
+.ai-portfolio-adjustments ul {
+  margin: 6px 0 0;
+  padding-left: 1.2em;
 }
 
 .pool-alloc-metric {

@@ -9,7 +9,7 @@ import hashlib
 import json
 import time
 
-from .ai_providers import AIProviderError, request_review
+from .ai_providers import AIProviderError, PORTFOLIO_REVIEW_SCHEMA, request_review
 from .config_store import ai_settings
 from .dividend import get_dividend_dashboard
 from .market_time import market_freshness
@@ -50,8 +50,30 @@ CONNECTION_PING_PROMPT = (
     '"watch_items":[],"evidence":[],"conditions_to_reverse":[],"data_limitations":[]}'
 )
 
+PORTFOLIO_SYSTEM_PROMPT = """你是 ETF Agent 的全池分配审视器。只能使用输入 JSON 中的事实，
+不得补充新闻、财报、行情或外部知识。你的任务是审视规则引擎给出的本期全池分配，
+识别组合层矛盾（集中度、同指数重复持仓、超配/低配与估值的冲突、现金池释放时机），
+而不是取代规则引擎重新算一遍。
+数据不足时降低置信度并保持规则分配。不要承诺收益，不要给出确定性买卖指令。
+
+文案规则（很重要）：
+- summary、focus_title、analysis_sections、watch_items、conditions_to_reverse、data_limitations、
+  per_symbol_adjustments.reason 必须使用中文可读表述。
+- 禁止在上述展示字段中写 JSON 字段路径或变量名。
+- evidence 数组才写输入字段路径，例如 holdings.0.pe_percentile_10y、baseline.deploy_total。
+
+只返回 JSON 对象，不要添加 Markdown。对象必须包含以下字段：
+action: "keep" | "adjust"；
+confidence: "low" | "medium" | "high"；summary、focus_title: 字符串；
+analysis_sections: 由 2 至 4 个对象组成的数组，每个对象包含 title 和 items，items 为 1 至 3 条字符串；
+per_symbol_adjustments: 对象数组（可空），每项含 symbol、multiplier、reason；
+watch_items、evidence、conditions_to_reverse、data_limitations: 字符串数组。
+所有字段都必须出现；数组每项不超过 80 个汉字，最多 3 项（per_symbol_adjustments 最多 8 项），没有内容时返回空数组。
+action 为 keep 时 per_symbol_adjustments 应为空；仅在确有组合层修正时使用 adjust。"""
+
 AI_ANALYSIS_VERSION = 4
 ALLOWED_ACTIONS = {"keep", "increase", "reduce", "pause"}
+ALLOWED_PORTFOLIO_ACTIONS = {"keep", "adjust"}
 ALLOWED_CONFIDENCE = {"low", "medium", "high"}
 
 # Longer keys first so nested paths replace before short suffixes.
@@ -96,6 +118,13 @@ FIELD_LABELS = (
     ("workspace.capital_base", "可投资总资金"),
     ("portfolio.positions", "组合持仓"),
     ("portfolio.budget", "每期预算"),
+    ("baseline.deploy_total", "建议部署总额"),
+    ("baseline.cash_keep", "留现金"),
+    ("baseline.cash_release", "现金池释放"),
+    ("baseline.budget", "本期预算"),
+    ("plan.cash_reserve_balance", "现金池余额"),
+    ("holdings", "组合持仓快照"),
+    ("per_symbol_adjustments", "分品种倍率修正"),
     ("spread.percentile", "股债利差历史分位"),
     ("spread.value", "股债利差"),
     ("score.total", "综合评分"),
@@ -664,6 +693,331 @@ def review_recommendation(request_payload, force=False):
         "usage": usage,
         "cached": False,
         "disclaimer": "AI 分析仅供研究参考，不构成投资建议；不会自动下单或修改长期策略。",
+    }
+    cache_seconds = int(settings.get("cache_minutes", 30)) * 60
+    if cache_seconds:
+        AI_REVIEW_CACHE[cache_key] = {
+            "expires": time.time() + cache_seconds,
+            "payload": result,
+        }
+    return result
+
+
+def _normalize_symbol_code(raw):
+    digits = "".join(ch for ch in str(raw or "") if ch.isdigit())
+    symbol = digits.zfill(6)
+    if len(symbol) != 6 or not digits:
+        return ""
+    return symbol
+
+
+def _normalize_portfolio_baseline(raw):
+    if not isinstance(raw, dict):
+        raise AIProviderError("缺少全池规则基线", status=400, code="invalid_request")
+    allocations = []
+    for item in raw.get("allocations") or []:
+        if not isinstance(item, dict):
+            continue
+        symbol = _normalize_symbol_code(item.get("symbol"))
+        if not symbol:
+            continue
+        amount = max(0.0, _number(item.get("amount")))
+        allocations.append(
+            {
+                "symbol": symbol,
+                "name": str(item.get("name") or symbol).strip()[:80],
+                "amount": round(amount, 2),
+                "band": str(item.get("band") or "")[:40],
+                "mult": max(0.0, _number(item.get("mult"), 1)),
+            }
+        )
+    skipped = []
+    for item in raw.get("skipped") or []:
+        if not isinstance(item, dict):
+            continue
+        symbol = _normalize_symbol_code(item.get("symbol"))
+        if not symbol:
+            continue
+        skipped.append(
+            {
+                "symbol": symbol,
+                "name": str(item.get("name") or symbol).strip()[:80],
+                "reason": str(item.get("reason") or item.get("band") or "")[:160],
+            }
+        )
+    budget = max(0.0, _number(raw.get("budget")))
+    if budget <= 0 and not allocations:
+        raise AIProviderError("全池基线缺少预算或分配", status=400, code="invalid_request")
+    return {
+        "budget": round(budget, 2),
+        "deploy_total": round(max(0.0, _number(raw.get("deploy_total"))), 2),
+        "cash_keep": round(max(0.0, _number(raw.get("cash_keep"))), 2),
+        "cash_release": round(max(0.0, _number(raw.get("cash_release"))), 2),
+        "strategy": str(raw.get("strategy") or "valuation")[:40],
+        "allocations": allocations,
+        "skipped": skipped,
+    }
+
+
+def _compact_holding_snapshot(workspace_etf, analysis):
+    symbol = _normalize_symbol_code(workspace_etf.get("symbol"))
+    valuation = (analysis or {}).get("valuation") or {}
+    spread = (analysis or {}).get("spread") or {}
+    score = (analysis or {}).get("score") or {}
+    return {
+        "symbol": symbol,
+        "name": str(
+            workspace_etf.get("name")
+            or (analysis or {}).get("etf_name")
+            or (analysis or {}).get("name")
+            or symbol
+        ).strip()[:80],
+        "asset_class": (analysis or {}).get("asset_class"),
+        "target_weight": round(_number(workspace_etf.get("target_weight")), 2),
+        "actual_weight_pct": None,  # filled by caller with cost-basis weights
+        "pe_percentile_10y": valuation.get("pe_percentile_10y"),
+        "spread_percentile": spread.get("percentile"),
+        "score_total": score.get("total"),
+        "grade": score.get("grade"),
+    }
+
+
+def _build_portfolio_holdings(workspace):
+    """池内持仓紧凑快照；分析取不到则记入降级，不阻塞。"""
+    portfolio = _portfolio_snapshot(workspace)
+    weight_by_symbol = {
+        row["symbol"]: row["actual_weight_pct"] for row in portfolio.get("positions") or []
+    }
+    holdings = []
+    degraded = []
+    critical = []
+    for item in workspace.get("etfs") or []:
+        symbol = _normalize_symbol_code(item.get("symbol"))
+        if not symbol:
+            continue
+        try:
+            analysis = get_dividend_dashboard(symbol=symbol)
+        except Exception:
+            analysis = {"supported": False, "error": "analysis_fetch_failed"}
+        if analysis.get("supported") is False or (
+            analysis.get("error") and not analysis.get("score")
+        ):
+            degraded.append(f"{symbol}.analysis")
+            critical.append(f"{symbol}.analysis")
+            snapshot = _compact_holding_snapshot(item, {})
+        else:
+            snapshot = _compact_holding_snapshot(item, analysis)
+            if snapshot.get("pe_percentile_10y") is None and snapshot.get("score_total") is None:
+                degraded.append(f"{symbol}.valuation")
+                critical.append(f"{symbol}.valuation")
+        snapshot["actual_weight_pct"] = weight_by_symbol.get(symbol, 0.0)
+        holdings.append(snapshot)
+    return holdings, {
+        "degraded_fields": sorted(set(degraded)),
+        "critical_degraded_fields": sorted(set(critical)),
+        "may_increase": not critical,
+    }
+
+
+def _validate_portfolio_proposal(raw, allowed_evidence=None):
+    action = str(raw.get("action") or "").strip().lower()
+    confidence = str(raw.get("confidence") or "").strip().lower()
+    if action not in ALLOWED_PORTFOLIO_ACTIONS or confidence not in ALLOWED_CONFIDENCE:
+        raise AIProviderError("全池校正字段无效", code="invalid_output")
+    evidence = _short_list(raw.get("evidence"))
+    valid_evidence = (
+        evidence
+        if allowed_evidence is None
+        else [item for item in evidence if item in allowed_evidence]
+    )
+    invalid_evidence = [item for item in evidence if item not in valid_evidence]
+    data_limitations = _short_list(raw.get("data_limitations"))
+    if invalid_evidence:
+        confidence = "low"
+        data_limitations = _short_list(
+            [*data_limitations, "模型引用了不可验证字段，已忽略并保留规则分配。"]
+        )
+    if action == "adjust" and len(valid_evidence) < 2:
+        confidence = "low"
+        note = "偏离规则建议但证据不足，已保留规则分配"
+        if note not in data_limitations:
+            data_limitations = _short_list([*data_limitations, note])
+
+    adjustments = []
+    for item in raw.get("per_symbol_adjustments") or []:
+        if not isinstance(item, dict):
+            continue
+        symbol = _normalize_symbol_code(item.get("symbol"))
+        if not symbol:
+            continue
+        adjustments.append(
+            {
+                "symbol": symbol,
+                "multiplier": max(0.0, _number(item.get("multiplier"), 1)),
+                "reason": humanize_ai_text(str(item.get("reason") or "").strip())[:160],
+            }
+        )
+        if len(adjustments) >= 8:
+            break
+
+    sections = _analysis_sections(raw.get("analysis_sections"))
+    return {
+        "action": action,
+        "confidence": confidence,
+        "summary": humanize_ai_text(str(raw.get("summary") or "").strip())[:240],
+        "focus_title": humanize_ai_text(str(raw.get("focus_title") or "").strip())[:80],
+        "analysis_sections": sections,
+        "per_symbol_adjustments": adjustments if action == "adjust" else [],
+        "watch_items": _humanize_list(_short_list(raw.get("watch_items"))),
+        "evidence": valid_evidence,
+        "conditions_to_reverse": _humanize_list(_short_list(raw.get("conditions_to_reverse"))),
+        "data_limitations": _humanize_list(data_limitations),
+    }
+
+
+def apply_portfolio_policy(baseline, proposal, data_quality, settings):
+    """仲裁全池修正：低置信度/证据不足保留规则；超顶按比例缩回；降级禁上调。"""
+    max_mult = max(0.0, _number(settings.get("max_increase_multiplier"), 1.5))
+    keep_rule = (
+        proposal.get("confidence") == "low"
+        or proposal.get("action") != "adjust"
+        or len(proposal.get("evidence") or []) < 2
+    )
+    may_increase = data_quality.get("may_increase") is True
+    reasons = []
+    if keep_rule:
+        reasons.append("低置信度或证据不足：保留规则分配")
+    if not may_increase:
+        reasons.append("数据降级：禁止上调投入")
+
+    adj_map = {
+        item["symbol"]: item
+        for item in (proposal.get("per_symbol_adjustments") or [])
+        if isinstance(item, dict) and item.get("symbol")
+    }
+    rows = []
+    for row in baseline.get("allocations") or []:
+        symbol = row["symbol"]
+        rule_amount = max(0.0, _number(row.get("amount")))
+        mult = 1.0
+        if not keep_rule:
+            adj = adj_map.get(symbol)
+            if adj:
+                mult = max(0.0, min(max_mult, _number(adj.get("multiplier"), 1)))
+            if not may_increase and mult > 1:
+                mult = 1.0
+        final_amount = round(rule_amount * mult, 2)
+        rows.append(
+            {
+                "symbol": symbol,
+                "name": row.get("name") or symbol,
+                "rule_amount": round(rule_amount, 2),
+                "final_amount": final_amount,
+                "multiplier": round(mult, 3),
+                "changed": abs(final_amount - round(rule_amount, 2)) > 0.009,
+            }
+        )
+
+    cap = max(
+        0.0,
+        _number(baseline.get("budget")) + _number(baseline.get("cash_release")),
+    )
+    total = sum(item["final_amount"] for item in rows)
+    scaled = False
+    if cap > 0 and total > cap + 1e-9:
+        scale = cap / total
+        for item in rows:
+            item["final_amount"] = round(item["final_amount"] * scale, 2)
+            item["changed"] = abs(item["final_amount"] - item["rule_amount"]) > 0.009
+        # 尾差归到最大行，避免四舍五入超顶
+        adjusted_total = sum(item["final_amount"] for item in rows)
+        if rows and adjusted_total != round(cap, 2):
+            delta = round(cap - adjusted_total, 2)
+            top = max(rows, key=lambda item: item["final_amount"])
+            top["final_amount"] = round(max(0.0, top["final_amount"] + delta), 2)
+            top["changed"] = abs(top["final_amount"] - top["rule_amount"]) > 0.009
+        scaled = True
+        reasons.append("修正总额超预算+释放上限：已按比例缩回")
+
+    changed_count = sum(1 for item in rows if item["changed"])
+    status = "kept" if keep_rule or changed_count == 0 else ("scaled" if scaled else "adjusted")
+    return {
+        "status": status,
+        "reasons": reasons or ["校正提案符合风控约束"],
+        "final_total": round(sum(item["final_amount"] for item in rows), 2),
+        "cap": round(cap, 2),
+        "changed_count": changed_count,
+        "allocations": rows,
+    }
+
+
+def review_portfolio(request_payload, force=False):
+    settings = ai_settings()
+    if not settings.get("enabled"):
+        raise AIProviderError("请先在设置中启用 AI 分析", status=409, code="disabled")
+    provider = settings.get("provider")
+    model = (settings.get("models") or {}).get(provider)
+    api_key = get_api_key(provider)
+    if not api_key:
+        raise AIProviderError("请先配置当前提供商的 API Key", status=409, code="missing_key")
+
+    workspace = get_workspace()
+    baseline = _normalize_portfolio_baseline(
+        (request_payload or {}).get("baseline") if isinstance(request_payload, dict) else None
+    )
+    holdings, quality = _build_portfolio_holdings(workspace)
+    plan = workspace.get("plan") or {}
+    cash_reserve = plan.get("cash_reserve") if isinstance(plan.get("cash_reserve"), dict) else {}
+    model_input = {
+        "output_version": AI_ANALYSIS_VERSION,
+        "baseline": baseline,
+        "holdings": holdings,
+        "plan": {
+            "budget": round(max(0.0, _number(plan.get("amount"))), 2),
+            "strategy": str(plan.get("strategy") or "")[:40],
+            "cash_reserve_balance": round(max(0.0, _number(cash_reserve.get("balance"))), 2),
+        },
+        "data_quality": quality,
+    }
+    cache_key = f"portfolio:{_cache_key(provider, model, model_input)}"
+    cached = AI_REVIEW_CACHE.get(cache_key)
+    if not force and cached and cached["expires"] > time.time():
+        return {**cached["payload"], "cached": True}
+
+    raw, usage = request_review(
+        provider,
+        api_key,
+        model,
+        PORTFOLIO_SYSTEM_PROMPT,
+        model_input,
+        int(settings.get("timeout_seconds", 60)),
+        int(settings.get("max_output_tokens", 1800)),
+        response_schema=PORTFOLIO_REVIEW_SCHEMA,
+        schema_name="portfolio_review",
+    )
+    record_ai_usage(usage)
+    proposal = _validate_portfolio_proposal(raw, _evidence_paths(model_input))
+    policy = apply_portfolio_policy(baseline, proposal, quality, settings)
+    result = {
+        "baseline": baseline,
+        "ai_proposal": proposal,
+        "policy_decision": policy,
+        "final_allocations": [
+            {
+                "symbol": row["symbol"],
+                "name": row["name"],
+                "rule_amount": row["rule_amount"],
+                "final_amount": row["final_amount"],
+                "changed": row["changed"],
+            }
+            for row in policy.get("allocations") or []
+        ],
+        "provider": provider,
+        "model": model,
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "usage": usage,
+        "cached": False,
+        "disclaimer": "AI 全池审视仅供研究参考，不构成投资建议；不会自动改草稿或下单。",
     }
     cache_seconds = int(settings.get("cache_minutes", 30)) * 60
     if cache_seconds:

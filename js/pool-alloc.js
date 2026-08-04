@@ -13,6 +13,7 @@ import {
   sentimentByMarketFromState,
 } from "./market-sentiment.js";
 import { goldMacroFromState } from "./gold-macro.js";
+import { portfolioReviewResultHtml } from "./ai-portfolio.js";
 
 function cacheKey(symbol) {
   return analysisCacheKey(symbol);
@@ -235,7 +236,10 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
                 : `${escapeHtml(plan.name || "定投计划")} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}`
             }</p>
         </div>
-        <button class="primary-button compact" type="button" data-generate-exec-drafts>生成本期执行清单</button>
+        <div class="pool-alloc-heading-actions">
+          <button class="ghost-button compact" type="button" data-ai-portfolio-review>AI 审视全池</button>
+          <button class="primary-button compact" type="button" data-generate-exec-drafts>生成本期执行清单</button>
+        </div>
       </div>
       <div class="pool-alloc-summary${prelimClass}">
         <div class="pool-alloc-metric"><span>${execution.phase === "initial" ? "建仓缺口" : "本期预算"}</span><strong>${money(pool.budget)}</strong></div>
@@ -263,6 +267,26 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
       </div>
       ${progressNote}
       ${noteParts.length ? `<p class="muted pool-alloc-note">${escapeHtml(noteParts.join(" "))}</p>` : ""}
+      ${portfolioReviewResultHtml(state.aiPortfolioReview)}
     </section>
   `;
+}
+
+/** 供外部触发 AI 审视时复用当前分配结果。 */
+export function currentPoolAllocationResult() {
+  const plan = state.plan || {};
+  const holdings = buildPoolHoldingsForAllocation();
+  const execution = planExecutionContext({ plan, holdings });
+  if (!(execution.budget > 0) || !holdings.length) return null;
+  return allocatePoolBudget({
+    budget: execution.budget,
+    holdings,
+    strategy: plan.strategy,
+    strategyConfig: plan.strategy_config,
+    strategyOverrides: plan.strategy_overrides,
+    preferTargetGap: execution.phase === "initial",
+    sentimentByMarket: sentimentByMarketFromState(),
+    analysisRegistry: analysisRegistryFromConfig(),
+    cashReserve: Number(plan.cash_reserve?.balance) || 0,
+  });
 }

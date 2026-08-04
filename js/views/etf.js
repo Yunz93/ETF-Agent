@@ -12,7 +12,11 @@ import {
 import { drawPriceChart, buyEventMarkers, sellEventMarkers } from "../chart.js";
 import { setSourceStatus } from "../navigation.js";
 import { persistWorkspace } from "../workspace.js";
-import { poolAllocationHtml } from "../pool-alloc.js";
+import { currentPoolAllocationResult, poolAllocationHtml } from "../pool-alloc.js";
+import {
+  buildPortfolioReviewBaseline,
+  isPortfolioAiReady,
+} from "../ai-portfolio.js";
 import { ensurePoolAnalysisPrefetch } from "../analysis-cache.js";
 import {
   bookCashReserveSell,
@@ -24,7 +28,7 @@ import {
 import { normalizeTradingCost, upsertBuy, upsertSell } from "../workspace_model.js";
 import { ADD_PLAN_PRESETS, normalizeAddPlanConfig } from "../add-plan.js";
 import { estimatedTradeFee, holdingFromTrades, planExecutionContext } from "../decision-support.js";
-import { openAnalysis, registerRenderers } from "./render.js";
+import { callRenderer, openAnalysis, registerRenderers } from "./render.js";
 import {
   DEFAULT_STRATEGY_CONFIG,
   normalizeStrategyConfig,
@@ -864,6 +868,43 @@ function activateBuysTab() {
   if (tab) tab.click();
 }
 
+async function requestPortfolioAiReview({ force = false } = {}) {
+  const ready = isPortfolioAiReady();
+  if (!ready.ok) {
+    callRenderer("switchView", "settings");
+    return;
+  }
+  const pool = currentPoolAllocationResult();
+  if (!pool) {
+    state.aiPortfolioReview = { status: "error", error: "请先配置周期预算与目标仓位" };
+    renderPoolAllocation();
+    return;
+  }
+  state.aiPortfolioReview = { status: "loading" };
+  renderPoolAllocation();
+  try {
+    const response = await fetch("/api/ai/review-portfolio", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        force,
+        baseline: buildPortfolioReviewBaseline(pool, state.plan?.strategy),
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    state.aiPortfolioReview = { status: "ready", result: payload };
+  } catch (error) {
+    state.aiPortfolioReview = {
+      status: "error",
+      error: String(error.message || error),
+    };
+  }
+  renderPoolAllocation();
+}
+
 function bindDraftActions(root) {
   if (!root) return;
   root.querySelectorAll("[data-generate-exec-drafts]").forEach((button) => {
@@ -883,6 +924,11 @@ function bindDraftActions(root) {
         note.textContent = "本期无可执行整手份额（检查行情与手续费门槛）";
         els.poolAllocPanel.querySelector(".pool-alloc-block")?.appendChild(note);
       }
+    });
+  });
+  root.querySelectorAll("[data-ai-portfolio-review]").forEach((button) => {
+    button.addEventListener("click", () => {
+      requestPortfolioAiReview({ force: button.dataset.force === "true" });
     });
   });
   root.querySelectorAll("[data-open-buys]").forEach((button) => {

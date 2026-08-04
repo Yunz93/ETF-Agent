@@ -17,7 +17,7 @@ from .sentiment import get_market_sentiment
 from .gold_macro import get_gold_macro
 from .health import get_data_health, get_runtime_info
 from .ai_providers import AIProviderError
-from .ai_service import ai_status, review_recommendation, test_connection
+from .ai_service import ai_status, review_portfolio, review_recommendation, test_connection
 from .secret_store import delete_api_key, save_api_key
 
 mimetypes.add_type("application/javascript", ".js")
@@ -153,6 +153,14 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/ai/review-recommendation":
                 self.send_json(
                     review_recommendation(
+                        payload,
+                        force=payload.get("force") is True,
+                    )
+                )
+                return
+            if parsed.path == "/api/ai/review-portfolio":
+                self.send_json(
+                    review_portfolio(
                         payload,
                         force=payload.get("force") is True,
                     )

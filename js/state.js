@@ -79,6 +79,8 @@ export const state = {
   // 本期执行草稿：[{id, period, symbol, name, suggested_amount, price, shares, fee, date, status, skip_reason?}]
   executionDrafts: [],
   aiReviews: {}, // symbol -> { status, result?, error? }
+  // 全池 AI 审视：{ status: idle|loading|ready|error, result?, error? }
+  aiPortfolioReview: { status: "idle" },
   marketSentiment: null,
   marketSentimentFetchedAt: 0,
   marketSentimentError: null,
