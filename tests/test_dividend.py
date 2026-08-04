@@ -12,9 +12,11 @@
 from __future__ import annotations
 
 import datetime
+import json
 import math
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -363,7 +365,7 @@ class AnalyzeTests(unittest.TestCase):
         self.assertIsNotNone(payload["valuation"]["pe_percentile_10y"])
         self.assertIsNotNone(payload["score"]["total"])
         self.assertIn("今日盘面：", payload["note_text"])
-        self.assertIn("前视偏差", payload["spread"]["note"])
+        self.assertIn("回推派息水平", payload["spread"]["note"])
 
     def test_a500_csindex_pe_rows_yield_percentile(self):
         """563360 danjuan_code 为空时，csindex 风格含 pe 的 index_rows 仍能算近十年分位。"""
@@ -581,6 +583,65 @@ class AnalysisRoutingTests(unittest.TestCase):
         a500 = dividend.resolve_analysis_settings("563360")
         self.assertEqual(a500.get("danjuan_code"), "")
         self.assertEqual(a500.get("history_source"), "csindex")
+
+    def test_legulegu_index_code_candidates(self):
+        self.assertEqual(dividend.legulegu_index_code_candidates("000510"), ["000510.CSI", "000510.SH"])
+        self.assertEqual(dividend.legulegu_index_code_candidates("399006"), ["399006.SZ", "399006.CSI"])
+        self.assertEqual(dividend.legulegu_index_code_candidates("000300.SH"), ["000300.SH"])
+
+    def test_legulegu_fallback_clears_valuation_error(self):
+        settings = {"index_code": "000510", "index_name": "中证A500"}
+        errors = {"valuation": dividend.missing_danjuan_note(True)}
+        fake = {
+            "pe": 15.7,
+            "pb": 1.64,
+            "dividend_yield": 0.026,
+            "pe_percentile": 0.72,
+            "source": "乐咕乐股（中证口径）",
+            "source_url": "https://www.legulegu.com/stockdata/index-basic?indexCode=000510.CSI",
+        }
+        with unittest.mock.patch(
+            "stockagent.dividend_service.fetch_legulegu_index_valuation",
+            return_value=fake,
+        ):
+            valuation = dividend._apply_legulegu_valuation_fallback(settings, errors)
+        self.assertEqual(valuation["dividend_yield"], 0.026)
+        self.assertNotIn("valuation", errors)
+
+    def test_legulegu_parse_percent_yield(self):
+        payload = {
+            "data": [
+                {
+                    "date": "2026-08-04",
+                    "addTtmPe": 15.68,
+                    "addPb": 1.64,
+                    "addDvTtm": 2.6,
+                    "addTtmPeQuantile": 0.82,
+                    "addPbQuantile": 0.67,
+                }
+            ]
+        }
+
+        class CM:
+            def __init__(self, response):
+                self.response = response
+
+            def __enter__(self):
+                return self.response
+
+            def __exit__(self, *args):
+                return False
+
+        warm = unittest.mock.Mock(read=unittest.mock.Mock(return_value=b"ok"))
+        api = unittest.mock.Mock(read=unittest.mock.Mock(return_value=json.dumps(payload).encode("utf-8")))
+        opener = unittest.mock.Mock()
+        opener.open.side_effect = [CM(warm), CM(api)]
+        with unittest.mock.patch("stockagent.dividend_sources._legulegu_opener", return_value=opener):
+            valuation = dividend.fetch_legulegu_index_valuation("000510")
+        self.assertAlmostEqual(valuation["pe"], 15.68)
+        self.assertAlmostEqual(valuation["pb"], 1.64)
+        self.assertAlmostEqual(valuation["dividend_yield"], 0.026)
+        self.assertIn("乐咕", valuation["source"])
 
     def test_market_prefixed_index(self):
         self.assertEqual(dividend._market_prefixed_index("399006"), "sz399006")

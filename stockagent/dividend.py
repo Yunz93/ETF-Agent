@@ -9,3 +9,4 @@ from .dividend_service import *  # noqa: F401,F403
 # Private helpers historically used by tests and the server facade.
 from .dividend_registry import _normalize_etf_symbol
 from .dividend_sources import _market_prefixed_index
+from .dividend_service import _apply_legulegu_valuation_fallback  # noqa: F401

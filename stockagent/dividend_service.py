@@ -16,6 +16,7 @@ from .dividend_sources import (
     fetch_eastmoney_fund_profile,
     fetch_etf_quote,
     fetch_index_history,
+    fetch_legulegu_index_valuation,
     fetch_treasury_yield_history,
     fill_missing_pe,
 )
@@ -28,13 +29,26 @@ def clear_dividend_cache():
     DIVIDEND_CACHE.clear()
 
 def missing_danjuan_note(has_daily_pe):
-    """蛋卷未收录该指数（如中证A500）时的降级说明。"""
+    """蛋卷未收录且兜底估值也失败时的降级说明。"""
     if has_daily_pe:
         return (
-            "蛋卷暂未收录该指数：PE 采用指数源每日序列并自算近 10 年分位；"
+            "蛋卷暂未收录该指数，估值兜底也不可用：PE 采用指数源每日序列并自算近 10 年分位；"
             "股息率缺失，股债利差与 PB 暂缺"
         )
     return "蛋卷暂未收录该指数，且指数源无每日 PE：估值与股债利差暂缺，本页以行情技术面为主"
+
+
+def _apply_legulegu_valuation_fallback(settings, errors):
+    """蛋卷缺失/失败时用乐咕乐股（中证口径）补 PE/PB/股息率。成功则清除 valuation 降级。"""
+    try:
+        valuation = fetch_legulegu_index_valuation(settings.get("index_code"))
+    except Exception as exc:
+        prior = errors.get("valuation")
+        errors["valuation"] = f"{prior}；估值兜底失败：{exc}" if prior else f"估值兜底不可用：{exc}"
+        return None
+    errors.pop("valuation", None)
+    return valuation
+
 
 def get_dividend_dashboard(refresh=False, symbol=None):
     """日度决策仪表盘。
@@ -109,6 +123,7 @@ def get_dividend_dashboard(refresh=False, symbol=None):
             valuation = fetch_danjuan_valuation(danjuan_code)
         except Exception as exc:
             errors["valuation"] = f"蛋卷估值不可用，改用指数源 PE：{exc}"
+            valuation = _apply_legulegu_valuation_fallback(settings, errors)
     elif proxy and not valuation_framework_applicable(asset_class):
         # 黄金/商品、债券：估值框架本身不适用，记入说明而非数据降级。
         not_applicable["valuation"] = proxy_valuation_note(
@@ -119,6 +134,7 @@ def get_dividend_dashboard(refresh=False, symbol=None):
     else:
         has_daily_pe = any(row.get("pe") is not None for row in index_rows[-30:])
         errors["valuation"] = missing_danjuan_note(has_daily_pe)
+        valuation = _apply_legulegu_valuation_fallback(settings, errors)
 
     if valuation and valuation.get("pe") is not None:
         fill_missing_pe(index_rows, valuation.get("pe"))
@@ -196,13 +212,27 @@ def get_dividend_dashboard(refresh=False, symbol=None):
         "新浪财经": "https://finance.sina.com.cn/",
         "腾讯行情": "https://gu.qq.com/",
     }.get(index_source, "https://gu.qq.com/")
+    valuation_source = (valuation or {}).get("source") or ""
+    valuation_source_url = (valuation or {}).get("source_url") or "https://danjuanfunds.com/dj-valuation-table-detail"
+    if "乐咕" in valuation_source:
+        valuation_role = {
+            "name": "乐咕乐股",
+            "url": valuation_source_url,
+            "role": "蛋卷未收录时的 PE/PB/股息率兜底（中证口径加权）",
+        }
+    else:
+        valuation_role = {
+            "name": "蛋卷基金",
+            "url": "https://danjuanfunds.com/dj-valuation-table-detail",
+            "role": "PE/PB/股息率与近10年PE分位",
+        }
     payload["sources"] = [
         {
             "name": index_source,
             "url": index_source_url,
             "role": "ETF 日线（兜底分析）" if proxy else ("指数日线与每日 PE" if index_source == "中证指数官网" else "指数日线（无每日 PE）"),
         },
-        {"name": "蛋卷基金", "url": "https://danjuanfunds.com/dj-valuation-table-detail", "role": "PE/PB/股息率与近10年PE分位"},
+        valuation_role,
         {"name": "东方财富数据中心", "url": "https://data.eastmoney.com/cjsj/zmgzsyl.html", "role": "中国十年期国债收益率"},
         {"name": "腾讯行情", "url": "https://gu.qq.com/", "role": "ETF 实时价与历史价格"},
         {

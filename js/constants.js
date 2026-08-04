@@ -49,8 +49,10 @@ export const INDEX_CHART_RANGE_LABELS = {
 
 export const THEME_KEY = "stockagent.theme";
 export const SIDEBAR_KEY = "stockagent.sidebar";
+/** 宽于该值才显示可收起的侧栏图标轨；更窄时改用抽屉导航。 */
 export const SIDEBAR_COLLAPSE_MIN = 1181;
-export const MOBILE_SIDEBAR_MAX = 780;
+/** 含平板：抽屉导航上限（与 styles.css 侧栏抽屉断点一致）。 */
+export const MOBILE_SIDEBAR_MAX = 1180;
 export const WORKSPACE_CACHE_KEY = "stockagent.workspace.cache";
 export const WORKSPACE_SYNC_DEBOUNCE_MS = 500;
 export const ETF_QUOTE_TTL_MS = 60_000;

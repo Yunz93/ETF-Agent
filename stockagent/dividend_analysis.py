@@ -467,7 +467,7 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
         "percentile": round(spread_percentile, 4) if spread_percentile is not None else None,
         "label": percentile_label(spread_percentile),
         "bond_yield": round(bond_yield, 2) if bond_yield is not None else None,
-        "note": "利差历史分位按当前派息水平回推近似，含轻微前视偏差",
+        "note": "历史分位按「当前股息率×当前PE」回推派息水平近似计算",
     }
     bond_block = {
         "yield10y": round(bond_yield, 2) if bond_yield is not None else None,

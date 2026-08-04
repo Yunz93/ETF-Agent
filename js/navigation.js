@@ -40,9 +40,13 @@ export function resolveTheme(stored) {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+/** 无本地偏好时默认收起；仅显式 expanded 才展开。 */
+export function resolveSidebarPreference(stored) {
+  return stored === "expanded" ? "expanded" : "collapsed";
+}
+
 export function initSidebar() {
-  const stored = localStorage.getItem(SIDEBAR_KEY);
-  applySidebar(stored === "collapsed" ? "collapsed" : "expanded", { persist: false });
+  applySidebar(resolveSidebarPreference(localStorage.getItem(SIDEBAR_KEY)), { persist: false });
   applyMobileSidebar(false);
   syncSidebarForViewport();
 }
@@ -53,14 +57,13 @@ export function toggleSidebar() {
 }
 
 export function syncSidebarForViewport() {
-  if (window.innerWidth > MOBILE_SIDEBAR_MAX) {
+  const width = window.innerWidth;
+  if (width > MOBILE_SIDEBAR_MAX) {
     applyMobileSidebar(false);
   }
-  if (window.innerWidth <= SIDEBAR_COLLAPSE_MIN - 1) {
-    applySidebar("expanded", { persist: false });
-  } else {
-    const stored = localStorage.getItem(SIDEBAR_KEY);
-    if (stored === "collapsed") applySidebar("collapsed", { persist: false });
+  // 抽屉断点内不改 data-sidebar，避免抽屉打开时图标轨样式压掉文案；回到桌面再恢复偏好
+  if (width >= SIDEBAR_COLLAPSE_MIN) {
+    applySidebar(resolveSidebarPreference(localStorage.getItem(SIDEBAR_KEY)), { persist: false });
   }
 }
 

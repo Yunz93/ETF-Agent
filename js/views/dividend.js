@@ -169,10 +169,6 @@ function scoreCardHtml() {
   const kicker = technicalFramework
     ? `${grade} 档 · 技术面诊断（无估值权重）`
     : `${grade} 档 · 诊断辅助`;
-  const spreadNote = (currentPayload()?.spread?.note || "").trim();
-  const caveat = spreadNote
-    ? `<p class="muted dividend-backtest-caveat">${escapeHtml(spreadNote)}</p>`
-    : `<p class="muted dividend-backtest-caveat">利差历史分位按当前派息水平回推近似，含轻微前视偏差</p>`;
   return `
     <section class="panel-block dividend-score-card dividend-score-card-secondary ${tone}" aria-label="综合评分" title="${escapeAttr(GRADE_GUIDE)}">
       <div class="panel-heading">
@@ -189,7 +185,6 @@ function scoreCardHtml() {
       </div>
       <div class="dividend-components">${components}</div>
       <p class="muted dividend-backtest-line">${backtestLine}</p>
-      ${caveat}
     </section>
   `;
 }

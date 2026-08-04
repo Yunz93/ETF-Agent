@@ -1,9 +1,13 @@
 """External market-data adapters used by ETF analysis."""
 
 import datetime
+import hashlib
+import http.cookiejar
+import json
 import re
 import time
 import urllib.parse
+import urllib.request
 
 from .defaults import YAHOO_UA
 from .http_client import http_get_json, http_get_text
@@ -242,6 +246,109 @@ def fetch_danjuan_valuation(danjuan_code):
         "source": "蛋卷基金",
         "source_url": "https://danjuanfunds.com/dj-valuation-table-detail",
     }
+
+
+def legulegu_index_code_candidates(index_code):
+    """乐咕乐股 indexCode 候选（如 000510.CSI、000300.SH）。"""
+    raw = str(index_code or "").strip()
+    if not raw:
+        return []
+    if "." in raw:
+        return [raw]
+    code = raw.upper()
+    if code.startswith("399"):
+        return [f"{code}.SZ", f"{code}.CSI"]
+    # 中证系列优先 .CSI；上证综指类常见 .SH
+    return [f"{code}.CSI", f"{code}.SH"]
+
+
+def _legulegu_token(day=None):
+    stamp = (day or datetime.date.today()).isoformat()
+    return hashlib.md5(stamp.encode("utf-8")).hexdigest()
+
+
+def _legulegu_opener():
+    jar = http.cookiejar.CookieJar()
+    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+
+
+def _legulegu_get_json(opener, url, referer, timeout=20):
+    request = urllib.request.Request(
+        url,
+        headers={
+            **_browser_headers(referer),
+            "Accept": "application/json, text/plain, */*",
+            "X-Requested-With": "XMLHttpRequest",
+        },
+    )
+    with opener.open(request, timeout=timeout) as response:
+        body = response.read().decode("utf-8", errors="replace").strip()
+    if not body:
+        return None
+    return json.loads(body)
+
+
+def fetch_legulegu_index_valuation(index_code):
+    """乐咕乐股指数估值兜底：中证口径加权 PE/PB/股息率（蛋卷未收录时用）。
+
+    股息率字段为百分比（如 2.6），返回前转为小数以对齐蛋卷 yeild。
+    """
+    opener = _legulegu_opener()
+    token = _legulegu_token()
+    last_error = None
+    for code in legulegu_index_code_candidates(index_code):
+        page = f"https://www.legulegu.com/stockdata/index-basic?indexCode={urllib.parse.quote(code)}"
+        try:
+            warm = urllib.request.Request(page, headers=_browser_headers(page))
+            with opener.open(warm, timeout=20) as warm_response:
+                warm_response.read(64)
+            api = (
+                "https://www.legulegu.com/api/stockdata/index-basic?"
+                + urllib.parse.urlencode({"indexCode": code, "token": token})
+            )
+            payload = _legulegu_get_json(opener, api, page, timeout=20)
+        except Exception as exc:
+            last_error = exc
+            continue
+        rows = (payload or {}).get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list) or not rows:
+            last_error = RuntimeError(f"乐咕乐股未返回 {code} 估值序列")
+            continue
+        latest = rows[-1] if isinstance(rows[-1], dict) else None
+        if not latest:
+            last_error = RuntimeError(f"乐咕乐股 {code} 估值序列为空")
+            continue
+        pe = latest.get("addTtmPe")
+        if pe is None:
+            pe = latest.get("ttmPe")
+        pb = latest.get("addPb")
+        if pb is None:
+            pb = latest.get("pb")
+        dv_pct = latest.get("addDvTtm")
+        if dv_pct is None:
+            dv_pct = latest.get("dvTtm")
+        if pe is None and pb is None and dv_pct is None:
+            last_error = RuntimeError(f"乐咕乐股 {code} 缺少 PE/PB/股息率")
+            continue
+        pe_percentile = latest.get("addTtmPeQuantile")
+        if pe_percentile is None:
+            pe_percentile = latest.get("ttmPeQuantile")
+        pb_percentile = latest.get("addPbQuantile")
+        if pb_percentile is None:
+            pb_percentile = latest.get("pbQuantile")
+        return {
+            "pe": float(pe) if pe is not None else None,
+            "pb": float(pb) if pb is not None else None,
+            "pe_percentile": float(pe_percentile) if pe_percentile is not None else None,
+            "pb_percentile": float(pb_percentile) if pb_percentile is not None else None,
+            "dividend_yield": float(dv_pct) / 100.0 if dv_pct is not None else None,
+            "roe": None,
+            "date": str(latest.get("date") or "")[:10] or None,
+            "source": "乐咕乐股（中证口径）",
+            "source_url": page,
+            "provider_code": code,
+        }
+    raise RuntimeError(f"乐咕乐股估值不可用：{last_error or index_code}")
 
 def fetch_treasury_yield_history(pages=6, page_size=500):
     """东方财富数据中心：中国 10 年期国债收益率（EMM00166466），升序返回。"""
