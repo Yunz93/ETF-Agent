@@ -647,6 +647,44 @@ class AnalysisRoutingTests(unittest.TestCase):
         self.assertEqual(dividend._market_prefixed_index("399006"), "sz399006")
         self.assertEqual(dividend._market_prefixed_index("000300"), "sh000300")
 
+    def test_tencent_index_pe_backfill_not_marked_degraded(self):
+        """有蛋卷点位估值时，腾讯日线无每日 PE 只记 index.note，不进 errors（避免「部分数据降级」）。"""
+        dividend.clear_dividend_cache()
+        rows = [
+            {"date": "2024-01-02", "close": 100.0, "high": 101, "low": 99, "change_pct": 0.1, "pe": None},
+            {"date": "2024-01-03", "close": 110.0, "high": 111, "low": 109, "change_pct": 0.1, "pe": None},
+        ]
+        valuation = {
+            "pe": 22.0,
+            "pb": 2.0,
+            "pe_percentile": 0.5,
+            "dividend_yield": 0.02,
+            "source": "蛋卷基金",
+        }
+        with unittest.mock.patch(
+            "stockagent.dividend_service.fetch_index_history",
+            return_value=(rows, "腾讯行情"),
+        ), unittest.mock.patch(
+            "stockagent.dividend_service.fetch_etf_as_index_history",
+            return_value=(rows, "腾讯行情"),
+        ), unittest.mock.patch(
+            "stockagent.dividend_service.fetch_danjuan_valuation",
+            return_value=valuation,
+        ), unittest.mock.patch(
+            "stockagent.dividend_service.fetch_treasury_yield_history",
+            return_value=[],
+        ), unittest.mock.patch(
+            "stockagent.dividend_service.fetch_etf_quote",
+            return_value={"symbol": "513180", "price": 1.0, "name": "恒生科技ETF"},
+        ), unittest.mock.patch(
+            "stockagent.dividend_service.fetch_eastmoney_fund_profile",
+            return_value={},
+        ):
+            payload = dividend.get_dividend_dashboard(refresh=True, symbol="513180")
+        self.assertNotIn("index_pe", payload.get("errors") or {})
+        self.assertIn("无每日 PE", (payload.get("index") or {}).get("note") or "")
+        self.assertAlmostEqual(rows[-1]["pe"], 22.0, places=4)
+
     def test_fill_missing_pe_scales_with_price(self):
         rows = [
             {"date": "2024-01-02", "close": 1.0, "pe": None},

@@ -186,10 +186,17 @@ def get_dividend_dashboard(refresh=False, symbol=None):
             payload["index"]["source_url"] = (
                 "https://finance.sina.com.cn/" if index_source == "新浪财经" else "https://finance.qq.com/"
             )
-            if "valuation" not in errors:
+            # 腾讯/新浪日线本来就无每日 PE；有点位估值时已用价格回推填历史序列。
+            # 这是方法近似，不是缺数——写入 index.note，避免「部分数据降级」横幅误伤港美/创业板。
+            if "valuation" not in errors and valuation and valuation.get("pe") is not None:
+                payload["index"]["note"] = (
+                    f"日线来自{index_source}（无每日 PE）；"
+                    "历史 PE 按当前估值随价格回推，利差分位与回测为近似"
+                )
+            elif "valuation" not in errors:
                 errors["index_pe"] = (
                     f"该指数日线来自{index_source}，无每日 PE；"
-                    "历史 PE 按当前估值随价格回推（盈利恒定近似），利差分位与回测仅供参考"
+                    "且当前估值也不可用，利差分位与回测暂缺"
                 )
     if str(asset_class or "").strip().lower() == "commodity":
         try:
