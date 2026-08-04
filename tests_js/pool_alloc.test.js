@@ -68,6 +68,27 @@ test("zero-share holdings still participate in pool weight stats", () => {
   assert.equal(holdings[1].actualWeight, 100);
 });
 
+test("missing quote with shares marks quoteMissing and null marketValue", () => {
+  state.etfs = [
+    { symbol: "512890", name: "红利低波ETF", shares: 1000, target_weight: 60 },
+    { symbol: "510300", name: "沪深300ETF", shares: 100, target_weight: 40 },
+  ];
+  state.quotesBySymbol = {
+    "510300": { price: 4 },
+  };
+  state.analysisSymbol = null;
+  state.analysisCache = {};
+
+  const holdings = buildPoolHoldingsForAllocation();
+  const miss = holdings.find((row) => row.symbol === "512890");
+  const ok = holdings.find((row) => row.symbol === "510300");
+  assert.equal(miss.quoteMissing, true);
+  assert.equal(miss.marketValue, null);
+  assert.equal(miss.actualWeight, null);
+  assert.equal(ok.quoteMissing, false);
+  assert.equal(ok.actualWeight, 100);
+});
+
 test("analysis freshness rejects errors and expired payloads", async () => {
   const { isAnalysisFresh, isAnalysisUsable } = await import("../js/analysis-cache.js");
   assert.equal(isAnalysisUsable({ supported: true }), true);

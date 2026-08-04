@@ -141,10 +141,11 @@ test("initial build deploys full gap and tilts by valuation multipliers", () => 
     budget: 20000,
     strategy: "valuation",
     preferTargetGap: true,
+    buildTargetAmount: 100000,
     strategyConfig: { sentiment: { enabled: false } },
     holdings: [
-      { symbol: "510300", targetWeight: 60, actualWeight: 10, pePct: 0.9 },
-      { symbol: "512890", targetWeight: 40, actualWeight: 5, pePct: 0.2 },
+      { symbol: "510300", targetWeight: 60, actualWeight: 10, marketValue: 10000, pePct: 0.9 },
+      { symbol: "512890", targetWeight: 40, actualWeight: 5, marketValue: 5000, pePct: 0.2 },
     ],
   });
   assert.equal(paused.deployTotal, 20000);
@@ -157,10 +158,11 @@ test("initial build keeps cash when every name is valuation-paused", () => {
     budget: 10000,
     strategy: "valuation",
     preferTargetGap: true,
+    buildTargetAmount: 100000,
     strategyConfig: { sentiment: { enabled: false } },
     holdings: [
-      { symbol: "510300", targetWeight: 60, actualWeight: 20, pePct: 0.95 },
-      { symbol: "512890", targetWeight: 40, actualWeight: 10, pePct: 0.92 },
+      { symbol: "510300", targetWeight: 60, actualWeight: 20, marketValue: 20000, pePct: 0.95 },
+      { symbol: "512890", targetWeight: 40, actualWeight: 10, marketValue: 10000, pePct: 0.92 },
     ],
   });
   assert.equal(result.deployTotal, 0);
@@ -168,21 +170,57 @@ test("initial build keeps cash when every name is valuation-paused", () => {
   assert.match(result.note || "", /留现金/);
 });
 
-test("initial build keeps overweight names but downweights them", () => {
+test("initial build hard-caps overweight names at zero buy", () => {
   const result = allocatePoolBudget({
     budget: 10000,
     strategy: "fixed",
     preferTargetGap: true,
+    buildTargetAmount: 100000,
     holdings: [
-      { symbol: "OVER", targetWeight: 40, actualWeight: 70 },
-      { symbol: "ROOM", targetWeight: 60, actualWeight: 30 },
+      { symbol: "OVER", targetWeight: 40, actualWeight: 70, marketValue: 70000 },
+      { symbol: "ROOM", targetWeight: 60, actualWeight: 30, marketValue: 30000 },
     ],
   });
   assert.equal(result.deployTotal, 10000);
-  const over = allocationForSymbol(result, "OVER");
-  const room = allocationForSymbol(result, "ROOM");
-  assert.ok(over?.amount > 0);
-  assert.ok(room.amount > over.amount);
+  assert.equal(allocationForSymbol(result, "OVER"), null);
+  assert.equal(allocationForSymbol(result, "ROOM")?.amount, 10000);
+});
+
+test("initial build money-gap example 60/40 with 35万/15万 toward 60万", () => {
+  const result = allocatePoolBudget({
+    budget: 200000,
+    strategy: "fixed",
+    preferTargetGap: true,
+    buildTargetAmount: 600000,
+    holdings: [
+      { symbol: "A", targetWeight: 60, actualWeight: 70, marketValue: 350000 },
+      { symbol: "B", targetWeight: 40, actualWeight: 30, marketValue: 150000 },
+    ],
+  });
+  const a = allocationForSymbol(result, "A");
+  const b = allocationForSymbol(result, "B");
+  assert.ok(a);
+  assert.ok(b);
+  assert.ok(Math.abs(a.amount - 10000) <= 1);
+  assert.ok(Math.abs(b.amount - 90000) <= 1);
+  // A 目标金额 36 万，买入后市值不超过目标
+  assert.ok(350000 + a.amount <= 360000 + 1);
+});
+
+test("quoteMissing freezes name during initial build", () => {
+  const result = allocatePoolBudget({
+    budget: 50000,
+    strategy: "fixed",
+    preferTargetGap: true,
+    buildTargetAmount: 100000,
+    holdings: [
+      { symbol: "MISS", targetWeight: 50, shares: 1000, marketValue: null, quoteMissing: true },
+      { symbol: "OK", targetWeight: 50, marketValue: 10000, actualWeight: 50 },
+    ],
+  });
+  assert.equal(allocationForSymbol(result, "MISS"), null);
+  assert.ok(result.skipped.some((row) => row.symbol === "MISS" && /行情/.test(row.band || row.reason || "")));
+  assert.ok(allocationForSymbol(result, "OK")?.amount > 0);
 });
 
 test("commodity valuation uses technical grade, not equity PE pause", () => {

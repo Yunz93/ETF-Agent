@@ -9,7 +9,7 @@ import {
   planPeriod,
 } from "./decision-support.js";
 import { allocatePoolBudget } from "./strategy.js";
-import { buildPoolHoldingsForAllocation } from "./pool-alloc.js";
+import { buildPoolHoldingsForAllocation, prepareHoldingsForAllocation } from "./pool-alloc.js";
 import { buildRebalanceSellSuggestions } from "./rebalance-sell.js";
 import {
   normalizeCashReserve,
@@ -37,8 +37,9 @@ function draftId(period, symbol, side = "buy") {
 export function buildExecutionDraftsFromAllocation({ now = new Date() } = {}) {
   const plan = state.plan || {};
   const period = planPeriod(plan, now);
-  const holdings = buildPoolHoldingsForAllocation();
-  const execution = planExecutionContext({ plan, holdings });
+  const rawHoldings = buildPoolHoldingsForAllocation();
+  const holdings = prepareHoldingsForAllocation(rawHoldings);
+  const execution = planExecutionContext({ plan, holdings: rawHoldings });
   const pool = allocatePoolBudget({
     budget: execution.budget,
     holdings,
@@ -46,6 +47,7 @@ export function buildExecutionDraftsFromAllocation({ now = new Date() } = {}) {
     strategyConfig: plan.strategy_config,
     strategyOverrides: plan.strategy_overrides,
     preferTargetGap: execution.phase === "initial",
+    buildTargetAmount: execution.phase === "initial" ? execution.targetAmount : null,
     sentimentByMarket: sentimentByMarketFromState(),
     analysisRegistry: analysisRegistryFromConfig(),
     cashReserve: Number(plan.cash_reserve?.balance) || 0,
@@ -213,7 +215,11 @@ export function settleCashReserveOnPeriodComplete({ now = new Date(), plan = sta
 
   const buyExecuted = drafts
     .filter((item) => item.side !== "sell" && item.status === "confirmed")
-    .reduce((sum, item) => sum + (Number(item.price) || 0) * (Number(item.shares) || 0), 0);
+    .reduce((sum, item) => {
+      const notional = (Number(item.price) || 0) * (Number(item.shares) || 0);
+      const fee = Math.max(0, Number(item.fee) || 0);
+      return sum + notional + fee;
+    }, 0);
 
   let cash_reserve = normalizeCashReserve(current.cash_reserve);
   const keepAmt = Math.round(Math.max(0, budget - buyExecuted) * 100) / 100;

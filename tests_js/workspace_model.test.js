@@ -77,7 +77,7 @@ test("legacy workspace entries receive default target weights", () => {
     { symbol: "512890", shares: 100, cost: 1.2 },
     { symbol: "563360", shares: -1, cost: "bad" },
   ]);
-  assert.equal(entries[0].target_weight, 20);
+  assert.equal(entries[0].target_weight, 35);
   assert.equal(entries[1].target_weight, 20);
   assert.equal(entries[1].shares, 0);
   assert.equal(entries[1].cost, 0);

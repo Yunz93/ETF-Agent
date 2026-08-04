@@ -14,6 +14,7 @@ import {
 } from "./market-sentiment.js";
 import { goldMacroFromState } from "./gold-macro.js";
 import { portfolioReviewResultHtml } from "./ai-portfolio.js";
+import { applyIndexExposureGroups } from "./index-exposure.js";
 
 function cacheKey(symbol) {
   return analysisCacheKey(symbol);
@@ -41,31 +42,46 @@ export function buildPoolHoldingsForAllocation({ preferLive = null } = {}) {
   const liveSymbol = live?.symbol || state.analysisSymbol || null;
   let total = 0;
   const valueMap = {};
+  const quoteMissingMap = {};
   state.etfs.forEach((item) => {
     const quote = state.quotesBySymbol[item.symbol];
     const livePrice =
       liveSymbol === item.symbol
         ? live?.etf?.price ?? live?.price
         : null;
-    const price = livePrice ?? quote?.price;
-    if (price != null) {
-      const shares = Math.max(0, Number(item.shares) || 0);
+    const price = Number(livePrice ?? quote?.price);
+    const shares = Math.max(0, Number(item.shares) || 0);
+    if (Number.isFinite(price) && price > 0) {
       valueMap[item.symbol] = shares * price;
       total += valueMap[item.symbol];
+    } else if (shares > 0) {
+      quoteMissingMap[item.symbol] = true;
     }
   });
   return state.etfs.map((entry) => {
     const cached =
       live && liveSymbol === entry.symbol ? live : state.analysisCache[cacheKey(entry.symbol)];
     const analyzed = isAnalysisUsable(cached);
+    const quoteMissing = Boolean(quoteMissingMap[entry.symbol]);
+    const marketValue = quoteMissing
+      ? null
+      : valueMap[entry.symbol] != null
+        ? valueMap[entry.symbol]
+        : 0;
     const actualWeight =
-      valueMap[entry.symbol] != null ? (total > 0 ? (valueMap[entry.symbol] / total) * 100 : 0) : null;
+      !quoteMissing && valueMap[entry.symbol] != null
+        ? total > 0
+          ? (valueMap[entry.symbol] / total) * 100
+          : 0
+        : null;
     return {
       symbol: entry.symbol,
       name: poolEntryDisplayName(entry, cached),
       targetWeight: Number(entry.target_weight) > 0 ? Number(entry.target_weight) : 0,
       actualWeight,
-      marketValue: valueMap[entry.symbol] ?? 0,
+      marketValue,
+      quoteMissing,
+      shares: Math.max(0, Number(entry.shares) || 0),
       pePct: analyzed ? cached?.valuation?.pe_percentile_10y : null,
       grade: analyzed ? cached?.score?.grade : null,
       assetClass: analyzed ? cached?.asset_class || null : null,
@@ -77,10 +93,22 @@ export function buildPoolHoldingsForAllocation({ preferLive = null } = {}) {
   });
 }
 
-function dataStatusBadge(analyzed) {
+function dataStatusBadge(analyzed, quoteMissing = false) {
+  if (quoteMissing) {
+    return `<span class="pool-alloc-badge is-warn" title="缺少有效行情，本期冻结">等待行情</span>`;
+  }
   return analyzed
     ? `<span class="pool-alloc-badge is-ready" title="已用分析缓存参与分配">已分析</span>`
     : `<span class="pool-alloc-badge is-neutral" title="暂无分析，按中性倍率参与分配">中性兜底</span>`;
+}
+
+/** 组装分配用 holdings：同指数择优/组标记后再交给 allocatePoolBudget。 */
+export function prepareHoldingsForAllocation(rawHoldings = []) {
+  const { holdings } = applyIndexExposureGroups(rawHoldings, {
+    analysisRegistry: analysisRegistryFromConfig(),
+    products: appConfig?.etf?.products || {},
+  });
+  return holdings;
 }
 
 /**
@@ -160,8 +188,9 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
   const plan = state.plan || {};
   const cadenceLabel = PLAN_CADENCE_LABELS[plan.cadence] || "每月";
   const dayLabel = plan.cadence === "monthly" ? `${plan.day || 1} 号` : `周${plan.day || 1}`;
-  const holdings = buildPoolHoldingsForAllocation();
-  const execution = planExecutionContext({ plan, holdings });
+  const rawHoldings = buildPoolHoldingsForAllocation();
+  const holdings = prepareHoldingsForAllocation(rawHoldings);
+  const execution = planExecutionContext({ plan, holdings: rawHoldings });
   const cashBalance = Number(plan.cash_reserve?.balance) || 0;
   const pool = allocatePoolBudget({
     budget: execution.budget,
@@ -170,6 +199,7 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
     strategyConfig: plan.strategy_config,
     strategyOverrides: plan.strategy_overrides,
     preferTargetGap: execution.phase === "initial",
+    buildTargetAmount: execution.phase === "initial" ? execution.targetAmount : null,
     sentimentByMarket: sentimentByMarketFromState(),
     analysisRegistry: analysisRegistryFromConfig(),
     goldMacro: goldMacroFromState(),
@@ -178,6 +208,9 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
   const strategyName = strategyLabel(plan.strategy);
   const preliminary = analysisPrefetchIsPreliminary();
   const analyzedMap = Object.fromEntries(holdings.map((item) => [item.symbol, item.analyzed]));
+  const quoteMissingMap = Object.fromEntries(
+    holdings.map((item) => [item.symbol, Boolean(item.quoteMissing)]),
+  );
   const feeHints = sameIndexHigherFeeHints({
     symbols: holdings.map((item) => item.symbol),
     analysisRegistry: analysisRegistryFromConfig(),
@@ -254,13 +287,16 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
           .map((row) => {
             const active = highlightSymbol && row.symbol === highlightSymbol ? " is-current" : "";
             const analyzed = Boolean(analyzedMap[row.symbol]);
+            const quoteMissing = Boolean(quoteMissingMap[row.symbol]);
             const amountClass = preliminary ? "num is-preliminary" : "num";
-            const feeHint = feeHints[row.symbol]
-              ? `<em class="pool-alloc-fee-hint muted">${escapeHtml(feeHints[row.symbol])}</em>`
-              : "";
+            const feeHint =
+              !quoteMissing && feeHints[row.symbol]
+                ? `<em class="pool-alloc-fee-hint muted">${escapeHtml(feeHints[row.symbol])}</em>`
+                : "";
+            const badge = dataStatusBadge(analyzed, quoteMissing);
             const nameCell = clickable
-              ? `<button class="link-button pool-alloc-name" type="button" data-analyze="${escapeAttr(row.symbol)}">${escapeHtml(row.name)}${dataStatusBadge(analyzed)}${feeHint}</button>`
-              : `<span>${escapeHtml(row.name)}${dataStatusBadge(analyzed)}${feeHint}</span>`;
+              ? `<button class="link-button pool-alloc-name" type="button" data-analyze="${escapeAttr(row.symbol)}">${escapeHtml(row.name)}${badge}${feeHint}</button>`
+              : `<span>${escapeHtml(row.name)}${badge}${feeHint}</span>`;
             return `<div class="dca-alloc-row${active}">${nameCell}<span>${escapeHtml(row.band || "—")}</span><span class="${amountClass}">${row.amount > 0 ? money(row.amount) : "不投"}</span></div>`;
           })
           .join("")}
@@ -275,8 +311,9 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
 /** 供外部触发 AI 审视时复用当前分配结果。 */
 export function currentPoolAllocationResult() {
   const plan = state.plan || {};
-  const holdings = buildPoolHoldingsForAllocation();
-  const execution = planExecutionContext({ plan, holdings });
+  const rawHoldings = buildPoolHoldingsForAllocation();
+  const holdings = prepareHoldingsForAllocation(rawHoldings);
+  const execution = planExecutionContext({ plan, holdings: rawHoldings });
   if (!(execution.budget > 0) || !holdings.length) return null;
   return allocatePoolBudget({
     budget: execution.budget,
@@ -285,8 +322,10 @@ export function currentPoolAllocationResult() {
     strategyConfig: plan.strategy_config,
     strategyOverrides: plan.strategy_overrides,
     preferTargetGap: execution.phase === "initial",
+    buildTargetAmount: execution.phase === "initial" ? execution.targetAmount : null,
     sentimentByMarket: sentimentByMarketFromState(),
     analysisRegistry: analysisRegistryFromConfig(),
+    goldMacro: goldMacroFromState(),
     cashReserve: Number(plan.cash_reserve?.balance) || 0,
   });
 }

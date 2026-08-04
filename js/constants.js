@@ -8,13 +8,12 @@ export const PAGE_TITLES = {
   settings: "设置",
 };
 
-/** 种子池目标仓位（%），与后端 DEFAULT_TARGET_WEIGHTS 对齐 */
+/** 种子池目标仓位（%），与后端 DEFAULT_TARGET_WEIGHTS 对齐；同指数不双开 */
 export const DEFAULT_TARGET_WEIGHTS = {
   "563360": 20,
   "513390": 15,
   "513500": 15,
-  "563020": 15,
-  "512890": 20,
+  "512890": 35,
   "513010": 10,
   "159937": 5,
 };

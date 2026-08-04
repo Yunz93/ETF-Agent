@@ -227,7 +227,7 @@ class WorkspaceNormalizationTests(unittest.TestCase):
             }
         )
         by_symbol = {item["symbol"]: item for item in workspace["etfs"]}
-        self.assertEqual(by_symbol["512890"]["target_weight"], 20)
+        self.assertEqual(by_symbol["512890"]["target_weight"], 35)
         self.assertEqual(by_symbol["563360"]["target_weight"], 20)
         self.assertEqual(by_symbol["510300"]["target_weight"], 0)
         self.assertEqual(workspace["plan"]["cadence"], "monthly")

@@ -107,6 +107,7 @@ export function getPeriodAdvice({
     strategyConfig,
     strategyOverrides,
     preferTargetGap: execution.phase === "initial",
+    buildTargetAmount: execution.phase === "initial" ? execution.targetAmount : null,
     sentimentByMarket: markets,
     analysisRegistry: registry,
     goldMacro: macro,
