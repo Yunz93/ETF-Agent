@@ -369,6 +369,28 @@ class AIPolicyTests(unittest.TestCase):
         )
         self.assertEqual(policy["final_amount"], 18000)
 
+    def test_position_snapshot_recurring_cap_ignores_pending_carry(self):
+        snapshot = _position_snapshot(
+            {"execution_phase": "recurring"},
+            {
+                "plan": {
+                    "amount": 2000,
+                    "pending_orders": {
+                        "512890": {
+                            "period": "2026-06-01",
+                            "carry": 800,
+                            "scheduled": 2000,
+                            "remaining": 800,
+                        }
+                    },
+                },
+                "etfs": [{"symbol": "512890", "shares": 1000, "cost": 1}],
+            },
+            "512890",
+        )
+        self.assertEqual(snapshot["plan_budget"], 2000)
+        self.assertEqual(snapshot["execution_budget"], 2000)
+
     def test_position_snapshot_uses_remaining_initial_gap(self):
         snapshot = _position_snapshot(
             {"execution_phase": "initial"},

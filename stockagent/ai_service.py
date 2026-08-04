@@ -496,8 +496,8 @@ def _position_snapshot(raw, workspace, symbol=""):
     plan = workspace.get("plan") or {}
     phase = str(source.get("execution_phase") or "recurring")
     recurring_budget = max(0.0, _number(plan.get("amount")))
-    pending = (plan.get("pending_orders") or {}).get(symbol) or {}
-    recurring_cap = recurring_budget + max(0.0, _number(pending.get("carry")))
+    # Phase 7：不再叠加 pending carry；未执行预算统一走现金池，AI 侧只用周期预算
+    recurring_cap = recurring_budget
     capital_base = max(0.0, _number(plan.get("capital_base")))
     initial_target_pct = max(0.0, min(100.0, _number(plan.get("initial_target_pct"))))
     try:

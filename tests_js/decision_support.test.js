@@ -6,6 +6,7 @@ import {
   estimatedTradeFee,
   holdingFromTrades,
   orderPreview,
+  cashReserveHintBalance,
   pendingOrderState,
   planExecutionContext,
   planPeriod,
@@ -147,7 +148,7 @@ test("completed initial build stays in recurring mode after a drawdown", () => {
   assert.equal(context.budget, 5000);
 });
 
-test("pending order rolls remaining budget into the next period", () => {
+test("pending order does not roll remaining into next-period carry", () => {
   const plan = {
     cadence: "monthly",
     day: 1,
@@ -167,9 +168,41 @@ test("pending order rolls remaining budget into the next period", () => {
     buys: [],
     now: new Date(2026, 6, 10),
   });
-  assert.equal(pending.carry, 800);
+  assert.equal(pending.carry, 0);
   assert.equal(pending.scheduled, 900);
-  assert.equal(pending.remaining, 1700);
+  assert.equal(pending.remaining, 900);
+});
+
+test("legacy stored carry is ignored within the same period", () => {
+  const plan = {
+    cadence: "monthly",
+    day: 1,
+    pending_orders: {
+      "512890": {
+        period: "2026-07-01",
+        carry: 500,
+        scheduled: 800,
+        remaining: 1300,
+      },
+    },
+  };
+  const pending = pendingOrderState({
+    plan,
+    symbol: "512890",
+    recommendedAmount: 1000,
+    buys: [{ symbol: "512890", date: "2026-07-05", price: 1, shares: 200, fee: 0 }],
+    now: new Date(2026, 6, 10),
+  });
+  assert.equal(pending.carry, 0);
+  assert.equal(pending.scheduled, 1000);
+  assert.equal(pending.remaining, 800); // 1000 - 200，不含旧 carry
+});
+
+test("cashReserveHintBalance only surfaces positive balances", () => {
+  assert.equal(cashReserveHintBalance({}), 0);
+  assert.equal(cashReserveHintBalance({ cash_reserve: { balance: 0 } }), 0);
+  assert.equal(cashReserveHintBalance({ cash_reserve: { balance: 0.005 } }), 0);
+  assert.equal(cashReserveHintBalance({ cash_reserve: { balance: 1500.5 } }), 1500.5);
 });
 
 test("projected position marks overweight without hard-blocking by default", () => {

@@ -12,6 +12,7 @@ import { buildChartNarrative } from "../chart-narrative.js";
 import {
   cycleExecution,
   orderPreview,
+  cashReserveHintBalance,
   pendingOrderState,
   projectedPosition,
   returnCorrelation,
@@ -508,7 +509,8 @@ function decisionContext(advice) {
     };
     persistWorkspace();
   }
-  const availableAmount = (pending?.carry || 0) + (pending?.scheduled || 0);
+  // 可用额只含本期策略分配；历史留存见现金池，不再叠加 carry
+  const availableAmount = Math.max(0, Number(pending?.scheduled) || 0);
   const cycle = cycleExecution({
     plan: state.plan,
     buys: state.buys,
@@ -588,17 +590,17 @@ function conclusionHeadline(advice, context) {
 }
 
 function executionPanelHtml(advice, context) {
-  const { cycle, order, position, pending, symbol } = context;
+  const { cycle, order, position, symbol } = context;
   const initial = advice?.execution?.phase === "initial";
   const strategyAmount = Number(advice?.amount) || 0;
   const remaining = Number(cycle.remainingAmount) || 0;
   const executed = Number(cycle.executedAmount) || 0;
-  const carry = Number(pending?.carry) || 0;
+  const cashReserveBalance = cashReserveHintBalance(state.plan);
   // 可执行额已上标题时，明细只补「策略全额 / 已买」依据，不再复述同一可用额
   const truncated =
     advice?.stance === STANCE.INVEST &&
     strategyAmount > 0 &&
-    (Math.abs(strategyAmount - remaining) > 0.009 || executed > 0.009 || carry > 0.009);
+    (Math.abs(strategyAmount - remaining) > 0.009 || executed > 0.009);
   const lastBuyText = cycle.lastBuy
     ? `${cycle.lastBuy.date} · ${Number(cycle.lastBuy.price).toFixed(3)}`
     : "暂无记录";
@@ -621,11 +623,11 @@ function executionPanelHtml(advice, context) {
             overweightHint ? "（已超目标，比例已下调）" : ""
           }`
         : order.blockedReason === "fee_inefficient"
-          ? "额度不足，累计至下期"
+          ? "额度不足一整手"
           : order.blockedReason === "fee_rate_exceeds_limit"
             ? "佣金费率高于设定上限，请调整成本参数"
           : advice.amount > 0
-            ? `不足 ${order.lotSize} 份，继续累计`
+            ? `不足 ${order.lotSize} 份，暂不买入`
             : "无待成交订单";
 
   const skipOrder = !willOrder && !(advice?.amount > 0 && order.blockedReason);
@@ -641,7 +643,10 @@ function executionPanelHtml(advice, context) {
       gridRows.push(`<div><dt>本期已买</dt><dd>${money(executed)}</dd></div>`);
     }
   }
-  gridRows.push(`<div><dt>待执行累计</dt><dd>${money(carry)}</dd></div>`);
+  // 历史留存只展示一次现金池余额（>0）；不再展示跨期 carry
+  if (cashReserveBalance > 0) {
+    gridRows.push(`<div><dt>现金池</dt><dd>${money(cashReserveBalance)}</dd></div>`);
+  }
   if (willOrder || (!skipOrder && advice?.amount > 0)) {
     gridRows.push(
       `<div><dt>建议成交份额</dt><dd>${willOrder ? `${order.shares.toLocaleString("zh-CN")} 份` : "—"}</dd></div>`,
@@ -789,16 +794,14 @@ function dcaAdviceHtml(advice, context) {
   const strategyAmount = Number(active.amount) || 0;
   const remaining = Number(context?.cycle?.remainingAmount) || 0;
   const executed = Number(context?.cycle?.executedAmount) || 0;
-  const carry = Number(context?.pending?.carry) || 0;
-  // 标题已是可执行额时，用一句依据说明被截断来源，不再并列第二个「建议」金额
+  // 标题已是可执行额时，用一句依据说明被截断来源，不再并列第二个「建议」金额；现金池见执行面板
   if (
     active.stance === STANCE.INVEST &&
     strategyAmount > 0 &&
-    (Math.abs(strategyAmount - remaining) > 0.009 || executed > 0.009 || carry > 0.009)
+    (Math.abs(strategyAmount - remaining) > 0.009 || executed > 0.009)
   ) {
     const parts = [`策略分配 ${money(strategyAmount)}`];
     if (executed > 0.009) parts.push(`本期已买 ${money(executed)}`);
-    if (carry > 0.009) parts.push(`上期累计 ${money(carry)}`);
     bullets.push(parts.join(" · "));
   }
 

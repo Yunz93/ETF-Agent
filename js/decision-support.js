@@ -147,6 +147,12 @@ export function planExecutionContext({ plan = {}, holdings = [] } = {}) {
   };
 }
 
+/** 执行面板现金池提示：余额 >0 才展示（返回展示金额，否则 0）。 */
+export function cashReserveHintBalance(plan) {
+  const balance = Math.max(0, Number(plan?.cash_reserve?.balance) || 0);
+  return balance > 0.009 ? Math.round(balance * 100) / 100 : 0;
+}
+
 export function pendingOrderState({
   plan = {},
   buys = [],
@@ -156,10 +162,7 @@ export function pendingOrderState({
 } = {}) {
   const period = planPeriod(plan, now);
   const existing = plan.pending_orders?.[symbol] || {};
-  const samePeriod = existing.period === period.start;
-  const carry = samePeriod
-    ? Math.max(0, Number(existing.carry) || 0)
-    : Math.max(0, Number(existing.remaining) || 0);
+  // Phase 7：废弃跨期 carry；未花预算统一入现金池。旧数据 carry 读入视为 0。
   const scheduled = Math.max(0, Number(recommendedAmount) || 0);
   const executed = buys
     .filter((buy) => buy.symbol === symbol && buy.date >= period.start && buy.date < period.end)
@@ -167,10 +170,10 @@ export function pendingOrderState({
       (sum, buy) => sum + Number(buy.price) * Number(buy.shares) + Math.max(0, Number(buy.fee) || 0),
       0,
     );
-  const remaining = Math.max(0, carry + scheduled - executed);
+  const remaining = Math.max(0, scheduled - executed);
   const record = {
     period: period.start,
-    carry: Math.round(carry * 100) / 100,
+    carry: 0,
     scheduled: Math.round(scheduled * 100) / 100,
     remaining: Math.round(remaining * 100) / 100,
   };
