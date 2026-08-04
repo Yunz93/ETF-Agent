@@ -19,6 +19,15 @@ from .health import get_data_health, get_runtime_info
 from .ai_providers import AIProviderError
 from .ai_service import ai_status, review_portfolio, review_recommendation, test_connection
 from .secret_store import delete_api_key, save_api_key
+from .site_auth import (
+    auth_enabled,
+    cookie_ok,
+    is_public_path,
+    login_ok,
+    login_page_html,
+    request_is_https,
+    session_cookie_header,
+)
 
 mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
@@ -27,6 +36,8 @@ mimetypes.add_type("text/html", ".html")
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         parsed = urllib.parse.urlparse(self.path)
+        if not self._authorize(parsed.path):
+            return
         if parsed.path.startswith("/api/"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -45,6 +56,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(parsed.query)
+        if parsed.path == "/login":
+            error = (query.get("error") or [""])[0].strip() or None
+            self.send_html(login_page_html(error))
+            return
+        if not self._authorize(parsed.path):
+            return
         try:
             if parsed.path == "/api/config":
                 self.send_json(public_config())
@@ -132,6 +149,28 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": f"JSON 格式错误: {exc}"}, status=400)
             return
 
+        if parsed.path == "/api/auth/login":
+            if not auth_enabled():
+                self.send_json({"ok": True, "auth": False})
+                return
+            if not login_ok(payload.get("password")):
+                self.send_json({"error": "口令错误"}, status=401)
+                return
+            self.send_json(
+                {"ok": True},
+                set_cookie=session_cookie_header(secure=request_is_https(self)),
+            )
+            return
+        if parsed.path == "/api/auth/logout":
+            self.send_json(
+                {"ok": True},
+                set_cookie=session_cookie_header(secure=request_is_https(self), clear=True),
+            )
+            return
+
+        if not self._authorize(parsed.path):
+            return
+
         try:
             if parsed.path == "/api/config":
                 self.send_json(public_config(save_config(payload)))
@@ -175,6 +214,17 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=500)
 
+    def _authorize(self, path: str) -> bool:
+        """Return True if the request may proceed; otherwise write a denial response."""
+        if not auth_enabled() or is_public_path(path) or cookie_ok(self.headers):
+            return True
+        if path.startswith("/api/"):
+            self.send_json({"error": "未登录"}, status=401)
+            return False
+        # Browser navigations: show login form instead of a bare 401.
+        self.send_html(login_page_html())
+        return False
+
     def serve_static(self, path):
         target = resolve_static_path(path)
         if target is None:
@@ -188,11 +238,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def send_json(self, payload, status=200):
+    def send_html(self, body: str, status=200):
+        data = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_json(self, payload, status=200, set_cookie=None):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)

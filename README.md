@@ -45,7 +45,16 @@ python3 server.py
 
 ### 部署到 Vercel
 
-静态页由 CDN 托管，`/api/*` 走 Python Serverless（`api/index.py`）。可写数据目录为 `/tmp/stockagent`（实例间不持久；浏览器 localStorage 会缓存工作区）。
+全站（页面与 `/api/*`）经 Python Serverless（`api/index.py`）处理，便于统一鉴权。可写数据目录为 `/tmp/stockagent`（实例间不持久；浏览器 localStorage 会缓存工作区）。
+
+公网部署请设置访问口令（未设置则站点仍公开）：
+
+```bash
+# Vercel → Project → Settings → Environment Variables（Production）
+SITE_PASSWORD=你的口令
+```
+
+本地 / 桌面不设 `SITE_PASSWORD` 时行为不变。设置后首次打开会进入登录页，口令正确后写入 HttpOnly Cookie（约 30 天）。
 
 ```bash
 npx vercel --prod
