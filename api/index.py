@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Vercel Python serverless entrypoint for ETF Agent API routes.
+"""Vercel Python serverless entrypoint for ETF Agent.
 
-Static assets (index.html / js / styles.css) are served by Vercel's CDN.
-Only ``/api/*`` is rewritten here. Writable state goes under ``/tmp`` because
-the Vercel function filesystem is read-only outside of it.
+All traffic is routed here (see vercel.json ``routes``) so SITE_PASSWORD can
+gate both HTML and ``/api/*``. Writable state goes under ``/tmp`` because the
+Vercel function filesystem is read-only outside of it.
 """
 
 from __future__ import annotations
