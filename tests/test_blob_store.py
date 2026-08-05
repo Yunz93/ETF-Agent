@@ -53,11 +53,51 @@ class BlobStoreTests(unittest.TestCase):
         )
 
     def test_blob_enabled(self):
-        with mock.patch.dict(os.environ, {"BLOB_READ_WRITE_TOKEN": ""}, clear=False):
-            os.environ.pop("BLOB_READ_WRITE_TOKEN", None)
+        cleared = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in {"BLOB_READ_WRITE_TOKEN", "BLOB_STORE_ID", "VERCEL_OIDC_TOKEN"}
+        }
+        with mock.patch.dict(os.environ, cleared, clear=True):
             self.assertFalse(blob_store.blob_enabled())
         with mock.patch.dict(os.environ, self.env, clear=False):
             self.assertTrue(blob_store.blob_enabled())
+
+    def test_blob_enabled_with_store_id_only(self):
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in {"BLOB_READ_WRITE_TOKEN", "BLOB_STORE_ID", "VERCEL_OIDC_TOKEN"}
+        }
+        env["BLOB_STORE_ID"] = "store_AbCdEfGh"
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertTrue(blob_store.blob_enabled())
+            self.assertEqual(blob_store.blob_auth_kind(), "oidc")
+
+    def test_put_json_uses_oidc_credentials(self):
+        captured = {}
+
+        def fake_urlopen(request, timeout=30):
+            captured["headers"] = {k.lower(): v for k, v in request.header_items()}
+            return FakeResponse({"pathname": "stockagent/config.json"})
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in {"BLOB_READ_WRITE_TOKEN", "BLOB_STORE_ID", "VERCEL_OIDC_TOKEN"}
+        }
+        env.update(
+            {
+                "BLOB_STORE_ID": "store_AbCdEfGh",
+                "VERCEL_OIDC_TOKEN": "oidc-test-token",
+                "STOCKAGENT_BLOB_ACCESS": "private",
+            }
+        )
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                blob_store.put_json("stockagent/config.json", {"ai": {}})
+        self.assertEqual(captured["headers"]["authorization"], "Bearer oidc-test-token")
+        self.assertEqual(captured["headers"]["x-vercel-blob-store-id"], "AbCdEfGh")
 
     def test_put_json_issues_overwrite_put(self):
         captured = {}

@@ -101,7 +101,7 @@ def probe_dividend_sources():
 
 
 def durable_storage_backend():
-    """Return ``blob`` when Vercel Blob token is configured, else ``local``."""
+    """Return ``blob`` when Vercel Blob credentials are configured, else ``local``."""
     try:
         from .blob_store import blob_enabled
 
@@ -142,6 +142,13 @@ def get_runtime_info():
     index = resolve_static_path("/index.html")
     backend = durable_storage_backend()
     ephemeral = is_ephemeral_storage()
+    blob_auth = None
+    try:
+        from .blob_store import blob_auth_kind
+
+        blob_auth = blob_auth_kind()
+    except Exception:
+        blob_auth = None
     return {
         "app": "ETF Agent",
         "version": version,
@@ -153,6 +160,7 @@ def get_runtime_info():
         "workspace_path": str(WORKSPACE_PATH),
         "durable_storage": backend,
         "ephemeral_storage": ephemeral,
+        "blob_auth": blob_auth,
         "platform": sys.platform,
         "python": sys.version.split()[0],
         "frozen": bool(getattr(sys, "frozen", False)),
