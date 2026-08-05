@@ -107,12 +107,16 @@ export const runtimeInfo = {
   loaded: false,
   ephemeralStorage: false,
   durableStorage: "local",
+  platform: "",
+  mode: "server",
 };
 
 export function setRuntimeInfo(payload) {
   runtimeInfo.loaded = true;
   runtimeInfo.ephemeralStorage = Boolean(payload?.ephemeral_storage);
   runtimeInfo.durableStorage = payload?.durable_storage === "blob" ? "blob" : "local";
+  runtimeInfo.platform = String(payload?.platform || "");
+  runtimeInfo.mode = payload?.mode === "desktop" ? "desktop" : "server";
 }
 
 export const els = {};

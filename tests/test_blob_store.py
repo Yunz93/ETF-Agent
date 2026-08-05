@@ -147,6 +147,30 @@ class BlobStoreTests(unittest.TestCase):
             self.assertEqual(info["durable_storage"], "blob")
             self.assertFalse(info["ephemeral_storage"])
 
+    def test_hydrate_transport_error_raises_blob_hydrate_error(self):
+        def fake_urlopen(request, timeout=30):
+            raise urllib.error.HTTPError(request.full_url, 503, "Unavailable", hdrs=None, fp=None)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / "workspace.json"
+            with mock.patch.dict(os.environ, self.env, clear=False):
+                with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                    with self.assertRaises(blob_store.BlobHydrateError):
+                        blob_store.hydrate_local_json("stockagent/workspace.json", local)
+            self.assertFalse(local.exists())
+
+    def test_get_workspace_raises_when_blob_hydrate_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "workspace.json"
+            with mock.patch.object(workspace_store, "WORKSPACE_PATH", path):
+                with mock.patch("stockagent.blob_store.blob_enabled", return_value=True):
+                    with mock.patch(
+                        "stockagent.blob_store.hydrate_local_json",
+                        side_effect=blob_store.BlobHydrateError("boom"),
+                    ):
+                        with self.assertRaises(blob_store.BlobHydrateError):
+                            workspace_store.get_workspace()
+
 
 if __name__ == "__main__":
     unittest.main()

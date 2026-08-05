@@ -497,13 +497,23 @@ def workspace_has_user_data(workspace):
 
 def get_workspace():
     with WORKSPACE_LOCK:
-        try:
-            from .blob_store import WORKSPACE_BLOB_PATH, hydrate_local_json
+        from .blob_store import (
+            WORKSPACE_BLOB_PATH,
+            BlobHydrateError,
+            blob_enabled,
+            hydrate_local_json,
+        )
 
+        if blob_enabled():
+            # 已配置 Blob 时读失败必须上抛，避免返回空工作区后被默认种子盖写远端。
             hydrate_local_json(WORKSPACE_BLOB_PATH, WORKSPACE_PATH)
-        except Exception:
-            # Blob 不可用时回退本地文件，避免整站读失败
-            pass
+        else:
+            try:
+                hydrate_local_json(WORKSPACE_BLOB_PATH, WORKSPACE_PATH)
+            except BlobHydrateError:
+                pass
+            except Exception:
+                pass
         if not WORKSPACE_PATH.exists():
             return empty_workspace()
         try:

@@ -1634,6 +1634,17 @@ button:active {
   line-height: 1.45;
 }
 
+.settings-ephemeral-note-warn {
+  border-left-color: #c47b1a;
+  background: color-mix(in oklab, #f3d19c 28%, var(--surface-2, #fff));
+  color: var(--text, inherit);
+}
+
+.settings-ai-help {
+  margin: 0 0 12px;
+  line-height: 1.45;
+}
+
 @media (max-width: 780px) {
   .workspace {
     padding: 16px;

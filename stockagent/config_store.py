@@ -15,10 +15,16 @@ def _set_config(config):
 
 def load_config():
     global CONFIG
+    blob_hydrate_failed = False
     try:
-        from .blob_store import CONFIG_BLOB_PATH, hydrate_local_json
+        from .blob_store import CONFIG_BLOB_PATH, BlobHydrateError, blob_enabled, hydrate_local_json
 
-        hydrate_local_json(CONFIG_BLOB_PATH, CONFIG_PATH)
+        if blob_enabled():
+            try:
+                hydrate_local_json(CONFIG_BLOB_PATH, CONFIG_PATH)
+            except BlobHydrateError:
+                # 远端暂不可读：禁止用本地种子 save 覆盖 Blob。
+                blob_hydrate_failed = True
     except Exception:
         pass
     if CONFIG_PATH.exists():
@@ -35,6 +41,8 @@ def load_config():
                 _set_config(json.loads(json.dumps(DEFAULT_CONFIG)))
         else:
             _set_config(json.loads(json.dumps(DEFAULT_CONFIG)))
+        if blob_hydrate_failed:
+            return CONFIG
         save_config(CONFIG)
     return CONFIG
 

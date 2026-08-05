@@ -23,11 +23,26 @@ export function renderSettings() {
   const provider = ai.provider === "openai" ? "openai" : "deepseek";
   const credentials = ai.credentials || {};
   const credential = credentials[provider] || {};
+  const canUseKeychain = runtimeInfo.platform === "darwin";
+  const envKeyName = provider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY";
   const storageNote = runtimeInfo.ephemeralStorage
-    ? `<p class="muted settings-ephemeral-note">当前服务端存储为临时目录，重新部署后配置可能丢失。请在 Vercel 绑定 Blob（设置 <code>BLOB_READ_WRITE_TOKEN</code>）以持久化。</p>`
+    ? `<p class="settings-ephemeral-note settings-ephemeral-note-warn" role="status">⚠ 服务端仍是临时目录（/tmp），重新部署或冷启动会丢失定投计划与设置。请先在 Vercel → Storage 创建 Blob，并确认环境变量 <code>BLOB_READ_WRITE_TOKEN</code> 已注入 Production；在此之前请勿把云端当作唯一账本，定期导出备份。</p>`
     : runtimeInfo.durableStorage === "blob"
-      ? `<p class="muted settings-ephemeral-note">定投计划与设置已持久化到 Vercel Blob（服务端）。</p>`
+      ? `<p class="muted settings-ephemeral-note">定投计划与设置已持久化到 Vercel Blob（服务端权威存储）。</p>`
       : "";
+  const keyPlaceholder = credential.configured
+    ? "已配置；留空表示不修改"
+    : canUseKeychain
+      ? "输入后保存到 macOS 钥匙串"
+      : `请在部署环境设置 ${envKeyName}`;
+  const keyHelp = canUseKeychain
+    ? "桌面版：密钥写入 macOS 钥匙串，不进 config / 备份。"
+    : `云端 / Linux：页面无法安全写入密钥，请在 Vercel/主机环境变量配置 <code>${envKeyName}</code> 后重启；「保存密钥」仅桌面 macOS 可用。`;
+  const keyStatus = credential.configured
+    ? `密钥已配置（${credential.source === "environment" ? "环境变量" : "macOS 钥匙串"}）`
+    : canUseKeychain
+      ? "尚未配置密钥"
+      : `尚未检测到密钥（可设置环境变量 ${envKeyName}）`;
   els.settingsForm.innerHTML = `
     ${storageNote}
     <div class="settings-control-grid">
@@ -57,6 +72,7 @@ export function renderSettings() {
           <span>启用</span>
         </label>
       </div>
+      <p class="muted settings-ai-help">${keyHelp}</p>
       <div class="settings-control-grid">
         <label>
           <span>提供商</span>
@@ -78,15 +94,13 @@ export function renderSettings() {
       <div class="settings-secret-row">
         <span class="settings-secret-label">API Key</span>
         <div class="settings-secret-controls">
-          <input type="password" data-ai-secret autocomplete="new-password" placeholder="${credential.configured ? "已配置；留空表示不修改" : "输入后保存到 macOS 钥匙串"}" />
-          <button class="ghost-button compact" data-ai-save-key type="button">保存密钥</button>
+          <input type="password" data-ai-secret autocomplete="new-password" placeholder="${escapeAttr(keyPlaceholder)}"${canUseKeychain ? "" : " disabled"} />
+          <button class="ghost-button compact" data-ai-save-key type="button"${canUseKeychain ? "" : " disabled"} title="${canUseKeychain ? "写入 macOS 钥匙串" : "仅 macOS 桌面版支持"}">保存密钥</button>
           <button class="ghost-button compact" data-ai-test type="button">测试连接</button>
-          <button class="ghost-button compact danger" data-ai-delete-key type="button"${credential.configured ? "" : " disabled"}>删除密钥</button>
+          <button class="ghost-button compact danger" data-ai-delete-key type="button"${canUseKeychain && credential.configured ? "" : " disabled"}>删除密钥</button>
         </div>
       </div>
-      <p class="muted settings-ai-status" data-ai-status>
-        ${credential.configured ? `密钥已配置（${credential.source === "environment" ? "环境变量" : "macOS 钥匙串"}）` : "尚未配置密钥"}
-      </p>
+      <p class="muted settings-ai-status" data-ai-status>${keyStatus}</p>
     </div>
   `;
   const autoRefreshToggle = els.settingsForm.querySelector('[data-quotes-key="auto_refresh_enabled"]');
@@ -118,6 +132,12 @@ async function readApiError(response) {
 }
 
 async function saveAIKey() {
+  if (runtimeInfo.platform !== "darwin") {
+    const provider = els.settingsForm?.querySelector('[data-ai-key="provider"]')?.value || "deepseek";
+    const envName = provider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY";
+    settingsStatus(`当前环境请设置环境变量 ${envName}，不支持网页写入密钥`);
+    return;
+  }
   const provider = els.settingsForm?.querySelector('[data-ai-key="provider"]')?.value || "deepseek";
   const input = els.settingsForm?.querySelector("[data-ai-secret]");
   const apiKey = input?.value.trim();

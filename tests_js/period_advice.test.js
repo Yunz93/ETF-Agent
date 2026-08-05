@@ -16,7 +16,8 @@ test("period advice invests when strategy allocation assigns amount", () => {
   assert.equal(advice.amount, 800);
   assert.match(advice.headline, /本期建议投入/);
   assert.equal(advice.canAdd, true);
-  assert.deepEqual(advice.bullets, ["定投倍率 1×", "约占全池部署 40%"]);
+  assert.equal(advice.bullets[0], "定投倍率 1×");
+  assert.ok(advice.bullets.includes("约占全池部署 40%"));
   assert.deepEqual(advice.position, {
     targetWeight: 40,
     actualWeight: 44.9,
@@ -77,6 +78,49 @@ test("period advice skips one name without inventing a buy when others deploy", 
   assert.equal(advice.amount, 0);
   assert.equal(advice.canAdd, false);
   assert.match(advice.headline, /本期不投/);
+});
+
+test("period advice exposes multiplier breakdown when overlays apply", () => {
+  const advice = getPeriodAdvice({
+    symbol: "512890",
+    plan: {
+      amount: 2000,
+      strategy: "valuation",
+      strategy_config: {
+        pe_bands: [
+          { max_pct: 50, mult: 1.5, label: "便宜" },
+          { max_pct: 100, mult: 1, label: "正常" },
+        ],
+        sentiment: {
+          enabled: true,
+          mode: "overlay",
+          extremes_only: false,
+          apply_to: ["valuation"],
+          bands: [
+            { max_score: 50, mult: 1.2, label: "偏冷" },
+            { max_score: 100, mult: 1, label: "中性" },
+          ],
+          market_by_asset_class: { dividend: "A" },
+        },
+      },
+    },
+    holdings: [
+      {
+        symbol: "512890",
+        targetWeight: 100,
+        pePct: 0.2,
+        grade: "A",
+        assetClass: "dividend",
+      },
+    ],
+    sentimentByMarket: {
+      A: { score: 30, zone: "fear", ok: true },
+    },
+  });
+  assert.match(advice.bullets[0], /倍率拆解/);
+  assert.match(advice.bullets[0], /策略/);
+  assert.match(advice.bullets[0], /情绪/);
+  assert.match(advice.bullets[0], /=/);
 });
 
 test("period advice asks for budget before inventing amounts", () => {

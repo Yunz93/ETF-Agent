@@ -21,6 +21,11 @@ BLOB_API_VERSION = os.environ.get("VERCEL_BLOB_API_VERSION_OVERRIDE") or "12"
 WORKSPACE_BLOB_PATH = "stockagent/workspace.json"
 CONFIG_BLOB_PATH = "stockagent/config.json"
 
+
+class BlobHydrateError(RuntimeError):
+    """Raised when Blob is configured but remote hydrate fails (non-404)."""
+
+
 _hydrated: dict[str, bool] = {
     WORKSPACE_BLOB_PATH: False,
     CONFIG_BLOB_PATH: False,
@@ -123,13 +128,20 @@ def persist_json(pathname: str, payload: Any) -> None:
 
 
 def hydrate_local_json(pathname: str, local_path, *, migrate_local: bool = True) -> Any | None:
-    """Pull Blob → local file once per process; optionally migrate local → Blob."""
+    """Pull Blob → local file once per process; optionally migrate local → Blob.
+
+    404 / missing remote is normal (first deploy). Transport or 5xx errors raise
+    ``BlobHydrateError`` so callers do not seed defaults and overwrite durable data.
+    """
     if not blob_enabled():
         _hydrated[pathname] = True
         return None
     if _hydrated.get(pathname):
         return None
-    remote = get_json(pathname)
+    try:
+        remote = get_json(pathname)
+    except Exception as exc:
+        raise BlobHydrateError(f"blob hydrate failed for {pathname}: {exc}") from exc
     if remote is not None:
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_text(
