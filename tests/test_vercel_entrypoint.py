@@ -35,9 +35,12 @@ assert issubclass(mod.handler, mod.Handler)
 assert Path(DATA_DIR) == Path(%r).resolve()
 assert Path(RESOURCE_ROOT) == Path(%r).resolve()
 assert (RESOURCE_ROOT / "index.html").is_file()
+# Without BLOB_READ_WRITE_TOKEN, Vercel entry marks storage ephemeral.
 assert os.environ.get("STOCKAGENT_EPHEMERAL") == "1"
 assert is_ephemeral_storage() is True
-assert get_runtime_info().get("ephemeral_storage") is True
+info = get_runtime_info()
+assert info.get("ephemeral_storage") is True
+assert info.get("durable_storage") == "local"
 """ % (
                 str(data_dir),
                 str(ROOT),

@@ -1,114 +1,17 @@
-import { CONFIG_CACHE_KEY } from "./constants.js";
 import { appConfig, els, runtimeInfo, setAppConfig } from "./state.js";
 import { autoRefreshSettings, configureAutoRefresh } from "./auto-refresh.js";
-import { settingsSnapshot, applySettingsSnapshot } from "./backup.js";
-import { escapeAttr, loadJSON, saveJSON } from "./utils.js";
+import { escapeAttr } from "./utils.js";
 import { registerRenderers } from "./views/render.js";
-
-export function readLocalConfigCache() {
-  return loadJSON(CONFIG_CACHE_KEY, null);
-}
-
-export function writeLocalConfigCache(config = appConfig) {
-  if (!config || typeof config !== "object") return;
-  saveJSON(CONFIG_CACHE_KEY, {
-    updated_at: new Date().toISOString(),
-    settings: settingsSnapshot(config),
-  });
-}
-
-/** 设置“已填写强度”：用于 ephemeral 宿主上避免默认 config 盖掉浏览器缓存。 */
-export function settingsPersistenceScore(settings) {
-  if (!settings || typeof settings !== "object") return 0;
-  let score = 0;
-  const quotes = settings.quotes || {};
-  if (quotes.auto_refresh_enabled === false) score += 1;
-  const interval = Number(quotes.refresh_interval_seconds);
-  if (Number.isFinite(interval) && interval > 0 && interval !== 300) score += 1;
-  const ai = settings.ai || {};
-  if (ai.enabled === true) score += 2;
-  if (ai.provider === "openai") score += 1;
-  const models = ai.models || {};
-  if (String(models.deepseek || "").trim()) score += 1;
-  if (String(models.openai || "").trim()) score += 1;
-  if (Number(ai.timeout_seconds) && Number(ai.timeout_seconds) !== 60) score += 1;
-  if (Number(ai.max_output_tokens) && Number(ai.max_output_tokens) !== 1800) score += 1;
-  return score;
-}
-
-async function restoreLocalConfigIfRicher(remoteConfig) {
-  if (!runtimeInfo.ephemeralStorage) {
-    writeLocalConfigCache(remoteConfig);
-    return false;
-  }
-  const cached = readLocalConfigCache();
-  const localSettings = cached?.settings;
-  const localScore = settingsPersistenceScore(localSettings);
-  const remoteScore = settingsPersistenceScore(settingsSnapshot(remoteConfig));
-  if (localScore > remoteScore) {
-    try {
-      await applySettingsSnapshot(localSettings);
-      writeLocalConfigCache(appConfig);
-      return true;
-    } catch {
-      // 服务器写回失败时仍先用本地偏好渲染
-      setAppConfig({
-        ...(remoteConfig || {}),
-        quotes: {
-          ...(remoteConfig?.quotes || {}),
-          ...(localSettings?.quotes || {}),
-        },
-        ai: {
-          ...(remoteConfig?.ai || {}),
-          ...(localSettings?.ai || {}),
-          models: {
-            ...(remoteConfig?.ai?.models || {}),
-            ...(localSettings?.ai?.models || {}),
-          },
-        },
-      });
-      writeLocalConfigCache(appConfig);
-      return true;
-    }
-  }
-  writeLocalConfigCache(remoteConfig);
-  return false;
-}
 
 export async function loadAppConfig({ rerender = false } = {}) {
   try {
     const response = await fetch("/api/config");
     if (!response.ok) throw new Error(`config API ${response.status}`);
-    const remote = await response.json();
-    setAppConfig(remote);
-    const restored = await restoreLocalConfigIfRicher(remote);
+    setAppConfig(await response.json());
     configureAutoRefresh();
     if (rerender) renderSettings();
-    if (els.settingsStatus && rerender) {
-      els.settingsStatus.textContent = restored
-        ? "已从浏览器缓存恢复设置"
-        : "已重新加载 config.json";
-    }
+    if (els.settingsStatus && rerender) els.settingsStatus.textContent = "已重新加载 config.json";
   } catch (error) {
-    const cached = readLocalConfigCache();
-    if (cached?.settings) {
-      setAppConfig({
-        ...(appConfig || {}),
-        quotes: { ...(appConfig?.quotes || {}), ...(cached.settings.quotes || {}) },
-        ai: {
-          ...(appConfig?.ai || {}),
-          ...(cached.settings.ai || {}),
-          models: {
-            ...(appConfig?.ai?.models || {}),
-            ...(cached.settings.ai?.models || {}),
-          },
-        },
-      });
-      configureAutoRefresh();
-      if (rerender) renderSettings();
-      if (els.settingsStatus) els.settingsStatus.textContent = "配置接口不可用，已使用浏览器缓存";
-      return;
-    }
     if (els.settingsStatus) els.settingsStatus.textContent = `配置加载失败：${error}`;
   }
 }
@@ -120,11 +23,28 @@ export function renderSettings() {
   const provider = ai.provider === "openai" ? "openai" : "deepseek";
   const credentials = ai.credentials || {};
   const credential = credentials[provider] || {};
-  const ephemeralNote = runtimeInfo.ephemeralStorage
-    ? `<p class="muted settings-ephemeral-note">云端存储为临时目录；定投计划与设置以本机浏览器缓存为准，建议定期导出备份。</p>`
-    : "";
+  const canUseKeychain = runtimeInfo.platform === "darwin";
+  const envKeyName = provider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY";
+  const storageNote = runtimeInfo.ephemeralStorage
+    ? `<p class="settings-ephemeral-note settings-ephemeral-note-warn" role="status">⚠ 服务端仍是临时目录（/tmp），重新部署或冷启动会丢失定投计划与设置。请先在 Vercel → Storage 创建 Blob，并确认环境变量 <code>BLOB_READ_WRITE_TOKEN</code> 已注入 Production；在此之前请勿把云端当作唯一账本，定期导出备份。</p>`
+    : runtimeInfo.durableStorage === "blob"
+      ? `<p class="muted settings-ephemeral-note">定投计划与设置已持久化到 Vercel Blob（服务端权威存储）。</p>`
+      : "";
+  const keyPlaceholder = credential.configured
+    ? "已配置；留空表示不修改"
+    : canUseKeychain
+      ? "输入后保存到 macOS 钥匙串"
+      : `请在部署环境设置 ${envKeyName}`;
+  const keyHelp = canUseKeychain
+    ? "桌面版：密钥写入 macOS 钥匙串，不进 config / 备份。"
+    : `云端 / Linux：页面无法安全写入密钥，请在 Vercel/主机环境变量配置 <code>${envKeyName}</code> 后重启；「保存密钥」仅桌面 macOS 可用。`;
+  const keyStatus = credential.configured
+    ? `密钥已配置（${credential.source === "environment" ? "环境变量" : "macOS 钥匙串"}）`
+    : canUseKeychain
+      ? "尚未配置密钥"
+      : `尚未检测到密钥（可设置环境变量 ${envKeyName}）`;
   els.settingsForm.innerHTML = `
-    ${ephemeralNote}
+    ${storageNote}
     <div class="settings-control-grid">
       <label class="config-toggle">
         <span>自动刷新</span>
@@ -152,6 +72,7 @@ export function renderSettings() {
           <span>启用</span>
         </label>
       </div>
+      <p class="muted settings-ai-help">${keyHelp}</p>
       <div class="settings-control-grid">
         <label>
           <span>提供商</span>
@@ -173,15 +94,13 @@ export function renderSettings() {
       <div class="settings-secret-row">
         <span class="settings-secret-label">API Key</span>
         <div class="settings-secret-controls">
-          <input type="password" data-ai-secret autocomplete="new-password" placeholder="${credential.configured ? "已配置；留空表示不修改" : "输入后保存到 macOS 钥匙串"}" />
-          <button class="ghost-button compact" data-ai-save-key type="button">保存密钥</button>
+          <input type="password" data-ai-secret autocomplete="new-password" placeholder="${escapeAttr(keyPlaceholder)}"${canUseKeychain ? "" : " disabled"} />
+          <button class="ghost-button compact" data-ai-save-key type="button"${canUseKeychain ? "" : " disabled"} title="${canUseKeychain ? "写入 macOS 钥匙串" : "仅 macOS 桌面版支持"}">保存密钥</button>
           <button class="ghost-button compact" data-ai-test type="button">测试连接</button>
-          <button class="ghost-button compact danger" data-ai-delete-key type="button"${credential.configured ? "" : " disabled"}>删除密钥</button>
+          <button class="ghost-button compact danger" data-ai-delete-key type="button"${canUseKeychain && credential.configured ? "" : " disabled"}>删除密钥</button>
         </div>
       </div>
-      <p class="muted settings-ai-status" data-ai-status>
-        ${credential.configured ? `密钥已配置（${credential.source === "environment" ? "环境变量" : "macOS 钥匙串"}）` : "尚未配置密钥"}
-      </p>
+      <p class="muted settings-ai-status" data-ai-status>${keyStatus}</p>
     </div>
   `;
   const autoRefreshToggle = els.settingsForm.querySelector('[data-quotes-key="auto_refresh_enabled"]');
@@ -213,6 +132,12 @@ async function readApiError(response) {
 }
 
 async function saveAIKey() {
+  if (runtimeInfo.platform !== "darwin") {
+    const provider = els.settingsForm?.querySelector('[data-ai-key="provider"]')?.value || "deepseek";
+    const envName = provider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY";
+    settingsStatus(`当前环境请设置环境变量 ${envName}，不支持网页写入密钥`);
+    return;
+  }
   const provider = els.settingsForm?.querySelector('[data-ai-key="provider"]')?.value || "deepseek";
   const input = els.settingsForm?.querySelector("[data-ai-secret]");
   const apiKey = input?.value.trim();
@@ -283,9 +208,6 @@ export async function saveAppConfig({ quiet = false } = {}) {
   if (modelInput) ai.models[modelInput.dataset.aiModel] = modelInput.value.trim();
   delete ai.credentials;
   const payload = { ...(appConfig || {}), quotes, ai };
-  // 先落浏览器缓存，避免 serverless 写盘失败或冷启动丢失
-  setAppConfig(payload);
-  writeLocalConfigCache(payload);
   try {
     const response = await fetch("/api/config", {
       method: "POST",
@@ -294,17 +216,11 @@ export async function saveAppConfig({ quiet = false } = {}) {
     });
     if (!response.ok) throw new Error(`config API ${response.status}`);
     setAppConfig(await response.json());
-    writeLocalConfigCache(appConfig);
     configureAutoRefresh();
     if (!quiet && els.settingsStatus) els.settingsStatus.textContent = "已保存";
     if (!quiet) renderSettings();
   } catch (error) {
-    configureAutoRefresh();
-    if (els.settingsStatus) {
-      els.settingsStatus.textContent = runtimeInfo.ephemeralStorage
-        ? `服务器暂不可写，已保存到浏览器缓存：${error}`
-        : `保存失败：${error}`;
-    }
+    if (els.settingsStatus) els.settingsStatus.textContent = `保存失败：${error}`;
   }
 }
 

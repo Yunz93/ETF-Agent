@@ -54,8 +54,6 @@ export const SIDEBAR_COLLAPSE_MIN = 1181;
 /** 含平板：抽屉导航上限（与 styles.css 侧栏抽屉断点一致）。 */
 export const MOBILE_SIDEBAR_MAX = 1180;
 export const WORKSPACE_CACHE_KEY = "stockagent.workspace.cache";
-/** 非密钥设置快照（quotes / ai 偏好），供 Vercel 等 ephemeral 宿主恢复。 */
-export const CONFIG_CACHE_KEY = "stockagent.config.cache";
 export const WORKSPACE_SYNC_DEBOUNCE_MS = 500;
 export const ETF_QUOTE_TTL_MS = 60_000;
 /** 前端分析缓存 TTL，与后端 DIVIDEND_CACHE 默认 1800s 对齐 */

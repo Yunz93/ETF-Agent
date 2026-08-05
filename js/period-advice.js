@@ -32,6 +32,12 @@ export const STANCE = Object.freeze({
   SKIP: "skip",
 });
 
+function formatAdviceMult(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "—";
+  return `${Math.round(num * 1000) / 1000}×`;
+}
+
 function resolveSymbolStrategy(plan, symbol) {
   const globalId = normalizeStrategyId(plan?.strategy);
   const overrides = plan?.strategy_overrides;
@@ -146,7 +152,22 @@ export function getPeriodAdvice({
     reason = skipped?.reason || "本期未分到额度";
   }
 
-  const bullets = [`定投倍率 ${effectiveMult}×`];
+  const strategyBase =
+    grid.techMult != null && Number.isFinite(Number(grid.techMult))
+      ? Number(grid.techMult)
+      : Number(grid.mult) || 0;
+  const macroPart =
+    grid.macroMult != null && Number.isFinite(Number(grid.macroMult))
+      ? Number(grid.macroMult)
+      : null;
+  const sentPart = sentAllowed ? Number(sent.mult) || 1 : null;
+  const formulaParts = [`策略${formatAdviceMult(strategyBase)}（${grid.band || "—"}）`];
+  if (macroPart != null) formulaParts.push(`宏观${formatAdviceMult(macroPart)}`);
+  if (sentPart != null) formulaParts.push(`情绪${formatAdviceMult(sentPart)}`);
+  const bullets =
+    formulaParts.length > 1
+      ? [`倍率拆解 ${formulaParts.join(" × ")} = ${formatAdviceMult(effectiveMult)}`]
+      : [`定投倍率 ${formatAdviceMult(effectiveMult)}`];
   if (holding?.assetClass === "commodity" || grid.macroMult != null) {
     const macroMult = grid.macroMult;
     const macroBand = grid.goldMacro?.band || macro?.band;
@@ -155,7 +176,7 @@ export function getPeriodAdvice({
       bullets.push(
         `黄金宏观 ${macroBand || "调节"}` +
           (macroScore != null ? `（${macroScore}）` : "") +
-          ` · ×${macroMult}`,
+          ` · ${formatAdviceMult(macroMult)}`,
       );
     } else if (holding?.assetClass === "commodity" && macro && !macro.degraded && macroScore != null) {
       bullets.push(`黄金宏观 ${macroBand || "中性"}（${macroScore}）· 不调节`);
@@ -165,7 +186,7 @@ export function getPeriodAdvice({
   }
   if (sentAllowed && market) {
     if (sent.score != null && sent.mult !== 1) {
-      bullets.push(`市场情绪 ${sent.band}（${market} ${sent.score}）· ×${sent.mult}`);
+      bullets.push(`市场情绪 ${sent.band}（${market} ${sent.score}）· ${formatAdviceMult(sent.mult)}`);
     } else if (sent.score != null) {
       bullets.push(`市场情绪 ${sent.band || "中性"}（${market} ${sent.score}）· 不调节`);
     } else if (strategyConfig.sentiment.enabled) {

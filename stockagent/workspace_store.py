@@ -497,6 +497,23 @@ def workspace_has_user_data(workspace):
 
 def get_workspace():
     with WORKSPACE_LOCK:
+        from .blob_store import (
+            WORKSPACE_BLOB_PATH,
+            BlobHydrateError,
+            blob_enabled,
+            hydrate_local_json,
+        )
+
+        if blob_enabled():
+            # 已配置 Blob 时读失败必须上抛，避免返回空工作区后被默认种子盖写远端。
+            hydrate_local_json(WORKSPACE_BLOB_PATH, WORKSPACE_PATH)
+        else:
+            try:
+                hydrate_local_json(WORKSPACE_BLOB_PATH, WORKSPACE_PATH)
+            except BlobHydrateError:
+                pass
+            except Exception:
+                pass
         if not WORKSPACE_PATH.exists():
             return empty_workspace()
         try:
@@ -532,6 +549,16 @@ def save_workspace(payload):
         temp_path = WORKSPACE_PATH.with_suffix(".json.tmp")
         temp_path.write_text(json.dumps(workspace, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         temp_path.replace(WORKSPACE_PATH)
+        try:
+            from .blob_store import WORKSPACE_BLOB_PATH, persist_json
+
+            persist_json(WORKSPACE_BLOB_PATH, workspace)
+        except Exception as exc:
+            # 有 Blob 凭证却写失败时向上抛，避免调用方误以为已持久化
+            from .blob_store import blob_enabled
+
+            if blob_enabled():
+                raise RuntimeError(f"durable workspace save failed: {exc}") from exc
         return workspace
 
 

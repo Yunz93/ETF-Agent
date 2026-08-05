@@ -15,6 +15,18 @@ def _set_config(config):
 
 def load_config():
     global CONFIG
+    blob_hydrate_failed = False
+    try:
+        from .blob_store import CONFIG_BLOB_PATH, BlobHydrateError, blob_enabled, hydrate_local_json
+
+        if blob_enabled():
+            try:
+                hydrate_local_json(CONFIG_BLOB_PATH, CONFIG_PATH)
+            except BlobHydrateError:
+                # 远端暂不可读：禁止用本地种子 save 覆盖 Blob。
+                blob_hydrate_failed = True
+    except Exception:
+        pass
     if CONFIG_PATH.exists():
         with CONFIG_PATH.open(encoding="utf-8") as handle:
             loaded = json.load(handle)
@@ -29,6 +41,8 @@ def load_config():
                 _set_config(json.loads(json.dumps(DEFAULT_CONFIG)))
         else:
             _set_config(json.loads(json.dumps(DEFAULT_CONFIG)))
+        if blob_hydrate_failed:
+            return CONFIG
         save_config(CONFIG)
     return CONFIG
 
@@ -166,7 +180,17 @@ def public_config(config=None):
 def save_config(payload):
     global CONFIG
     _set_config(normalize_config(payload))
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(CONFIG, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        from .blob_store import CONFIG_BLOB_PATH, persist_json
+
+        persist_json(CONFIG_BLOB_PATH, CONFIG)
+    except Exception as exc:
+        from .blob_store import blob_enabled
+
+        if blob_enabled():
+            raise RuntimeError(f"durable config save failed: {exc}") from exc
     QUOTE_CACHE["expires"] = 0
     QUOTE_MARKET_CACHE.clear()
     AI_REVIEW_CACHE.clear()

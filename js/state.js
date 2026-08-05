@@ -102,15 +102,21 @@ export const workspaceRuntime = {
   planFormReady: false,
 };
 
-/** /api/runtime 摘要；ephemeralStorage 时浏览器缓存为工作区/设置权威来源。 */
+/** /api/runtime 摘要：durableStorage=blob|local，ephemeralStorage 表示服务端不可持久。 */
 export const runtimeInfo = {
   loaded: false,
   ephemeralStorage: false,
+  durableStorage: "local",
+  platform: "",
+  mode: "server",
 };
 
 export function setRuntimeInfo(payload) {
   runtimeInfo.loaded = true;
   runtimeInfo.ephemeralStorage = Boolean(payload?.ephemeral_storage);
+  runtimeInfo.durableStorage = payload?.durable_storage === "blob" ? "blob" : "local";
+  runtimeInfo.platform = String(payload?.platform || "");
+  runtimeInfo.mode = payload?.mode === "desktop" ? "desktop" : "server";
 }
 
 export const els = {};

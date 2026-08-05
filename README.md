@@ -9,11 +9,11 @@
   - 年线乖离（MA250）、布林带位置、RSI(14)、KDJ(9,3,3)
   - 股息率 vs 十年国债：股债利差与历史分位
   - PE / PB 与 PE 近 10 年分位
-  - 0-100 综合评分（股债性价比 35% + 估值水位 20% + 年线乖离 25% + 短线技术 20%），映射 A-E 档操作建议
+  - 0-100 综合评分（股债性价比 40% + 估值水位 30% + 年线乖离 20% + 短线技术 10%），映射 A-E 档操作建议
   - 历史同评分区间（±5 分）往后 60 天收益回测：平均收益 / 胜率 / 最好最差（逐日复算历史评分，分位只用截至当日的数据，避免未来函数）
   - 规则化「走势解读」点评（走势本身 + 年线与布林关系）+ 一键复制小红书风格笔记文本
 - **定投计划与 ETF 池**
-  - 按代码添加 A 股场内指数 ETF（默认种子池：A500、纳指100、标普500、红利低波易方达/华泰、恒生科技、黄金）
+  - 按代码添加 A 股场内指数 ETF（默认种子池 6 只：A500、纳指100、标普500、红利低波华泰、恒生科技、黄金；同指数不双开）
   - 资金计划分三层：初期建仓目标、周期定投预算、交易成本（最低佣金 / 费率 / 手续费占比上限 / 整手）
   - 建仓可配置月数（1–36），目标金额按月均分，每期预算为 min(剩余缺口, 月额度)；定投阶段按估值/评分/再平衡策略分配，不足经济性最小订单时累计至下期
   - 仓位口径区分：ETF 池总仓位、池内配置权重、单只总资产仓位；买卖记录含手续费并同步含费成本
@@ -45,7 +45,15 @@ python3 server.py
 
 ### 部署到 Vercel
 
-全站（页面与 `/api/*`）经 Python Serverless（`api/index.py`）处理，便于统一鉴权（`vercel.json` 用 `routes` 强制进函数，避免 CDN 直出静态页绕过登录）。可写数据目录为 `/tmp/stockagent`（冷启动/实例间不持久）。`/api/runtime` 会标记 `ephemeral_storage: true`，前端以浏览器 localStorage 为定投计划与设置的权威来源，并在可写时尽力回写服务器；换域名或清站点数据后需重新导入备份。
+全站（页面与 `/api/*`）经 Python Serverless（`api/index.py`）处理，便于统一鉴权（`vercel.json` 用 `routes` 强制进函数，避免 CDN 直出静态页绕过登录）。本地热缓存仍写 `/tmp/stockagent`；**持久化请绑定 Vercel Blob**，把定投计划与 `config.json` 存到 Blob（`stockagent/workspace.json` / `stockagent/config.json`）。
+
+```bash
+# Vercel → Project → Storage → Create Blob（建议 Private）
+# 创建后会注入 BLOB_READ_WRITE_TOKEN（Production / Preview）
+# 可选：STOCKAGENT_BLOB_ACCESS=private|public（默认 private）
+```
+
+`/api/runtime` 在 Blob 可用时返回 `durable_storage: "blob"`、`ephemeral_storage: false`；未配置 Blob 时仍为临时存储。
 
 公网部署请设置访问口令（未设置则站点仍公开）：
 
