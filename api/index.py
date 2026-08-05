@@ -15,6 +15,9 @@ from pathlib import Path
 # Must run before importing stockagent.paths (DATA_DIR is resolved at import).
 os.environ.setdefault("STOCKAGENT_DATA_DIR", "/tmp/stockagent")
 os.environ.setdefault("STOCKAGENT_RESOURCE_DIR", str(Path(__file__).resolve().parent.parent))
+# /tmp is wiped across cold starts / instances — tell the client to treat
+# browser localStorage as the durable source of truth for workspace + settings.
+os.environ.setdefault("STOCKAGENT_EPHEMERAL", "1")
 
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:

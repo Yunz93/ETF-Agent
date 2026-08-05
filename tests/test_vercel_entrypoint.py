@@ -25,14 +25,19 @@ class VercelEntrypointTests(unittest.TestCase):
                 [str(ROOT)] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])
             )
             script = """
+import os
 import api.index as mod
 from pathlib import Path
 from stockagent.paths import DATA_DIR, RESOURCE_ROOT
+from stockagent.health import get_runtime_info, is_ephemeral_storage
 assert hasattr(mod, "handler")
 assert issubclass(mod.handler, mod.Handler)
 assert Path(DATA_DIR) == Path(%r).resolve()
 assert Path(RESOURCE_ROOT) == Path(%r).resolve()
 assert (RESOURCE_ROOT / "index.html").is_file()
+assert os.environ.get("STOCKAGENT_EPHEMERAL") == "1"
+assert is_ephemeral_storage() is True
+assert get_runtime_info().get("ephemeral_storage") is True
 """ % (
                 str(data_dir),
                 str(ROOT),

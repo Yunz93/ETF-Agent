@@ -1,17 +1,114 @@
-import { appConfig, els, setAppConfig } from "./state.js";
+import { CONFIG_CACHE_KEY } from "./constants.js";
+import { appConfig, els, runtimeInfo, setAppConfig } from "./state.js";
 import { autoRefreshSettings, configureAutoRefresh } from "./auto-refresh.js";
-import { escapeAttr } from "./utils.js";
+import { settingsSnapshot, applySettingsSnapshot } from "./backup.js";
+import { escapeAttr, loadJSON, saveJSON } from "./utils.js";
 import { registerRenderers } from "./views/render.js";
+
+export function readLocalConfigCache() {
+  return loadJSON(CONFIG_CACHE_KEY, null);
+}
+
+export function writeLocalConfigCache(config = appConfig) {
+  if (!config || typeof config !== "object") return;
+  saveJSON(CONFIG_CACHE_KEY, {
+    updated_at: new Date().toISOString(),
+    settings: settingsSnapshot(config),
+  });
+}
+
+/** 设置“已填写强度”：用于 ephemeral 宿主上避免默认 config 盖掉浏览器缓存。 */
+export function settingsPersistenceScore(settings) {
+  if (!settings || typeof settings !== "object") return 0;
+  let score = 0;
+  const quotes = settings.quotes || {};
+  if (quotes.auto_refresh_enabled === false) score += 1;
+  const interval = Number(quotes.refresh_interval_seconds);
+  if (Number.isFinite(interval) && interval > 0 && interval !== 300) score += 1;
+  const ai = settings.ai || {};
+  if (ai.enabled === true) score += 2;
+  if (ai.provider === "openai") score += 1;
+  const models = ai.models || {};
+  if (String(models.deepseek || "").trim()) score += 1;
+  if (String(models.openai || "").trim()) score += 1;
+  if (Number(ai.timeout_seconds) && Number(ai.timeout_seconds) !== 60) score += 1;
+  if (Number(ai.max_output_tokens) && Number(ai.max_output_tokens) !== 1800) score += 1;
+  return score;
+}
+
+async function restoreLocalConfigIfRicher(remoteConfig) {
+  if (!runtimeInfo.ephemeralStorage) {
+    writeLocalConfigCache(remoteConfig);
+    return false;
+  }
+  const cached = readLocalConfigCache();
+  const localSettings = cached?.settings;
+  const localScore = settingsPersistenceScore(localSettings);
+  const remoteScore = settingsPersistenceScore(settingsSnapshot(remoteConfig));
+  if (localScore > remoteScore) {
+    try {
+      await applySettingsSnapshot(localSettings);
+      writeLocalConfigCache(appConfig);
+      return true;
+    } catch {
+      // 服务器写回失败时仍先用本地偏好渲染
+      setAppConfig({
+        ...(remoteConfig || {}),
+        quotes: {
+          ...(remoteConfig?.quotes || {}),
+          ...(localSettings?.quotes || {}),
+        },
+        ai: {
+          ...(remoteConfig?.ai || {}),
+          ...(localSettings?.ai || {}),
+          models: {
+            ...(remoteConfig?.ai?.models || {}),
+            ...(localSettings?.ai?.models || {}),
+          },
+        },
+      });
+      writeLocalConfigCache(appConfig);
+      return true;
+    }
+  }
+  writeLocalConfigCache(remoteConfig);
+  return false;
+}
 
 export async function loadAppConfig({ rerender = false } = {}) {
   try {
     const response = await fetch("/api/config");
     if (!response.ok) throw new Error(`config API ${response.status}`);
-    setAppConfig(await response.json());
+    const remote = await response.json();
+    setAppConfig(remote);
+    const restored = await restoreLocalConfigIfRicher(remote);
     configureAutoRefresh();
     if (rerender) renderSettings();
-    if (els.settingsStatus && rerender) els.settingsStatus.textContent = "已重新加载 config.json";
+    if (els.settingsStatus && rerender) {
+      els.settingsStatus.textContent = restored
+        ? "已从浏览器缓存恢复设置"
+        : "已重新加载 config.json";
+    }
   } catch (error) {
+    const cached = readLocalConfigCache();
+    if (cached?.settings) {
+      setAppConfig({
+        ...(appConfig || {}),
+        quotes: { ...(appConfig?.quotes || {}), ...(cached.settings.quotes || {}) },
+        ai: {
+          ...(appConfig?.ai || {}),
+          ...(cached.settings.ai || {}),
+          models: {
+            ...(appConfig?.ai?.models || {}),
+            ...(cached.settings.ai?.models || {}),
+          },
+        },
+      });
+      configureAutoRefresh();
+      if (rerender) renderSettings();
+      if (els.settingsStatus) els.settingsStatus.textContent = "配置接口不可用，已使用浏览器缓存";
+      return;
+    }
     if (els.settingsStatus) els.settingsStatus.textContent = `配置加载失败：${error}`;
   }
 }
@@ -23,7 +120,11 @@ export function renderSettings() {
   const provider = ai.provider === "openai" ? "openai" : "deepseek";
   const credentials = ai.credentials || {};
   const credential = credentials[provider] || {};
+  const ephemeralNote = runtimeInfo.ephemeralStorage
+    ? `<p class="muted settings-ephemeral-note">云端存储为临时目录；定投计划与设置以本机浏览器缓存为准，建议定期导出备份。</p>`
+    : "";
   els.settingsForm.innerHTML = `
+    ${ephemeralNote}
     <div class="settings-control-grid">
       <label class="config-toggle">
         <span>自动刷新</span>
@@ -182,6 +283,9 @@ export async function saveAppConfig({ quiet = false } = {}) {
   if (modelInput) ai.models[modelInput.dataset.aiModel] = modelInput.value.trim();
   delete ai.credentials;
   const payload = { ...(appConfig || {}), quotes, ai };
+  // 先落浏览器缓存，避免 serverless 写盘失败或冷启动丢失
+  setAppConfig(payload);
+  writeLocalConfigCache(payload);
   try {
     const response = await fetch("/api/config", {
       method: "POST",
@@ -190,11 +294,17 @@ export async function saveAppConfig({ quiet = false } = {}) {
     });
     if (!response.ok) throw new Error(`config API ${response.status}`);
     setAppConfig(await response.json());
+    writeLocalConfigCache(appConfig);
     configureAutoRefresh();
     if (!quiet && els.settingsStatus) els.settingsStatus.textContent = "已保存";
     if (!quiet) renderSettings();
   } catch (error) {
-    if (els.settingsStatus) els.settingsStatus.textContent = `保存失败：${error}`;
+    configureAutoRefresh();
+    if (els.settingsStatus) {
+      els.settingsStatus.textContent = runtimeInfo.ephemeralStorage
+        ? `服务器暂不可写，已保存到浏览器缓存：${error}`
+        : `保存失败：${error}`;
+    }
   }
 }
 

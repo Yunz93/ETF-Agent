@@ -1,4 +1,6 @@
+import { CONFIG_CACHE_KEY } from "./constants.js";
 import { appConfig, setAppConfig } from "./state.js";
+import { saveJSON } from "./utils.js";
 
 /** 可导出的设置快照：不含 API Key / credentials。 */
 export function settingsSnapshot(config = appConfig) {
@@ -65,5 +67,9 @@ export async function applySettingsSnapshot(settings) {
   if (!response.ok) throw new Error(`config API ${response.status}`);
   const saved = await response.json();
   setAppConfig(saved);
+  saveJSON(CONFIG_CACHE_KEY, {
+    updated_at: new Date().toISOString(),
+    settings: settingsSnapshot(saved),
+  });
   return saved;
 }

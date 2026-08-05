@@ -102,6 +102,17 @@ export const workspaceRuntime = {
   planFormReady: false,
 };
 
+/** /api/runtime 摘要；ephemeralStorage 时浏览器缓存为工作区/设置权威来源。 */
+export const runtimeInfo = {
+  loaded: false,
+  ephemeralStorage: false,
+};
+
+export function setRuntimeInfo(payload) {
+  runtimeInfo.loaded = true;
+  runtimeInfo.ephemeralStorage = Boolean(payload?.ephemeral_storage);
+}
+
 export const els = {};
 
 export function initEls() {
