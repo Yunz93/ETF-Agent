@@ -49,11 +49,13 @@ python3 server.py
 
 ```bash
 # Vercel → Project → Storage → Create Blob（建议 Private）
-# 创建后会注入 BLOB_READ_WRITE_TOKEN（Production / Preview）
-# 可选：STOCKAGENT_BLOB_ACCESS=private|public（默认 private）
+# 创建时勾选连接到本项目的 Production / Preview
+# 新版默认注入 BLOB_STORE_ID，运行时再用 VERCEL_OIDC_TOKEN（OIDC）
+# 也可在 Store → 复制 BLOB_READ_WRITE_TOKEN 到环境变量
+# 可选：STOCKAGENT_BLOB_ACCESS=private|public（须与 Store 访问模式一致，默认 private）
 ```
 
-`/api/runtime` 在 Blob 可用时返回 `durable_storage: "blob"`、`ephemeral_storage: false`；未配置 Blob 时仍为临时存储。
+`/api/runtime` 在 Blob 可用时返回 `durable_storage: "blob"`、`ephemeral_storage: false`、`blob_auth: "oidc"|"read_write"`；未配置 Blob 时仍为临时存储。改环境变量后需重新部署。
 
 公网部署请设置访问口令（未设置则站点仍公开）：
 

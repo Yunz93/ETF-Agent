@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Vercel Blob JSON persistence (stdlib HTTP, no SDK).
 
-When ``BLOB_READ_WRITE_TOKEN`` is set, workspace/config are stored under fixed
-pathnames in the connected Blob store so serverless ``/tmp`` cold starts do not
-lose data. Local files under ``DATA_DIR`` remain a warm-instance cache.
+Supports both credential styles Vercel injects for connected Blob stores:
+
+- ``BLOB_READ_WRITE_TOKEN`` (long-lived read-write token)
+- ``BLOB_STORE_ID`` + runtime ``VERCEL_OIDC_TOKEN`` (OIDC; default for new stores)
+
+Workspace/config are stored under fixed pathnames so serverless ``/tmp`` cold
+starts do not lose data. Local files under ``DATA_DIR`` remain a warm cache.
 """
 
 from __future__ import annotations
@@ -32,8 +36,36 @@ _hydrated: dict[str, bool] = {
 }
 
 
+def normalize_store_id(raw: str) -> str:
+    value = str(raw or "").strip()
+    if value.startswith("store_"):
+        return value[len("store_") :]
+    return value
+
+
+def parse_store_id_from_read_write_token(token: str) -> str:
+    # vercel_blob_rw_<STOREID>_<SECRET>
+    parts = str(token or "").strip().split("_")
+    return parts[3] if len(parts) >= 5 else ""
+
+
+def blob_store_configured() -> bool:
+    """True when the project has Blob credentials wired (token and/or store id)."""
+    if os.environ.get("BLOB_READ_WRITE_TOKEN", "").strip():
+        return True
+    if os.environ.get("BLOB_STORE_ID", "").strip():
+        return True
+    return False
+
+
 def blob_enabled() -> bool:
-    return bool(os.environ.get("BLOB_READ_WRITE_TOKEN", "").strip())
+    """True when durable Blob backend should be used.
+
+    On Vercel, ``BLOB_STORE_ID`` is present even before the short-lived
+    ``VERCEL_OIDC_TOKEN`` is attached to a request; treat that as enabled so
+    ``/api/runtime`` reports durable storage correctly.
+    """
+    return blob_store_configured()
 
 
 def blob_access() -> str:
@@ -41,11 +73,47 @@ def blob_access() -> str:
     return "public" if raw == "public" else "private"
 
 
+def resolve_blob_auth() -> dict[str, str]:
+    """Return ``{kind, token, store_id}`` or raise if credentials are incomplete."""
+    read_write = os.environ.get("BLOB_READ_WRITE_TOKEN", "").strip()
+    if read_write:
+        store_id = parse_store_id_from_read_write_token(read_write)
+        if not store_id:
+            raise RuntimeError("Unable to parse store id from BLOB_READ_WRITE_TOKEN")
+        return {"kind": "read_write", "token": read_write, "store_id": store_id}
+
+    store_id = normalize_store_id(os.environ.get("BLOB_STORE_ID", ""))
+    oidc = os.environ.get("VERCEL_OIDC_TOKEN", "").strip()
+    if store_id and oidc:
+        return {"kind": "oidc", "token": oidc, "store_id": store_id}
+    if store_id and not oidc:
+        raise RuntimeError(
+            "BLOB_STORE_ID is set but VERCEL_OIDC_TOKEN is missing "
+            "(OIDC token is injected automatically on Vercel runtimes)"
+        )
+    raise RuntimeError(
+        "No Blob credentials found. Set BLOB_READ_WRITE_TOKEN, or connect a "
+        "Blob store so BLOB_STORE_ID + VERCEL_OIDC_TOKEN are available."
+    )
+
+
+def blob_auth_kind() -> str | None:
+    """Best-effort auth mode for runtime diagnostics (does not require OIDC yet)."""
+    if os.environ.get("BLOB_READ_WRITE_TOKEN", "").strip():
+        return "read_write"
+    if os.environ.get("BLOB_STORE_ID", "").strip():
+        return "oidc"
+    return None
+
+
+# Back-compat alias used by older tests/helpers.
 def parse_store_id(token: str | None = None) -> str:
-    value = (token if token is not None else os.environ.get("BLOB_READ_WRITE_TOKEN", "")).strip()
-    # vercel_blob_rw_<STOREID>_<SECRET>
-    parts = value.split("_")
-    return parts[3] if len(parts) >= 5 else ""
+    if token is not None:
+        return parse_store_id_from_read_write_token(token)
+    try:
+        return resolve_blob_auth()["store_id"]
+    except Exception:
+        return normalize_store_id(os.environ.get("BLOB_STORE_ID", ""))
 
 
 def reset_hydration_for_tests() -> None:
@@ -53,38 +121,29 @@ def reset_hydration_for_tests() -> None:
         _hydrated[key] = False
 
 
-def _token() -> str:
-    token = os.environ.get("BLOB_READ_WRITE_TOKEN", "").strip()
-    if not token:
-        raise RuntimeError("BLOB_READ_WRITE_TOKEN is not configured")
-    return token
-
-
-def _headers_for_put(store_id: str) -> dict[str, str]:
+def _headers_for_put(auth: dict[str, str]) -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {_token()}",
+        "Authorization": f"Bearer {auth['token']}",
         "x-api-version": str(BLOB_API_VERSION),
         "x-vercel-blob-access": blob_access(),
         "x-content-type": "application/json; charset=utf-8",
         "x-add-random-suffix": "0",
         "x-allow-overwrite": "1",
-        "x-vercel-blob-store-id": store_id,
+        "x-vercel-blob-store-id": auth["store_id"],
         "User-Agent": "ETF-Agent/blob-store",
     }
 
 
 def put_json(pathname: str, payload: Any, timeout: float = 30) -> dict:
     """Upload JSON to a fixed Blob pathname (overwrite in place)."""
-    store_id = parse_store_id()
-    if not store_id:
-        raise RuntimeError("Unable to parse store id from BLOB_READ_WRITE_TOKEN")
+    auth = resolve_blob_auth()
     body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
     query = urllib.parse.urlencode({"pathname": pathname})
     request = urllib.request.Request(
         f"{BLOB_API_URL}/?{query}",
         data=body,
         method="PUT",
-        headers=_headers_for_put(store_id),
+        headers=_headers_for_put(auth),
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         raw = response.read().decode("utf-8", errors="replace")
@@ -93,15 +152,13 @@ def put_json(pathname: str, payload: Any, timeout: float = 30) -> dict:
 
 def get_json(pathname: str, timeout: float = 30) -> Any | None:
     """Fetch JSON from Blob. Returns None when the object does not exist."""
-    store_id = parse_store_id()
-    if not store_id:
-        raise RuntimeError("Unable to parse store id from BLOB_READ_WRITE_TOKEN")
+    auth = resolve_blob_auth()
     access = blob_access()
-    url = f"https://{store_id}.{access}.blob.vercel-storage.com/{pathname}?cache=0"
+    url = f"https://{auth['store_id']}.{access}.blob.vercel-storage.com/{pathname}?cache=0"
     request = urllib.request.Request(
         url,
         headers={
-            "Authorization": f"Bearer {_token()}",
+            "Authorization": f"Bearer {auth['token']}",
             "Accept": "application/json",
             "User-Agent": "ETF-Agent/blob-store",
         },

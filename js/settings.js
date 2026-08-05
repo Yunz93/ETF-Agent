@@ -26,9 +26,9 @@ export function renderSettings() {
   const canUseKeychain = runtimeInfo.platform === "darwin";
   const envKeyName = provider === "openai" ? "OPENAI_API_KEY" : "DEEPSEEK_API_KEY";
   const storageNote = runtimeInfo.ephemeralStorage
-    ? `<p class="settings-ephemeral-note settings-ephemeral-note-warn" role="status">⚠ 服务端仍是临时目录（/tmp），重新部署或冷启动会丢失定投计划与设置。请先在 Vercel → Storage 创建 Blob，并确认环境变量 <code>BLOB_READ_WRITE_TOKEN</code> 已注入 Production；在此之前请勿把云端当作唯一账本，定期导出备份。</p>`
+    ? `<p class="settings-ephemeral-note settings-ephemeral-note-warn" role="status">⚠ 服务端仍是临时目录（/tmp），重新部署或冷启动会丢失定投计划与设置。请在 Vercel → Storage 创建 Blob，并把它连接到本项目的 <strong>Production</strong>。新版 Blob 通常注入 <code>BLOB_STORE_ID</code>（运行时再用 OIDC）；也可使用 <code>BLOB_READ_WRITE_TOKEN</code>。改完环境变量后需重新部署。在此之前请勿把云端当作唯一账本，定期导出备份。</p>`
     : runtimeInfo.durableStorage === "blob"
-      ? `<p class="muted settings-ephemeral-note">定投计划与设置已持久化到 Vercel Blob（服务端权威存储）。</p>`
+      ? `<p class="muted settings-ephemeral-note">定投计划与设置已持久化到 Vercel Blob（服务端权威存储${runtimeInfo.blobAuth ? ` · ${runtimeInfo.blobAuth}` : ""}）。</p>`
       : "";
   const keyPlaceholder = credential.configured
     ? "已配置；留空表示不修改"
