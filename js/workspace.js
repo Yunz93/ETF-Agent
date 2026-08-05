@@ -1,5 +1,5 @@
 import { WORKSPACE_CACHE_KEY, WORKSPACE_SYNC_DEBOUNCE_MS, DEFAULT_TARGET_WEIGHTS } from "./constants.js";
-import { appConfig, els, runtimeInfo, state, workspaceRuntime } from "./state.js";
+import { appConfig, els, state, workspaceRuntime } from "./state.js";
 import { loadJSON, saveJSON } from "./utils.js";
 import {
   applySettingsSnapshot,
@@ -83,9 +83,7 @@ export async function hydrateWorkspace() {
     const response = await fetch("/api/workspace");
     if (!response.ok) throw new Error(`workspace API ${response.status}`);
     const remote = await response.json();
-    const selected = chooseWorkspaceSource(remote, local, {
-      ephemeral: runtimeInfo.ephemeralStorage,
-    });
+    const selected = chooseWorkspaceSource(remote, local);
     if (selected.source === "server") {
       applyWorkspace(selected.payload, selected.source);
       state.workspaceSync.status = "synced";
@@ -210,8 +208,7 @@ export function renderWorkspaceStatus({ announce = false } = {}) {
   }
   if (status === "synced") {
     const time = formatWorkspaceLocalTime(updatedAt);
-    const prefix = runtimeInfo.ephemeralStorage ? "已缓存" : "已同步";
-    setWorkspaceStatusText(time ? `${prefix} · ${time}` : prefix, {
+    setWorkspaceStatusText(time ? `已同步 · ${time}` : "已同步", {
       status: "synced",
       clearAfterMs: 3500,
     });

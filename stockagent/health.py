@@ -100,8 +100,22 @@ def probe_dividend_sources():
     return results
 
 
+def durable_storage_backend():
+    """Return ``blob`` when Vercel Blob token is configured, else ``local``."""
+    try:
+        from .blob_store import blob_enabled
+
+        if blob_enabled():
+            return "blob"
+    except Exception:
+        pass
+    return "local"
+
+
 def is_ephemeral_storage():
-    """True when writable state is not durable (e.g. Vercel ``/tmp``)."""
+    """True when writable state is not durable (e.g. Vercel ``/tmp`` without Blob)."""
+    if durable_storage_backend() == "blob":
+        return False
     flag = os.environ.get("STOCKAGENT_EPHEMERAL", "").strip().lower()
     if flag in {"1", "true", "yes", "on"}:
         return True
@@ -126,6 +140,7 @@ def get_runtime_info():
 
     root = resource_root()
     index = resolve_static_path("/index.html")
+    backend = durable_storage_backend()
     ephemeral = is_ephemeral_storage()
     return {
         "app": "ETF Agent",
@@ -136,6 +151,7 @@ def get_runtime_info():
         "data_dir": str(DATA_DIR),
         "config_path": str(CONFIG_PATH),
         "workspace_path": str(WORKSPACE_PATH),
+        "durable_storage": backend,
         "ephemeral_storage": ephemeral,
         "platform": sys.platform,
         "python": sys.version.split()[0],
