@@ -1657,6 +1657,17 @@ button:active {
     flex-direction: column;
   }
 
+  .panel-heading.settings-heading {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .settings-heading .settings-actions {
+    flex-shrink: 0;
+    justify-content: flex-end;
+  }
+
   .dividend-chart-block .range-segment {
     align-self: stretch;
     max-width: 100%;
@@ -3169,6 +3180,26 @@ button:active {
   max-width: 280px;
 }
 
+@media (max-width: 720px) {
+  .plan-add-plan-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .plan-add-plan-toolbar .plan-strategy-check {
+    align-self: flex-start;
+    min-height: 0;
+    margin-bottom: 0;
+  }
+
+  .plan-add-plan-field {
+    flex: 1 1 auto;
+    max-width: none;
+    width: 100%;
+  }
+}
+
 .plan-add-plan-field span {
   font-size: 11px;
   color: var(--muted);
@@ -3528,16 +3559,13 @@ button:active {
 }
 
 .settings-secret-controls {
-  display: flex;
-  align-items: stretch;
+  display: grid;
   gap: 8px;
   min-width: 0;
-  flex-wrap: wrap;
 }
 
 .settings-secret-controls input {
-  flex: 1 1 auto;
-  width: auto;
+  width: 100%;
   min-width: 0;
   height: 34px;
   min-height: 34px;
@@ -3550,11 +3578,20 @@ button:active {
   box-sizing: border-box;
 }
 
-.settings-secret-controls .compact {
-  flex: 0 0 auto;
+.settings-secret-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-secret-actions .compact {
+  flex: 1 1 0;
   height: 34px;
   min-height: 34px;
-  padding: 0 12px;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .settings-ai input[type="text"] {

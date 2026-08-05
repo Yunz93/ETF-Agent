@@ -95,9 +95,11 @@ export function renderSettings() {
         <span class="settings-secret-label">API Key</span>
         <div class="settings-secret-controls">
           <input type="password" data-ai-secret autocomplete="new-password" placeholder="${escapeAttr(keyPlaceholder)}"${canUseKeychain ? "" : " disabled"} />
-          <button class="ghost-button compact" data-ai-save-key type="button"${canUseKeychain ? "" : " disabled"} title="${canUseKeychain ? "写入 macOS 钥匙串" : "仅 macOS 桌面版支持"}">保存密钥</button>
-          <button class="ghost-button compact" data-ai-test type="button">测试连接</button>
-          <button class="ghost-button compact danger" data-ai-delete-key type="button"${canUseKeychain && credential.configured ? "" : " disabled"}>删除密钥</button>
+          <div class="settings-secret-actions">
+            <button class="ghost-button compact" data-ai-save-key type="button"${canUseKeychain ? "" : " disabled"} title="${canUseKeychain ? "写入 macOS 钥匙串" : "仅 macOS 桌面版支持"}">保存密钥</button>
+            <button class="ghost-button compact" data-ai-test type="button">测试连接</button>
+            <button class="ghost-button compact danger" data-ai-delete-key type="button"${canUseKeychain && credential.configured ? "" : " disabled"}>删除密钥</button>
+          </div>
         </div>
       </div>
       <p class="muted settings-ai-status" data-ai-status>${keyStatus}</p>

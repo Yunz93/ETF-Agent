@@ -70,18 +70,16 @@ export function bindEvents() {
     const seed = event.target.closest?.("[data-import-seed-pool]");
     if (seed) importSeedPool();
   });
-  els.dividendRefresh?.addEventListener("click", () => {
-    renderDividend({ force: true });
-  });
-
   els.etfRefresh?.addEventListener("click", async () => {
     const { ensureMarketSentiment } = await import("./market-sentiment.js");
     const { ensureGoldMacro } = await import("./gold-macro.js");
-    await Promise.all([
-      renderEtfPool({ refresh: true }),
-      ensureMarketSentiment({ refresh: true }).catch(() => {}),
-      ensureGoldMacro({ refresh: true }).catch(() => {}),
-    ]);
+    const sentiment = ensureMarketSentiment({ refresh: true }).catch(() => {});
+    const goldMacro = ensureGoldMacro({ refresh: true }).catch(() => {});
+    if (state.activeView === "dividend") {
+      await Promise.all([renderDividend({ force: true }), sentiment, goldMacro]);
+      return;
+    }
+    await Promise.all([renderEtfPool({ refresh: true }), sentiment, goldMacro]);
   });
 
   const persistPlan = ({ rerender = true } = {}) => {
