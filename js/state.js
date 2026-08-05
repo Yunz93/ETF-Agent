@@ -137,7 +137,6 @@ export function initEls() {
 
     dividendStatus: document.querySelector("#dividendStatus"),
     dividendContent: document.querySelector("#dividendContent"),
-    dividendRefresh: document.querySelector("#dividendRefresh"),
     dividendSectionTitle: document.querySelector("#dividendSectionTitle"),
     dividendLede: document.querySelector("#dividendLede"),
 
