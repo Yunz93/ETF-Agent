@@ -1492,13 +1492,14 @@ button:active {
     align-items: stretch;
   }
 
-  /* 抽屉内始终展示完整文案，不受桌面「收起」图标轨影响 */
+  /* 抽屉内始终展示完整文案与全宽布局，不受桌面「收起」图标轨影响 */
   html[data-sidebar="collapsed"] .brand-text,
   html[data-sidebar="collapsed"] .nav-label,
   html[data-sidebar="collapsed"] .sidebar-pool-heading,
   html[data-sidebar="collapsed"] .sidebar-etf-name,
   html[data-sidebar="collapsed"] .sidebar-etf-meta,
   html[data-sidebar="collapsed"] .sidebar-etf-empty {
+    display: revert;
     opacity: 1;
     width: auto;
     height: auto;
@@ -1507,33 +1508,46 @@ button:active {
   }
 
   html[data-sidebar="collapsed"] .brand {
+    width: 100%;
     justify-content: flex-start;
   }
 
   html[data-sidebar="collapsed"] .sidebar {
+    width: min(86vw, 320px);
     padding: max(18px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
+    align-items: stretch;
   }
 
   html[data-sidebar="collapsed"] .nav-item,
   html[data-sidebar="collapsed"] .nav-stack-footer .nav-item {
-    width: auto;
+    width: 100%;
+    min-height: 44px;
     padding: 10px 12px;
     justify-content: flex-start;
+    gap: 10px;
   }
 
   html[data-sidebar="collapsed"] .nav-stack {
+    width: 100%;
     align-items: stretch;
+    justify-items: stretch;
   }
 
   html[data-sidebar="collapsed"] .sidebar-pool {
+    width: 100%;
+    display: flex;
     align-items: stretch;
   }
 
   html[data-sidebar="collapsed"] .sidebar-etf-list {
+    width: 100%;
     align-items: stretch;
   }
 
   html[data-sidebar="collapsed"] .sidebar-etf-item {
+    width: 100%;
+    min-height: 44px;
+    padding: 4px 6px;
     justify-content: flex-start;
   }
 
@@ -1544,6 +1558,12 @@ button:active {
   html[data-sidebar="collapsed"] .sidebar-etf-button {
     justify-content: flex-start;
     gap: 10px;
+    padding: 6px 8px;
+    min-height: 40px;
+  }
+
+  html[data-sidebar="collapsed"] .sidebar-etf-item.active {
+    background: var(--surface-3);
   }
 
   html[data-sidebar="collapsed"] .sidebar-etf-mark {
@@ -1553,6 +1573,7 @@ button:active {
   }
 
   html[data-sidebar="collapsed"] .sidebar-footer {
+    width: 100%;
     align-items: stretch;
   }
 
@@ -1602,6 +1623,15 @@ button:active {
   html[data-mobile-sidebar="open"] body {
     overflow: hidden;
   }
+}
+
+.settings-ephemeral-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent, #3d8bfd);
+  background: color-mix(in oklab, var(--surface-3, #eef2f6) 80%, transparent);
+  border-radius: 0 8px 8px 0;
+  line-height: 1.45;
 }
 
 @media (max-width: 780px) {

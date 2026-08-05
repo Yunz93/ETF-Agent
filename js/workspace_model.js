@@ -347,8 +347,46 @@ export function parseWorkspaceTimestamp(value) {
   ).getTime();
 }
 
-export function chooseWorkspaceSource(remote, local) {
-  if (Array.isArray(remote?.etfs) && remote.etfs.length) {
+/** 工作区“已填写强度”：持仓/交易/计划等，用于 ephemeral 宿主上避免空服务器盖掉浏览器缓存。 */
+export function workspacePersistenceScore(payload) {
+  if (!payload || typeof payload !== "object") return 0;
+  let score = planPersistenceScore(payload.plan);
+  const etfs = Array.isArray(payload.etfs) ? payload.etfs : [];
+  score += Math.min(etfs.length, 20);
+  for (const entry of etfs) {
+    if (!entry || typeof entry !== "object") continue;
+    if (Number(entry.shares) > 0) score += 3;
+    if (Number(entry.cost) > 0) score += 1;
+    if (String(entry.note || "").trim()) score += 1;
+  }
+  const buys = Array.isArray(payload.buys) ? payload.buys : [];
+  const sells = Array.isArray(payload.sells) ? payload.sells : [];
+  score += Math.min(buys.length, 50);
+  score += Math.min(sells.length, 50);
+  const drafts = Array.isArray(payload.execution_drafts) ? payload.execution_drafts : [];
+  score += Math.min(drafts.length, 20);
+  return score;
+}
+
+export function chooseWorkspaceSource(remote, local, options = {}) {
+  const ephemeral = Boolean(options.ephemeral);
+  const remoteHas = Array.isArray(remote?.etfs) && remote.etfs.length;
+  const localHas = Array.isArray(local?.etfs) && local.etfs.length;
+
+  if (ephemeral && localHas) {
+    if (!remoteHas) {
+      return { source: "local-cache", payload: local, migrate: true };
+    }
+    const localScore = workspacePersistenceScore(local);
+    const remoteScore = workspacePersistenceScore(remote);
+    // Serverless /tmp 可能被冷启动种子或空默认盖掉；浏览器缓存为权威来源。
+    if (localScore >= remoteScore) {
+      return { source: "local-cache", payload: local, migrate: true };
+    }
+    return { source: "server", payload: remote, migrate: false };
+  }
+
+  if (remoteHas) {
     // Local cache may be newer when a debounced server PUT did not finish before reload.
     // But never let a weaker/default plan stampede over a richer server plan just because
     // hydrate rewrote local updated_at with a fresher ISO timestamp.
@@ -357,7 +395,7 @@ export function chooseWorkspaceSource(remote, local) {
     }
     return { source: "server", payload: remote, migrate: false };
   }
-  if (Array.isArray(local?.etfs) && local.etfs.length) {
+  if (localHas) {
     return { source: "local-cache", payload: local, migrate: true };
   }
   return { source: "default-pool", payload: null, migrate: true };

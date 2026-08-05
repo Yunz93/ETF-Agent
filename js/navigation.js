@@ -46,12 +46,13 @@ export function resolveSidebarPreference(stored) {
 }
 
 export function initSidebar() {
-  applySidebar(resolveSidebarPreference(localStorage.getItem(SIDEBAR_KEY)), { persist: false });
+  applySidebarForViewport({ persist: false });
   applyMobileSidebar(false);
-  syncSidebarForViewport();
 }
 
 export function toggleSidebar() {
+  // 抽屉断点下侧栏始终全宽展示，不切换图标轨
+  if (window.innerWidth < SIDEBAR_COLLAPSE_MIN) return;
   const next = document.documentElement.dataset.sidebar === "collapsed" ? "expanded" : "collapsed";
   applySidebar(next);
 }
@@ -61,10 +62,16 @@ export function syncSidebarForViewport() {
   if (width > MOBILE_SIDEBAR_MAX) {
     applyMobileSidebar(false);
   }
-  // 抽屉断点内不改 data-sidebar，避免抽屉打开时图标轨样式压掉文案；回到桌面再恢复偏好
-  if (width >= SIDEBAR_COLLAPSE_MIN) {
-    applySidebar(resolveSidebarPreference(localStorage.getItem(SIDEBAR_KEY)), { persist: false });
+  applySidebarForViewport({ persist: false });
+}
+
+/** 桌面恢复收起偏好；抽屉断点强制展开布局（偏好仍留在 localStorage）。 */
+function applySidebarForViewport({ persist = false } = {}) {
+  if (window.innerWidth >= SIDEBAR_COLLAPSE_MIN) {
+    applySidebar(resolveSidebarPreference(localStorage.getItem(SIDEBAR_KEY)), { persist });
+    return;
   }
+  applySidebar("expanded", { persist: false });
 }
 
 function applyMobileSidebar(open, { restoreFocus = false } = {}) {

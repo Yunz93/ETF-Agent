@@ -13,6 +13,7 @@ import {
   planPersistenceScore,
   upsertBuy,
   upsertSell,
+  workspacePersistenceScore,
 } from "../js/workspace_model.js";
 
 test("workspace source prefers server, then local cache, then defaults", () => {
@@ -21,6 +22,44 @@ test("workspace source prefers server, then local cache, then defaults", () => {
   assert.equal(chooseWorkspaceSource(remote, local).source, "server");
   assert.equal(chooseWorkspaceSource({ etfs: [] }, local).source, "local-cache");
   assert.equal(chooseWorkspaceSource({ etfs: [] }, { etfs: [] }).source, "default-pool");
+});
+
+test("ephemeral storage prefers equally-rich local cache over fresher server seed", () => {
+  const remote = {
+    etfs: [
+      { symbol: "510300", shares: 0, cost: 0 },
+      { symbol: "512890", shares: 0, cost: 0 },
+    ],
+    plan: { amount: 2000, capital_base: 0 },
+    updated_at: "2026-08-05T12:00:00.000Z",
+  };
+  const local = {
+    etfs: [
+      { symbol: "510300", shares: 0, cost: 0 },
+      { symbol: "512890", shares: 0, cost: 0 },
+    ],
+    plan: { amount: 2000, capital_base: 0 },
+    updated_at: "2026-07-01T00:00:00.000Z",
+  };
+  const selected = chooseWorkspaceSource(remote, local, { ephemeral: true });
+  assert.equal(selected.source, "local-cache");
+  assert.equal(selected.migrate, true);
+});
+
+test("ephemeral storage still takes clearly richer remote workspace", () => {
+  const remote = {
+    etfs: [{ symbol: "510300", shares: 1000, cost: 1.2 }],
+    buys: [{ id: "1", symbol: "510300", shares: 1000 }],
+    plan: { amount: 5000, capital_base: 100000, initial_target_pct: 30 },
+    updated_at: "2026-08-05T12:00:00.000Z",
+  };
+  const local = {
+    etfs: [{ symbol: "510300", shares: 0, cost: 0 }],
+    plan: { amount: 2000, capital_base: 0 },
+    updated_at: "2026-08-05T13:00:00.000Z",
+  };
+  assert.ok(workspacePersistenceScore(remote) > workspacePersistenceScore(local));
+  assert.equal(chooseWorkspaceSource(remote, local, { ephemeral: true }).source, "server");
 });
 
 test("workspace source keeps newer local cache when server PUT may have been interrupted", () => {

@@ -100,6 +100,20 @@ def probe_dividend_sources():
     return results
 
 
+def is_ephemeral_storage():
+    """True when writable state is not durable (e.g. Vercel ``/tmp``)."""
+    flag = os.environ.get("STOCKAGENT_EPHEMERAL", "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return True
+    if flag in {"0", "false", "no", "off"}:
+        return False
+    try:
+        resolved = str(DATA_DIR.resolve())
+    except OSError:
+        resolved = str(DATA_DIR)
+    return resolved == "/tmp" or resolved.startswith("/tmp/")
+
+
 def get_runtime_info():
     version = "0.0.0"
     try:
@@ -112,6 +126,7 @@ def get_runtime_info():
 
     root = resource_root()
     index = resolve_static_path("/index.html")
+    ephemeral = is_ephemeral_storage()
     return {
         "app": "ETF Agent",
         "version": version,
@@ -121,6 +136,7 @@ def get_runtime_info():
         "data_dir": str(DATA_DIR),
         "config_path": str(CONFIG_PATH),
         "workspace_path": str(WORKSPACE_PATH),
+        "ephemeral_storage": ephemeral,
         "platform": sys.platform,
         "python": sys.version.split()[0],
         "frozen": bool(getattr(sys, "frozen", False)),

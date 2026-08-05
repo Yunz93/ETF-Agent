@@ -45,7 +45,7 @@ python3 server.py
 
 ### 部署到 Vercel
 
-全站（页面与 `/api/*`）经 Python Serverless（`api/index.py`）处理，便于统一鉴权（`vercel.json` 用 `routes` 强制进函数，避免 CDN 直出静态页绕过登录）。可写数据目录为 `/tmp/stockagent`（实例间不持久；浏览器 localStorage 会缓存工作区）。
+全站（页面与 `/api/*`）经 Python Serverless（`api/index.py`）处理，便于统一鉴权（`vercel.json` 用 `routes` 强制进函数，避免 CDN 直出静态页绕过登录）。可写数据目录为 `/tmp/stockagent`（冷启动/实例间不持久）。`/api/runtime` 会标记 `ephemeral_storage: true`，前端以浏览器 localStorage 为定投计划与设置的权威来源，并在可写时尽力回写服务器；换域名或清站点数据后需重新导入备份。
 
 公网部署请设置访问口令（未设置则站点仍公开）：
 
