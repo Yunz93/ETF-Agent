@@ -41,3 +41,18 @@ test("runPortfolioBacktest returns zeros for empty input", () => {
   assert.equal(result.endingCashRatio, 1);
   assert.equal(result.mode, "fixed");
 });
+
+test("flat prices keep time-weighted return and volatility at zero despite contributions", () => {
+  const flat = Array.from({ length: 252 }, () => 100);
+  const result = runPortfolioBacktest({
+    series: { A: flat },
+    weights: { A: 100 },
+    budgetPerPeriod: 1000,
+    rebalanceEvery: 20,
+    feeRate: 0,
+  });
+  assert.equal(result.annualReturn, 0);
+  assert.equal(result.maxDrawdown, 0);
+  assert.equal(result.volatility, 0);
+  assert.equal(result.endingEquity, 13_000);
+});

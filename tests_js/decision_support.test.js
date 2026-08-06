@@ -234,29 +234,29 @@ test("cashReserveHintBalance only surfaces positive balances", () => {
   assert.equal(cashReserveHintBalance({ cash_reserve: { balance: 1500.5 } }), 1500.5);
 });
 
-test("projected position marks overweight without hard-blocking by default", () => {
-  const soft = projectedPosition({
-    currentValue: 20_000,
-    portfolioValue: 40_000,
-    buyAmount: 2_000,
-    targetWeight: 30,
-  });
-  assert.equal(soft.currentWeight, 50);
-  assert.ok(soft.projectedWeight > 52);
-  assert.equal(soft.maxWeight, 35);
-  assert.equal(soft.overweight, true);
-  assert.equal(soft.blocked, false);
-  assert.equal(soft.wouldExceed, false);
-
+test("projected position enforces the ceiling by default", () => {
   const hard = projectedPosition({
     currentValue: 20_000,
     portfolioValue: 40_000,
     buyAmount: 2_000,
     targetWeight: 30,
-    enforceCeiling: true,
   });
+  assert.equal(hard.currentWeight, 50);
+  assert.ok(hard.projectedWeight > 52);
+  assert.equal(hard.maxWeight, 35);
+  assert.equal(hard.overweight, true);
   assert.equal(hard.blocked, true);
   assert.equal(hard.wouldExceed, true);
+
+  const advisoryOnly = projectedPosition({
+    currentValue: 20_000,
+    portfolioValue: 40_000,
+    buyAmount: 2_000,
+    targetWeight: 30,
+    enforceCeiling: false,
+  });
+  assert.equal(advisoryOnly.blocked, false);
+  assert.equal(advisoryOnly.wouldExceed, false);
 });
 
 test("risk metrics report drawdown and annualized volatility", () => {

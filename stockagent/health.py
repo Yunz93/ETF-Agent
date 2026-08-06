@@ -5,6 +5,7 @@ import datetime
 import os
 import sys
 import time
+from pathlib import Path
 
 from .paths import CONFIG_PATH, DATA_DIR, WORKSPACE_PATH
 from .config_store import etf_settings, quote_settings
@@ -122,10 +123,17 @@ def is_ephemeral_storage():
     if flag in {"0", "false", "no", "off"}:
         return False
     try:
-        resolved = str(DATA_DIR.resolve())
+        resolved = DATA_DIR.resolve()
     except OSError:
-        resolved = str(DATA_DIR)
-    return resolved == "/tmp" or resolved.startswith("/tmp/")
+        resolved = DATA_DIR.absolute()
+    for raw_root in (Path("/tmp"), Path("/private/tmp")):
+        try:
+            root = raw_root.resolve()
+        except OSError:
+            root = raw_root
+        if resolved == root or root in resolved.parents:
+            return True
+    return False
 
 
 def get_runtime_info():

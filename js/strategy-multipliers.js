@@ -111,7 +111,7 @@ export const DEFAULT_STRATEGY_CONFIG = Object.freeze({
   },
 });
 
-/** 池内目标权重的软偏离提示阈值（百分点）；不再作为硬顶停买。 */
+/** 池内目标权重的容忍带宽（百分点）；周期买入不得越过该上限。 */
 export const POSITION_TOLERANCE_PP = 5;
 
 const SENTIMENT_ZONE_HINTS = Object.freeze({
@@ -570,4 +570,3 @@ function dividendMixedPct(pePct, spreadPct) {
 export function valuationDcaMultiplier({ pePct, grade, assetClass, spreadPct } = {}) {
   return dcaMultiplier({ strategy: "valuation", pePct, grade, assetClass, spreadPct });
 }
-

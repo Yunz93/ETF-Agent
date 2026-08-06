@@ -17,7 +17,10 @@ import {
   STRATEGY_IDS,
   strategyLabel,
 } from "./strategy.js";
-import { buildPoolHoldingsForAllocation } from "./pool-alloc.js";
+import {
+  buildPoolHoldingsForAllocation,
+  prepareHoldingsForAllocation,
+} from "./pool-alloc.js";
 import { planExecutionContext } from "./decision-support.js";
 import {
   analysisRegistryFromConfig,
@@ -70,9 +73,10 @@ export function getPeriodAdvice({
     : strategyLabel(strategy);
   const strategyConfig = normalizeStrategyConfig(activePlan.strategy_config);
   const strategyOverrides = activePlan.strategy_overrides;
-  const poolHoldings =
+  const rawPoolHoldings =
     holdings ||
     buildPoolHoldingsForAllocation({ preferLive: preferLive || null });
+  const poolHoldings = prepareHoldingsForAllocation(rawPoolHoldings);
   const holding = poolHoldings.find((item) => item.symbol === symbol) || null;
   const execution = planExecutionContext({ plan: activePlan, holdings: poolHoldings });
   const budget = execution.budget;
@@ -214,7 +218,10 @@ export function getPeriodAdvice({
       : null;
   const overweight =
     drift != null && drift > POSITION_TOLERANCE_PP;
-  // 目标仓位是指引：仅提示超配，不再作为硬顶停买；建仓期更不应锁死。
+  const positionBlocked =
+    execution.phase !== "initial" &&
+    (Boolean(skipped?.positionBlocked) ||
+      (drift != null && drift >= POSITION_TOLERANCE_PP));
   const position = holding
     ? {
         targetWeight,
@@ -222,7 +229,7 @@ export function getPeriodAdvice({
         drift,
         maxWeight: targetWeight != null ? targetWeight + POSITION_TOLERANCE_PP : null,
         overweight,
-        blocked: false,
+        blocked: positionBlocked,
       }
     : null;
 

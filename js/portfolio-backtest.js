@@ -99,64 +99,79 @@ export function runPortfolioBacktest({
   let cash = 0;
   const shares = Object.fromEntries(symbols.map((symbol) => [symbol, 0]));
   let turnover = 0;
-  const equityCurve = [];
+  const performanceCurve = [1];
   const periodReturns = [];
+  let wealthIndex = 1;
+  let previousPostFlowEquity = 0;
+  let lastPrices = null;
 
   for (let i = 0; i < length; i += 1) {
     const prices = Object.fromEntries(symbols.map((symbol) => [symbol, Number(series[symbol][i]) || 0]));
-    let equity = cash;
-    for (const symbol of symbols) equity += shares[symbol] * prices[symbol];
-    if (i > 0) {
-      const prev = equityCurve[equityCurve.length - 1] || equity;
-      periodReturns.push(prev > 0 ? equity / prev - 1 : 0);
-    }
-    equityCurve.push(equity);
+    lastPrices = prices;
+    let preFlowEquity = cash;
+    for (const symbol of symbols) preFlowEquity += shares[symbol] * prices[symbol];
+    let growthFactor = previousPostFlowEquity > 0 ? preFlowEquity / previousPostFlowEquity : 1;
 
-    if (i % rebalanceEvery !== 0) continue;
+    if (i % rebalanceEvery === 0) {
+      cash += Math.max(0, Number(budgetPerPeriod) || 0);
+      let preTradeEquity = cash;
+      for (const symbol of symbols) preTradeEquity += shares[symbol] * prices[symbol];
 
-    cash += Math.max(0, Number(budgetPerPeriod) || 0);
-    equity = cash;
-    for (const symbol of symbols) equity += shares[symbol] * prices[symbol];
-    if (!(equity > 0)) continue;
-
-    for (const symbol of symbols) {
-      let mult = 1;
-      if (mode === "valuation") {
-        const pe = peSeries[symbol]?.[i];
-        mult = simpleValuationMult(pe);
-      }
-      const desiredValue = equity * target[symbol] * clamp01(mult);
-      const currentValue = shares[symbol] * prices[symbol];
-      const deltaValue = desiredValue - currentValue;
-      if (!(prices[symbol] > 0) || Math.abs(deltaValue) < 1e-9) continue;
-      const tradeValue = Math.abs(deltaValue);
-      const fee = tradeValue * Math.max(0, Number(feeRate) || 0);
-      if (deltaValue > 0) {
-        const affordable = Math.min(deltaValue, Math.max(0, cash - fee));
-        if (affordable > 0) {
-          const buyShares = affordable / prices[symbol];
-          shares[symbol] += buyShares;
-          cash -= affordable + fee;
-          turnover += affordable;
+      if (preTradeEquity > 0) {
+        for (const symbol of symbols) {
+          let mult = 1;
+          if (mode === "valuation") {
+            const pe = peSeries[symbol]?.[i];
+            mult = simpleValuationMult(pe);
+          }
+          const desiredValue = preTradeEquity * target[symbol] * clamp01(mult);
+          const currentValue = shares[symbol] * prices[symbol];
+          const deltaValue = desiredValue - currentValue;
+          if (!(prices[symbol] > 0) || Math.abs(deltaValue) < 1e-9) continue;
+          const tradeValue = Math.abs(deltaValue);
+          const fee = tradeValue * Math.max(0, Number(feeRate) || 0);
+          if (deltaValue > 0) {
+            const affordable = Math.min(deltaValue, Math.max(0, cash - fee));
+            if (affordable > 0) {
+              const buyShares = affordable / prices[symbol];
+              shares[symbol] += buyShares;
+              cash -= affordable + fee;
+              turnover += affordable;
+            }
+          } else {
+            const sellShares = Math.min(shares[symbol], tradeValue / prices[symbol]);
+            const proceeds = sellShares * prices[symbol];
+            shares[symbol] -= sellShares;
+            cash += Math.max(0, proceeds - fee);
+            turnover += proceeds;
+          }
         }
-      } else {
-        const sellShares = Math.min(shares[symbol], tradeValue / prices[symbol]);
-        const proceeds = sellShares * prices[symbol];
-        shares[symbol] -= sellShares;
-        cash += Math.max(0, proceeds - fee);
-        turnover += proceeds;
+      }
+
+      let postTradeEquity = cash;
+      for (const symbol of symbols) postTradeEquity += shares[symbol] * prices[symbol];
+      if (preTradeEquity > 0) {
+        growthFactor *= postTradeEquity / preTradeEquity;
       }
     }
+
+    let postFlowEquity = cash;
+    for (const symbol of symbols) postFlowEquity += shares[symbol] * prices[symbol];
+    previousPostFlowEquity = postFlowEquity;
+    const periodReturn = Number.isFinite(growthFactor) ? growthFactor - 1 : 0;
+    periodReturns.push(periodReturn);
+    wealthIndex *= 1 + periodReturn;
+    performanceCurve.push(wealthIndex);
   }
 
-  const endingEquity = equityCurve[equityCurve.length - 1] || 0;
+  let endingEquity = cash;
+  for (const symbol of symbols) endingEquity += shares[symbol] * (lastPrices?.[symbol] || 0);
   const endingCashRatio = endingEquity > 0 ? Math.max(0, cash) / endingEquity : 1;
-  const totalReturn =
-    equityCurve[0] > 0 ? endingEquity / equityCurve[0] - 1 : endingEquity > 0 ? 1 : 0;
+  const totalReturn = wealthIndex - 1;
 
   return {
-    annualReturn: annualizeReturn(totalReturn, length),
-    maxDrawdown: maxDrawdown(equityCurve),
+    annualReturn: annualizeReturn(totalReturn, length - 1),
+    maxDrawdown: maxDrawdown(performanceCurve),
     volatility: volatility(periodReturns),
     endingCashRatio,
     turnoverApprox: endingEquity > 0 ? turnover / endingEquity : 0,

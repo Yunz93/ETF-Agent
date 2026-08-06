@@ -898,7 +898,7 @@ function holdingsPanel(symbol, price, advice, context) {
     [
       "目标带宽",
       position.maxWeight != null
-        ? `${position.maxWeight.toFixed(1)}%（软指引，非停买硬顶）`
+        ? `${position.maxWeight.toFixed(1)}%（周期买入硬上限）`
         : "—",
     ],
     ["持有份额", entry.shares.toLocaleString("zh-CN")],

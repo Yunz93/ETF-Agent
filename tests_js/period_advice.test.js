@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { getPeriodAdvice, STANCE } from "../js/period-advice.js";
+import { setAppConfig } from "../js/state.js";
 
 test("period advice invests when strategy allocation assigns amount", () => {
   const advice = getPeriodAdvice({
@@ -28,7 +29,7 @@ test("period advice invests when strategy allocation assigns amount", () => {
   });
 });
 
-test("period advice soft-tilts overweight instead of hard-blocking", () => {
+test("period advice hard-blocks an already overweight holding", () => {
   const advice = getPeriodAdvice({
     symbol: "512890",
     plan: { amount: 2000, strategy: "fixed" },
@@ -37,10 +38,44 @@ test("period advice soft-tilts overweight instead of hard-blocking", () => {
       { symbol: "563360", name: "A500", targetWeight: 60, actualWeight: 45 },
     ],
   });
-  assert.equal(advice.stance, STANCE.INVEST);
-  assert.ok(advice.amount > 0);
-  assert.equal(advice.position.blocked, false);
+  assert.equal(advice.stance, STANCE.SKIP);
+  assert.equal(advice.amount, 0);
+  assert.equal(advice.position.blocked, true);
   assert.equal(advice.position.overweight, true);
+});
+
+test("period advice applies the same same-index winner as pool allocation", () => {
+  setAppConfig({
+    etf: {
+      analysis_registry: {
+        EXPENSIVE: { index_code: "IDX" },
+        CHEAP: { index_code: "IDX" },
+      },
+      products: {
+        EXPENSIVE: { annual_fee_pct: 0.6, fund_size_yi: 100 },
+        CHEAP: { annual_fee_pct: 0.2, fund_size_yi: 50 },
+      },
+    },
+  });
+  const holdings = [
+    { symbol: "EXPENSIVE", targetWeight: 50 },
+    { symbol: "CHEAP", targetWeight: 50 },
+  ];
+  const expensive = getPeriodAdvice({
+    symbol: "EXPENSIVE",
+    plan: { amount: 2000, strategy: "fixed" },
+    holdings,
+  });
+  const cheap = getPeriodAdvice({
+    symbol: "CHEAP",
+    plan: { amount: 2000, strategy: "fixed" },
+    holdings,
+  });
+  setAppConfig(null);
+  assert.equal(expensive.stance, STANCE.SKIP);
+  assert.equal(expensive.amount, 0);
+  assert.equal(cheap.stance, STANCE.INVEST);
+  assert.equal(cheap.amount, 2000);
 });
 
 test("period advice holds cash when valuation pauses the whole pool", () => {

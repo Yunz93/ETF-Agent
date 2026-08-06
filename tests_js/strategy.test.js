@@ -119,7 +119,7 @@ test("rebalance hint only appears outside the five-point tolerance", () => {
   );
 });
 
-test("overweight soft-tilts instead of hard-blocking new money", () => {
+test("recurring allocation hard-blocks holdings above the position ceiling", () => {
   const result = allocatePoolBudget({
     budget: 2000,
     strategy: "valuation",
@@ -131,9 +131,25 @@ test("overweight soft-tilts instead of hard-blocking new money", () => {
   });
   const over = allocationForSymbol(result, "OVER");
   const room = allocationForSymbol(result, "ROOM");
-  assert.ok(over?.amount > 0);
-  assert.ok(room?.amount > over.amount);
-  assert.match(over.band || "", /超配少配/);
+  assert.equal(over, null);
+  assert.ok(room?.amount > 0);
+  assert.ok(result.skipped.some((row) => row.symbol === "OVER" && row.positionBlocked));
+});
+
+test("recurring allocation caps a near-ceiling buy amount", () => {
+  const result = allocatePoolBudget({
+    budget: 2000,
+    strategy: "fixed",
+    holdings: [
+      { symbol: "NEAR", targetWeight: 40, actualWeight: 44.9, marketValue: 44_900 },
+      { symbol: "ROOM", targetWeight: 60, actualWeight: 55.1, marketValue: 55_100 },
+    ],
+  });
+  const near = allocationForSymbol(result, "NEAR");
+  assert.ok(near);
+  assert.ok(near.amount <= 181);
+  assert.equal(result.deployTotal, 2000);
+  assert.equal(allocationForSymbol(result, "ROOM")?.amount, 2000 - near.amount);
 });
 
 test("initial build deploys full gap and tilts by valuation multipliers", () => {
