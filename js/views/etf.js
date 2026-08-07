@@ -19,7 +19,6 @@ import {
 } from "../ai-portfolio.js";
 import { ensurePoolAnalysisPrefetch } from "../analysis-cache.js";
 import {
-  bookCashReserveSell,
   buildExecutionDraftsFromAllocation,
   executionDraftSummary,
   settleCashReserveOnPeriodComplete,
@@ -36,6 +35,9 @@ import {
   STRATEGY_PRESETS,
   strategySummary,
 } from "../strategy.js";
+import { entryMetrics, overviewGlanceLine, portfolioTotals } from "../etf-portfolio.js";
+import { confirmDraftIntoLedger, settlePlanAfterDrafts } from "../trade-apply.js";
+import { POSITION_DENOM_HINT } from "../decision-status.js";
 
 const ROW_STRATEGY_OPTIONS = Object.freeze([
   { value: "", label: "跟随全局" },
@@ -273,41 +275,9 @@ async function refreshQuotes(force = false) {
   return quotesPromise;
 }
 
-function entryMetrics(entry) {
-  const quote = state.quotesBySymbol[entry.symbol];
-  const price = quote?.price;
-  const shares = Math.max(0, Number(entry.shares) || 0);
-  const cost = Math.max(0, Number(entry.cost) || 0);
-  // 有行情即参与统计：份额为 0 时市值 / 权重记 0，而不是缺省
-  const value = price != null ? price * shares : null;
-  // 成本未填（0）且已有份额时不把浮盈当成「全额盈利」
-  const costValue =
-    price != null && (cost > 0 || shares === 0) ? cost * shares : null;
-  const pnl = value != null && costValue != null ? value - costValue : null;
-  const pnlPct = pnl != null && costValue > 0 ? (pnl / costValue) * 100 : null;
-  return { quote, price, value, costValue, pnl, pnlPct, shares, cost };
-}
-
 function holdingInputValue(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? String(number) : "0";
-}
-
-function portfolioTotals() {
-  let totalValue = 0;
-  let totalCost = 0;
-  let held = 0;
-  let quoted = 0;
-  state.etfs.forEach((entry) => {
-    const { value, costValue, shares } = entryMetrics(entry);
-    if (value != null) {
-      totalValue += value;
-      quoted += 1;
-      if (shares > 0) held += 1;
-    }
-    if (costValue != null) totalCost += costValue;
-  });
-  return { totalValue, totalCost, held, quoted };
 }
 
 function syncSentimentForm(config) {
@@ -594,30 +564,10 @@ export function readPlanFormIntoState() {
 
 function renderMetrics() {
   if (!els.etfMetrics) return;
-  const { totalValue, totalCost, held, quoted } = portfolioTotals();
-  const pnl = totalCost ? totalValue - totalCost : null;
-  const pnlPct = totalCost ? ((totalValue - totalCost) / totalCost) * 100 : null;
   const capitalBase = Math.max(0, Number(state.plan?.capital_base) || 0);
-  const poolPositionPct = capitalBase > 0 && totalValue > 0 ? (totalValue / capitalBase) * 100 : null;
-  const cards = [
-    ["计划内 ETF", `${state.etfs.length} 只 · 持仓 ${held}${quoted > held ? ` · 零仓 ${quoted - held}` : ""}`],
-    ["组合市值", quoted ? money(totalValue) : "—"],
-    [
-      "ETF 池总仓位",
-      poolPositionPct != null ? `${poolPositionPct.toFixed(1)}%` : capitalBase > 0 ? "0%" : "需填总资金",
-    ],
-    ["浮盈亏", pnl != null ? `${money(pnl)}（${pnlPct != null ? `${signed(pnlPct, 1)}%` : "—"}）` : "—"],
-  ];
-  els.etfMetrics.innerHTML = cards
-    .map(
-      ([label, value]) => `
-        <div class="metric-card">
-          <span>${label}</span>
-          <strong>${value}</strong>
-        </div>
-      `,
-    )
-    .join("");
+  const line = overviewGlanceLine({ capitalBase });
+  els.etfMetrics.textContent = state.etfs.length ? `${line} · ${POSITION_DENOM_HINT}` : "";
+  els.etfMetrics.hidden = !state.etfs.length;
 }
 
 function renderRows() {
@@ -1243,6 +1193,64 @@ export function addBuyRecord() {
     if (els.buyFormStatus) els.buyFormStatus.textContent = "该 ETF 不在计划中";
     return;
   }
+
+  // 执行清单确认：走纯函数入账，保证与测试路径一致
+  const confirming =
+    confirmingDraftId &&
+    (state.executionDrafts || []).find((item) => item.id === confirmingDraftId);
+  const expectedSide = confirming?.side === "sell" ? "sell" : "buy";
+  if (confirming && confirming.status === "pending" && type === expectedSide) {
+    try {
+      const result = confirmDraftIntoLedger({
+        draft: confirming,
+        etfs: state.etfs,
+        buys: state.buys,
+        sells: state.sells,
+        executionDrafts: state.executionDrafts,
+        plan: state.plan,
+        tradingCost: state.plan?.trading_cost,
+        price,
+        shares,
+        fee:
+          Number.isFinite(feeInput) && feeInput >= 0 && els.buyFee?.value !== ""
+            ? feeInput
+            : null,
+        date,
+        note,
+      });
+      state.etfs = result.etfs;
+      state.buys = result.buys;
+      state.sells = result.sells;
+      state.executionDrafts = result.executionDrafts;
+      state.plan = result.plan;
+      state.plan = settlePlanAfterDrafts({ plan: state.plan }) || state.plan;
+      confirmingDraftId = null;
+      editingTrade = null;
+      persistWorkspace();
+      if (els.buySubmit) els.buySubmit.textContent = type === "sell" ? "添加卖出" : "添加买入";
+      if (els.buyCancelEdit) els.buyCancelEdit.hidden = true;
+      if (els.buyPrice) els.buyPrice.value = "";
+      if (els.buyShares) els.buyShares.value = "";
+      if (els.buyFee) els.buyFee.value = "";
+      if (els.buyNote) els.buyNote.value = "";
+      renderBuys();
+      renderPoolAllocation();
+      renderMetrics();
+      renderRows();
+      renderSidebarEtfs();
+      if (state.selectedEtf) selectEtfChart(state.selectedEtf);
+      if (els.buyFormStatus) {
+        els.buyFormStatus.textContent = `已入账 ${symbol} ${date}`;
+      }
+      return;
+    } catch (error) {
+      if (els.buyFormStatus) {
+        els.buyFormStatus.textContent = `入账失败：${String(error).replace("Error: ", "")}`;
+      }
+      return;
+    }
+  }
+
   const wasEditing = Boolean(editingTrade);
   const previousSymbol = editingTrade
     ? ((editingTrade.type === "sell" ? state.sells : state.buys).find((item) => item.id === editingTrade.id) || {})
@@ -1268,27 +1276,6 @@ export function addBuyRecord() {
   else state.buys = upsertBuy(state.buys, record);
   syncHoldingFromTrades(symbol);
   if (previousSymbol && previousSymbol !== symbol) syncHoldingFromTrades(previousSymbol);
-  if (confirmingDraftId) {
-    const confirming = (state.executionDrafts || []).find((item) => item.id === confirmingDraftId);
-    const expectedSide = confirming?.side === "sell" ? "sell" : "buy";
-    if (type === expectedSide) {
-      state.executionDrafts = updateExecutionDraft(confirmingDraftId, {
-        status: "confirmed",
-        confirmed_trade_id: record.id,
-        price: record.price,
-        shares: record.shares,
-        fee: record.fee,
-        date: record.date,
-      });
-      const confirmed = (state.executionDrafts || []).find((item) => item.id === confirmingDraftId);
-      if (confirmed?.side === "sell") {
-        const withSell = bookCashReserveSell({ draft: confirmed });
-        if (withSell) state.plan = withSell;
-      }
-      confirmingDraftId = null;
-      applyCashReserveSettlement();
-    }
-  }
   editingTrade = null;
   persistWorkspace();
   if (els.buySubmit) els.buySubmit.textContent = type === "sell" ? "添加卖出" : "添加买入";

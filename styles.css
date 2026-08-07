@@ -2475,6 +2475,23 @@ button:active {
   display: none;
 }
 
+.overview-glance {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.overview-glance:empty,
+.overview-glance[hidden] {
+  display: none;
+}
+
+.pool-alloc-denom-hint,
+.dividend-position-hint {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+}
+
 .exec-draft-panel {
   margin: 0 0 16px;
   padding: 12px 14px;
@@ -3378,10 +3395,6 @@ button:active {
   font-size: 12px;
 }
 
-#etfMetrics.metric-grid {
-  margin-bottom: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
 
 @media (max-width: 1180px) {
   .plan-config-group {
@@ -3398,10 +3411,6 @@ button:active {
 
   .plan-grade-mult {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  #etfMetrics.metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -3436,10 +3445,6 @@ button:active {
   }
 
   .plan-grade-mult {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  #etfMetrics.metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

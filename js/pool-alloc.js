@@ -15,6 +15,11 @@ import {
 import { goldMacroFromState } from "./gold-macro.js";
 import { portfolioReviewResultHtml } from "./ai-portfolio.js";
 import { applyIndexExposureGroups } from "./index-exposure.js";
+import {
+  allocStatusChip,
+  allocStatusHint,
+  POSITION_DENOM_HINT,
+} from "./decision-status.js";
 
 function cacheKey(symbol) {
   return analysisCacheKey(symbol);
@@ -100,18 +105,7 @@ function dataStatusBadge(analyzed, quoteMissing = false) {
   return analyzed ? "" : `<span class="pool-alloc-badge is-neutral">中性</span>`;
 }
 
-/** 把分配 band/reason 收成短状态芯片文案。 */
-export function allocStatusChip({ amount = 0, band = "", reason = "" } = {}) {
-  if (Number(amount) > 0) return "可买";
-  const text = `${band} ${reason}`;
-  if (/行情/.test(text)) return "等行情";
-  if (/无目标/.test(text)) return "无目标";
-  if (/已达目标|已满/.test(text)) return "已满";
-  if (/偏贵|高估|不建议|暂停|留现金/.test(text)) return "偏贵";
-  if (/不足|一手|经济/.test(text)) return "攒一手";
-  if (/不投|跳过|skip/i.test(text)) return "不投";
-  return "不投";
-}
+export { allocStatusChip } from "./decision-status.js";
 
 /** 组装分配用 holdings：同指数择优/组标记后再交给 allocatePoolBudget。 */
 export function prepareHoldingsForAllocation(rawHoldings = []) {
@@ -315,13 +309,15 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
             const chip = allocStatusChip(row);
             const chipClass =
               row.amount > 0 ? "is-buy" : chip === "偏贵" || chip === "攒一手" ? "is-wait" : "is-skip";
+            const hint = allocStatusHint(chip);
             const nameCell = clickable
               ? `<button class="link-button pool-alloc-name" type="button" data-analyze="${escapeAttr(row.symbol)}">${escapeHtml(row.name)}${badge}${feeHint}</button>`
               : `<span>${escapeHtml(row.name)}${badge}${feeHint}</span>`;
-            return `<div class="dca-alloc-row${active}">${nameCell}<span><span class="alloc-status-chip ${chipClass}">${escapeHtml(chip)}</span></span><span class="${amountClass}">${row.amount > 0 ? money(row.amount) : "—"}</span></div>`;
+            return `<div class="dca-alloc-row${active}">${nameCell}<span><span class="alloc-status-chip ${chipClass}" title="${escapeAttr(hint)}">${escapeHtml(chip)}</span></span><span class="${amountClass}">${row.amount > 0 ? money(row.amount) : "—"}</span></div>`;
           })
           .join("")}
       </div>
+      <p class="muted pool-alloc-denom-hint">${escapeHtml(POSITION_DENOM_HINT)}</p>
       ${progressNote}
       ${portfolioReviewResultHtml(state.aiPortfolioReview)}
     </section>

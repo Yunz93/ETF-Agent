@@ -179,17 +179,12 @@
             aria-labelledby="etfTabOverview"
             data-etf-panel="overview"
           >
-            <section class="plan-section" aria-label="本期动作">
-              <div class="plan-section-heading">
-                <h3 class="plan-section-title">本期动作</h3>
-              </div>
-              <div class="metric-grid" id="etfMetrics"></div>
-            </section>
             <div id="overviewEmptyGuide" class="seed-guide-card" hidden>
               <h3>计划为空</h3>
               <button class="primary-button" type="button" data-import-seed-pool>导入默认种子池</button>
             </div>
             <div id="poolAllocPanel" class="pool-alloc-home"></div>
+            <p id="etfMetrics" class="overview-glance muted" aria-label="组合摘要"></p>
           </div>
 
           <div
@@ -547,6 +542,6 @@
       </main>
     </div>
 
-    <script type="module" src="./js/main.js?v=20260805f"></script>
+    <script type="module" src="./js/main.js?v=20260805g"></script>
   </body>
 </html>
