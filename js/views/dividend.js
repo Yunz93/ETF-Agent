@@ -26,6 +26,11 @@ import {
 } from "../analysis-cache.js";
 import { callRenderer, registerRenderers } from "./render.js";
 import { persistWorkspace } from "../workspace.js";
+import {
+  orderActionLabel,
+  positionGlance,
+  POSITION_DENOM_HINT,
+} from "../decision-status.js";
 
 let indexChartBound = false;
 const forceInefficientBySymbol = new Set();
@@ -613,25 +618,16 @@ function executionPanelHtml(advice, context) {
   const overweightHint =
     position.overweight ||
     (position.projectedDrift != null && position.projectedDrift > 5);
-  const lotBlocked = !willOrder && order.blockedReason === "insufficient_lot";
-  const action =
-    cycle.status === "completed"
-      ? "本期已完成"
-      : willOrder
-        ? `${order.inefficient ? "仍可买" : "可买"} ${order.shares.toLocaleString("zh-CN")} 份${
-            overweightHint ? " · 已超目标" : ""
-          }`
-        : order.blockedReason === "fee_inefficient"
-          ? "攒一手（手续费）"
-          : order.blockedReason === "fee_rate_exceeds_limit"
-            ? "费率超限"
-          : lotBlocked
-            ? initial
-              ? `攒一手（余量下期）`
-              : `攒一手`
-            : advice.amount > 0
-              ? `攒一手`
-              : "不投";
+  const action = orderActionLabel({
+    cycleCompleted: cycle.status === "completed",
+    willOrder,
+    shares: order.shares,
+    inefficient: order.inefficient,
+    overweight: overweightHint,
+    blockedReason: order.blockedReason,
+    initial,
+    hasAmount: Number(advice?.amount) > 0,
+  });
 
   const skipOrder = !willOrder && !(advice?.amount > 0 && order.blockedReason);
   const rolled = Math.max(0, Number(context.pending?.rolled) || 0);
@@ -886,21 +882,28 @@ function holdingsPanel(symbol, price, advice, context) {
   const pnl = value != null && costValue != null ? value - costValue : null;
   const pnlPct = pnl != null && costValue ? (pnl / costValue) * 100 : null;
   const position = advice?.position || {};
+  const glance = positionGlance({
+    targetWeight: position.targetWeight,
+    actualWeight: position.actualWeight,
+    drift: position.drift,
+    assetWeight: context.assetPositionPct,
+    poolPositionPct: advice?.execution?.currentPositionPct,
+  });
   const rows = [
-    ["目标", position.targetWeight != null ? `${position.targetWeight.toFixed(1)}%` : "—"],
-    ["池内", position.actualWeight != null ? `${position.actualWeight.toFixed(1)}%` : "—"],
+    ["仓位", glance.primary],
     ["买后", context.position.projectedWeight != null ? `${context.position.projectedWeight.toFixed(1)}%` : "—"],
-    ["偏离", position.drift != null ? `${signed(position.drift, 1)} pp` : "—"],
-    ["总仓", context.assetPositionPct != null ? `${context.assetPositionPct.toFixed(1)}%` : "—"],
-    ["池总仓", advice?.execution?.currentPositionPct != null ? `${advice.execution.currentPositionPct.toFixed(1)}%` : "—"],
     ["份额", entry.shares.toLocaleString("zh-CN")],
     ["成本", cost != null ? cost.toFixed(3) : "—"],
     ["现价", price != null ? Number(price).toFixed(3) : "—"],
     ["市值", value != null ? money(value) : "—"],
     ["浮盈亏", pnl != null ? `${money(pnl)}（${signed(pnlPct, 1)}%）` : "—"],
   ];
+  if (glance.secondary) {
+    rows.splice(1, 0, ["口径", glance.secondary]);
+  }
   return `
     <div class="dividend-holdings">
+      <p class="muted dividend-position-hint">${escapeHtml(POSITION_DENOM_HINT)}</p>
       <dl class="dividend-holdings-grid">
         ${rows
           .map(
