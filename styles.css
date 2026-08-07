@@ -1859,26 +1859,16 @@ button:active {
   flex-direction: column;
 }
 
-/* 上排：综合评分 | 关键指标；下排：本期结论 | 持仓(+分档) */
-.dividend-hero > .dividend-score-card {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.dividend-hero > .dividend-metrics-card {
-  grid-column: 2;
-  grid-row: 1;
-}
-
+/* 上排：本期结论 | 持仓(+分档)；下排：关键指标 | 综合评分 */
 .dividend-hero > .dividend-conclusion-card,
 .dividend-hero > .dividend-advice {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 1;
 }
 
 .dividend-hero > .dividend-hero-aside-stack {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1886,6 +1876,16 @@ button:active {
   min-height: 0;
   height: 100%;
   align-self: stretch;
+}
+
+.dividend-hero > .dividend-metrics-card {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.dividend-hero > .dividend-score-card {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 /* 有分档时贴在列底，与左侧本期结论底端对齐；多余高度由持仓卡吸收，避免中间留空条 */
@@ -2425,6 +2425,54 @@ button:active {
 .pool-alloc-exec-summary {
   margin: 0;
   font-size: 12.5px;
+}
+
+.pool-alloc-exec-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--accent) 10%, var(--surface-2));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 28%, var(--line));
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.alloc-status-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.alloc-status-chip.is-buy {
+  color: color-mix(in oklab, var(--up, #1a7f4b) 80%, var(--ink));
+  background: color-mix(in oklab, var(--up, #1a7f4b) 12%, var(--surface));
+}
+
+.alloc-status-chip.is-wait {
+  color: color-mix(in oklab, var(--warn) 75%, var(--ink));
+  background: color-mix(in oklab, var(--warn) 14%, var(--surface));
+}
+
+.alloc-status-chip.is-skip {
+  color: var(--muted);
+  background: color-mix(in oklab, var(--muted) 12%, var(--surface));
+}
+
+.plan-config-group-heading .muted:empty,
+.plan-strategy-hint:empty,
+.dividend-lede:empty,
+.dividend-lede[hidden] {
+  display: none;
 }
 
 .exec-draft-panel {

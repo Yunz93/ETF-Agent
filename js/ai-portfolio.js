@@ -78,7 +78,7 @@ export function portfolioReviewResultHtml(review) {
           <button class="ghost-button compact" type="button" data-ai-portfolio-review>重试</button>
         </div>
         <p class="down ai-review-status">${escapeHtml(review.error || "请求失败")}</p>
-        <p class="muted">规则分配保持有效，AI 失败不会改草稿。</p>
+        <p class="muted">规则分配仍有效。</p>
       </section>`;
   }
   const result = review.result;

@@ -78,6 +78,8 @@ export const state = {
   analysisPrefetch: { status: "idle", total: 0, done: 0, current: null },
   // 本期执行草稿：[{id, period, symbol, name, suggested_amount, price, shares, fee, date, status, skip_reason?}]
   executionDrafts: [],
+  // 最近一次全池分配摘要：symbol -> { amount, chip }
+  lastPoolAllocBySymbol: {},
   aiReviews: {}, // symbol -> { status, result?, error? }
   // 全池 AI 审视：{ status: idle|loading|ready|error, result?, error? }
   aiPortfolioReview: { status: "idle" },

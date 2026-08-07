@@ -517,7 +517,7 @@ function renderInitialSummary() {
   if (!els.planInitialSummary) return;
   const execution = planExecutionContext({ plan: state.plan, holdings: currentPlanHoldings() });
   if (!execution.configured) {
-    els.planInitialSummary.textContent = "填写总资金、目标仓位与建仓月数后计算额度";
+    els.planInitialSummary.textContent = "";
     return;
   }
   if (execution.markedComplete || execution.reached) {
@@ -664,20 +664,16 @@ function renderRows() {
           <td class="num">${price != null ? price.toFixed(3) : "—"}</td>
           <td class="num ${changeClass}">${change != null ? `${signed(change)}%` : "—"}</td>
           <td class="num etf-input-cell etf-col-target">
-            <input type="number" min="0" max="100" step="any" value="${holdingInputValue(target)}" placeholder="0" data-field="target_weight" data-symbol="${escapeAttr(entry.symbol)}" aria-label="配置目标权重" title="目标配置权重，分母为计划内 ETF 目标合计" />
+            <input type="number" min="0" max="100" step="any" value="${holdingInputValue(target)}" placeholder="0" data-field="target_weight" data-symbol="${escapeAttr(entry.symbol)}" aria-label="配置目标权重" title="池内目标权重" />
           </td>
           <td class="etf-input-cell etf-col-strategy">
-            <select class="etf-strategy-select" data-field="strategy_override" data-symbol="${escapeAttr(entry.symbol)}" aria-label="本品种定投策略" title="默认跟随计划全局策略">
+            <select class="etf-strategy-select" data-field="strategy_override" data-symbol="${escapeAttr(entry.symbol)}" aria-label="本品种定投策略" title="覆盖全局策略">
               ${strategyOptions}
             </select>
           </td>
-          <td class="num etf-col-pool" title="当前市值占计划内 ETF 合计市值的比例">${poolWeight != null ? `${poolWeight.toFixed(1)}%` : "—"}</td>
-          <td class="num etf-col-asset" title="${
-            assetWeight != null
-              ? "当前市值占可投资总资金的比例"
-              : "填写计划设置中的可投资总资金后显示"
-          }">${assetWeight != null ? `${assetWeight.toFixed(1)}%` : "—"}</td>
-          <td class="num ${driftClass}" title="池内实际权重相对目标配置的偏离（百分点）">${
+          <td class="num etf-col-pool" title="占池内市值">${poolWeight != null ? `${poolWeight.toFixed(1)}%` : "—"}</td>
+          <td class="num etf-col-asset" title="占可投资总资金">${assetWeight != null ? `${assetWeight.toFixed(1)}%` : "—"}</td>
+          <td class="num ${driftClass}" title="池内% − 配置%">${
             drift != null
               ? `${signed(drift, 1)}<br /><small>${drift > 0.05 ? "超配" : drift < -0.05 ? "低配" : "贴近"}</small>`
               : "—"
@@ -921,7 +917,7 @@ function bindDraftActions(root) {
       } else if (els.poolAllocPanel) {
         const note = document.createElement("p");
         note.className = "muted pool-alloc-note";
-        note.textContent = "本期无可执行整手份额（检查行情与手续费门槛）";
+        note.textContent = "本期无可执行整手";
         els.poolAllocPanel.querySelector(".pool-alloc-block")?.appendChild(note);
       }
     });
@@ -1051,6 +1047,7 @@ function renderPoolAllocation() {
     button.addEventListener("click", () => openAnalysis(button.dataset.analyze));
   });
   bindDraftActions(els.poolAllocPanel);
+  renderSidebarEtfs();
   ensurePoolAnalysisPrefetch({
     onUpdate: () => {
       if (!els.poolAllocPanel || state.activeView !== "etf") return;
@@ -1059,6 +1056,7 @@ function renderPoolAllocation() {
         button.addEventListener("click", () => openAnalysis(button.dataset.analyze));
       });
       bindDraftActions(els.poolAllocPanel);
+      renderSidebarEtfs();
     },
   });
 }
@@ -1339,6 +1337,7 @@ export function renderSidebarEtfs() {
     return;
   }
   const activeSymbol = state.analysisSymbol;
+  const allocMap = state.lastPoolAllocBySymbol || {};
   els.sidebarEtfList.innerHTML = state.etfs
     .map((entry) => {
       const quote = state.quotesBySymbol[entry.symbol];
@@ -1349,7 +1348,12 @@ export function renderSidebarEtfs() {
       const active = activeSymbol === entry.symbol ? " active" : "";
       const fullIndex = analysisIsFullIndex(appConfig, entry.symbol);
       const target = Number(entry.target_weight) || 0;
-      const label = `${name}（${entry.symbol}）${target ? ` · 目标 ${target}%` : ""}${fullIndex ? "" : " · ETF 口径分析"}`;
+      const alloc = allocMap[entry.symbol];
+      const allocText =
+        alloc?.amount > 0 ? money(alloc.amount) : alloc?.chip ? alloc.chip : "";
+      const label = `${name}（${entry.symbol}）${target ? ` · 目标 ${target}%` : ""}${
+        allocText ? ` · ${allocText}` : ""
+      }${fullIndex ? "" : " · ETF 口径"}`;
       return `
         <div class="sidebar-etf-item${active}" data-symbol="${escapeAttr(entry.symbol)}">
           <span class="sidebar-etf-handle" draggable="true" title="拖动排序" aria-label="拖动排序">⋮⋮</span>
@@ -1363,7 +1367,7 @@ export function renderSidebarEtfs() {
             <span class="sidebar-etf-mark" aria-hidden="true">${escapeHtml(shortLabel)}</span>
             <span class="sidebar-etf-name">
               <strong>${escapeHtml(name)}</strong>
-              <em>${escapeHtml(entry.symbol)}${target ? ` · ${target}%` : ""}</em>
+              <em>${escapeHtml(entry.symbol)}${allocText ? ` · ${escapeHtml(allocText)}` : target ? ` · ${target}%` : ""}</em>
             </span>
             <span class="sidebar-etf-meta ${changeClass}">
               ${change != null ? `${signed(change)}%` : "—"}
