@@ -114,7 +114,7 @@
           <div class="panel-heading dividend-heading">
             <div>
               <h2 class="section-title" id="dividendSectionTitle">指数</h2>
-              <p class="muted dividend-lede" id="dividendLede">看档位、估值分位与年线位置。</p>
+              <p class="muted dividend-lede" id="dividendLede" hidden></p>
             </div>
           </div>
           <div id="dividendStatus" class="research-load-status muted" role="status">正在准备分析数据</div>
@@ -122,12 +122,6 @@
         </section>
 
         <section id="etfView" class="view active">
-          <div class="panel-heading">
-            <div>
-              <p class="muted dividend-lede">按任务查看计划、持仓与交易记录</p>
-            </div>
-          </div>
-
           <div class="etf-tabs" role="tablist" aria-label="定投计划模块">
             <button
               id="etfTabOverview"
@@ -185,16 +179,14 @@
             aria-labelledby="etfTabOverview"
             data-etf-panel="overview"
           >
-            <section class="plan-section" aria-label="组合概览">
+            <section class="plan-section" aria-label="本期动作">
               <div class="plan-section-heading">
-                <h3 class="plan-section-title">组合概览</h3>
-                <p class="muted">目标合计宜 ≈ 100%</p>
+                <h3 class="plan-section-title">本期动作</h3>
               </div>
               <div class="metric-grid" id="etfMetrics"></div>
             </section>
             <div id="overviewEmptyGuide" class="seed-guide-card" hidden>
-              <h3>概览需要 ETF 池</h3>
-              <p class="muted">当前计划为空。导入默认种子池后即可看到全池本期分配与组合概览。</p>
+              <h3>计划为空</h3>
               <button class="primary-button" type="button" data-import-seed-pool>导入默认种子池</button>
             </div>
             <div id="poolAllocPanel" class="pool-alloc-home"></div>
@@ -211,7 +203,6 @@
             <section class="plan-section" aria-label="计划参数">
               <div class="plan-section-heading">
                 <h3 class="plan-section-title">计划参数</h3>
-                <p class="muted">建仓目标、周期预算与交易成本分别约束</p>
               </div>
               <form id="dcaPlanForm" class="plan-config-strip" autocomplete="off">
                 <div class="plan-config-group plan-config-identity">
@@ -231,7 +222,7 @@
                 <div class="plan-config-group">
                   <div class="plan-config-group-heading">
                     <h4>初期建仓</h4>
-                    <p id="planInitialSummary" class="muted">填写总资金与目标仓位后计算建仓额度</p>
+                    <p id="planInitialSummary" class="muted"></p>
                   </div>
                   <label>
                     <span>可投资总资金（元）</span>
@@ -254,7 +245,6 @@
                 <div class="plan-config-group">
                   <div class="plan-config-group-heading">
                     <h4>周期定投</h4>
-                    <p class="muted">建仓完成后（或未配置建仓时）作为每期预算上限</p>
                   </div>
                   <label>
                     <span>全池每期预算（元）</span>
@@ -282,18 +272,17 @@
                       <option value="custom">自定义策略</option>
                     </select>
                   </label>
-                  <p id="planStrategyHint" class="plan-strategy-hint muted">按 PE 近十年分位调节倍率，偏贵留现金</p>
+                  <p id="planStrategyHint" class="plan-strategy-hint muted" hidden></p>
                   <label class="plan-sentiment-check">
                     <input id="planSentimentEnabled" type="checkbox" checked />
-                    <span>叠加市场情绪（仅极端区调节；宽基真实行情）</span>
+                    <span>叠加市场情绪</span>
                   </label>
-                  <p id="planSentimentHint" class="plan-strategy-hint muted">A500 / 纳指 / 恒生科技 ETF 收盘价衍生波动与回撤温度</p>
+                  <p id="planSentimentHint" class="plan-strategy-hint muted" hidden></p>
                 </div>
 
                 <div class="plan-config-group">
                   <div class="plan-config-group-heading">
                     <h4>交易成本</h4>
-                    <p class="muted">订单同时满足现金上限、整手与手续费效率</p>
                   </div>
                   <label>
                     <span>最低手续费（元）</span>
@@ -368,7 +357,6 @@
             <section class="plan-section" aria-label="持仓明细">
             <div class="plan-section-heading">
               <h3 class="plan-section-title">持仓明细</h3>
-              <p class="muted">拖拽排序 · 点名称分析</p>
             </div>
             <form id="etfForm" class="add-symbol-strip" autocomplete="off">
               <label class="grow">
@@ -399,11 +387,11 @@
                     <th>ETF</th>
                     <th class="num">现价</th>
                     <th class="num">涨跌</th>
-                    <th class="num etf-col-target" title="目标配置权重，分母为计划内 ETF 目标合计">配置%</th>
-                    <th class="etf-col-strategy" title="本品种定投策略；默认跟随计划全局策略">策略</th>
-                    <th class="num etf-col-pool" title="当前市值占计划内 ETF 合计市值的比例">池内%</th>
-                    <th class="num etf-col-asset" title="当前市值占计划「可投资总资金」的比例">总仓%</th>
-                    <th class="num" title="池内实际权重相对目标配置的偏离（百分点）">偏离%</th>
+                    <th class="num etf-col-target" title="池内目标权重">配置%</th>
+                    <th class="etf-col-strategy" title="覆盖全局策略">策略</th>
+                    <th class="num etf-col-pool" title="占池内市值">池内%</th>
+                    <th class="num etf-col-asset" title="占可投资总资金">总仓%</th>
+                    <th class="num" title="池内% − 配置%">偏离%</th>
                     <th class="num">持有份额</th>
                     <th class="num">含费成本</th>
                     <th class="num">市值</th>
@@ -415,8 +403,7 @@
               </table>
             </div>
             <div id="etfEmpty" class="empty-state seed-guide-card" hidden>
-              <h3>开始建立定投池</h3>
-              <p class="muted">可一键导入默认种子池（7 只宽基/主题 ETF，已带均衡目标权重），也可上方表单逐只添加。</p>
+              <h3>计划为空</h3>
               <button id="importSeedPool" class="primary-button" type="button">导入默认种子池</button>
             </div>
             </section>
@@ -453,7 +440,6 @@
             <section class="plan-section" aria-label="交易记录">
             <div class="plan-section-heading">
               <h3 class="plan-section-title">交易记录</h3>
-              <p class="muted">用于复盘成本与走势图买卖点</p>
             </div>
             <div id="execDraftPanel" class="exec-draft-panel" hidden></div>
             <form id="buyForm" class="add-symbol-strip" autocomplete="off">
@@ -554,7 +540,6 @@
                   <input id="importWorkspaceFile" type="file" accept="application/json,.json" hidden />
                 </div>
               </div>
-              <p class="muted">导出可备份定投计划与设置（不含 API Key）。</p>
               <p id="workspaceStatus" class="settings-status muted" role="status" hidden></p>
             </section>
           </div>
@@ -562,6 +547,6 @@
       </main>
     </div>
 
-    <script type="module" src="./js/main.js?v=20260805e"></script>
+    <script type="module" src="./js/main.js?v=20260805f"></script>
   </body>
 </html>

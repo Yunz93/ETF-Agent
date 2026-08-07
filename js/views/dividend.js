@@ -63,11 +63,13 @@ function syncAnalysisChrome(payload) {
   }
   if (els.dividendLede) {
     const proxy = payload?.analysis_mode === "etf_proxy";
-    els.dividendLede.textContent = symbol
+    const text = symbol
       ? proxy
         ? `${symbol}${etfName ? ` · ${etfName}` : ""} · ETF 口径`
         : `${symbol}${etfName ? ` · ${etfName}` : ""}`
-      : "看档位、估值分位与年线位置。";
+      : "";
+    els.dividendLede.textContent = text;
+    els.dividendLede.hidden = !text;
   }
 }
 
@@ -614,22 +616,22 @@ function executionPanelHtml(advice, context) {
   const lotBlocked = !willOrder && order.blockedReason === "insufficient_lot";
   const action =
     cycle.status === "completed"
-      ? "本期已完成，避免重复买入"
+      ? "本期已完成"
       : willOrder
         ? `${order.inefficient ? "仍可买" : "可买"} ${order.shares.toLocaleString("zh-CN")} 份${
-            overweightHint ? "（已超目标，比例已下调）" : ""
+            overweightHint ? " · 已超目标" : ""
           }`
         : order.blockedReason === "fee_inefficient"
-          ? "额度不足一整手"
+          ? "攒一手（手续费）"
           : order.blockedReason === "fee_rate_exceeds_limit"
-            ? "佣金费率高于设定上限，请调整成本参数"
+            ? "费率超限"
           : lotBlocked
             ? initial
-              ? `不足 ${order.lotSize} 份，暂不买入（余量计入下期）`
-              : `不足 ${order.lotSize} 份，暂不买入`
+              ? `攒一手（余量下期）`
+              : `攒一手`
             : advice.amount > 0
-              ? `不足 ${order.lotSize} 份，暂不买入`
-              : "无待成交订单";
+              ? `攒一手`
+              : "不投";
 
   const skipOrder = !willOrder && !(advice?.amount > 0 && order.blockedReason);
   const rolled = Math.max(0, Number(context.pending?.rolled) || 0);
@@ -686,12 +688,11 @@ function executionPanelHtml(advice, context) {
       ${
         order.blockedReason === "fee_inefficient" && forcedPreview?.shares > 0
           ? `<div class="decision-execution-force">
-              <p class="muted">达到经济性最小 ${order.minimumEfficientShares.toLocaleString("zh-CN")} 份前默认累计。若仍买入 ${forcedPreview.shares.toLocaleString("zh-CN")} 份，手续费占比约 ${fmt(forcedPreview.feeRatioPct, 3)}%。</p>
+              <p class="muted">最小 ${order.minimumEfficientShares.toLocaleString("zh-CN")} 份 · 仍买 ${forcedPreview.shares.toLocaleString("zh-CN")} 份约 ${fmt(forcedPreview.feeRatioPct, 3)}%</p>
               <button class="ghost-button compact" type="button" data-force-inefficient="${escapeAttr(symbol)}">仍然买入</button>
             </div>`
           : order.inefficient
             ? `<div class="decision-execution-force">
-                <p class="muted">已选择仍然买入；手续费占比高于设定效率阈值。</p>
                 <button class="ghost-button compact" type="button" data-clear-force-inefficient="${escapeAttr(symbol)}">改回累计</button>
               </div>`
             : ""
@@ -784,10 +785,9 @@ function dcaAdviceHtml(advice, context) {
   const proxy = payload.analysis_mode === "etf_proxy";
   const active = advice || currentPeriodAdvice();
   const bullets = [...(active.bullets || [])];
-  if (proxy && active.pePct == null) bullets.push("ETF 口径，无 PE 分位");
+  if (proxy && active.pePct == null) bullets.push("ETF 口径");
   const assetClass = active.assetClass || payload.asset_class || "";
   if (assetClass === "commodity") {
-    bullets.push("黄金/商品：技术面择时 + 美债/美元宏观软叠加，不用股票估值");
     const macro = active.goldMacro || payload.gold_macro;
     if (macro && !macro.degraded && macro.score != null) {
       const us = macro.us10y?.value != null ? `美债 ${macro.us10y.value}%` : "";
@@ -796,8 +796,6 @@ function dcaAdviceHtml(advice, context) {
       const parts = [macro.band || "宏观", us, usd].filter(Boolean);
       bullets.push(`宏观 ${parts.join(" · ")} · ×${macro.mult ?? 1}`);
     }
-  } else if (assetClass === "bond") {
-    bullets.push("债券类无股票估值口径，按目标仓位定额参与");
   }
 
   const strategyAmount = Number(active.amount) || 0;
@@ -889,20 +887,14 @@ function holdingsPanel(symbol, price, advice, context) {
   const pnlPct = pnl != null && costValue ? (pnl / costValue) * 100 : null;
   const position = advice?.position || {};
   const rows = [
-    ["池内目标权重", position.targetWeight != null ? `${position.targetWeight.toFixed(1)}%` : "未设置"],
-    ["池内当前权重", position.actualWeight != null ? `${position.actualWeight.toFixed(1)}%` : "—"],
-    ["池内买后权重", context.position.projectedWeight != null ? `${context.position.projectedWeight.toFixed(1)}%` : "—"],
-    ["ETF 池总仓位", advice?.execution?.currentPositionPct != null ? `${advice.execution.currentPositionPct.toFixed(1)}%` : "—"],
-    ["单只总资产仓位", context.assetPositionPct != null ? `${context.assetPositionPct.toFixed(1)}%` : "—"],
-    ["偏离目标", position.drift != null ? `${signed(position.drift, 1)} pp` : "—"],
-    [
-      "目标带宽",
-      position.maxWeight != null
-        ? `${position.maxWeight.toFixed(1)}%（周期买入硬上限）`
-        : "—",
-    ],
-    ["持有份额", entry.shares.toLocaleString("zh-CN")],
-    ["成本价（含费）", cost != null ? cost.toFixed(3) : "—"],
+    ["目标", position.targetWeight != null ? `${position.targetWeight.toFixed(1)}%` : "—"],
+    ["池内", position.actualWeight != null ? `${position.actualWeight.toFixed(1)}%` : "—"],
+    ["买后", context.position.projectedWeight != null ? `${context.position.projectedWeight.toFixed(1)}%` : "—"],
+    ["偏离", position.drift != null ? `${signed(position.drift, 1)} pp` : "—"],
+    ["总仓", context.assetPositionPct != null ? `${context.assetPositionPct.toFixed(1)}%` : "—"],
+    ["池总仓", advice?.execution?.currentPositionPct != null ? `${advice.execution.currentPositionPct.toFixed(1)}%` : "—"],
+    ["份额", entry.shares.toLocaleString("zh-CN")],
+    ["成本", cost != null ? cost.toFixed(3) : "—"],
     ["现价", price != null ? Number(price).toFixed(3) : "—"],
     ["市值", value != null ? money(value) : "—"],
     ["浮盈亏", pnl != null ? `${money(pnl)}（${signed(pnlPct, 1)}%）` : "—"],
@@ -1058,14 +1050,14 @@ function errorsHtml() {
   const parts = [];
   if (naEntries.length) {
     parts.push(
-      `<p class="dividend-framework-note muted">框架说明：${naEntries
+      `<p class="dividend-framework-note muted">${naEntries
         .map((entry) => escapeHtml(entry))
         .join("；")}</p>`,
     );
   }
   if (errorEntries.length) {
     parts.push(
-      `<p class="dividend-degraded muted">部分数据降级：${errorEntries
+      `<p class="dividend-degraded muted">${errorEntries
         .map((entry) => escapeHtml(entry))
         .join("；")}</p>`,
     );
@@ -1157,13 +1149,13 @@ function paintDividend() {
   els.dividendContent.innerHTML = `
     ${errorsHtml()}
     <div class="dividend-hero">
-      ${scoreCardHtml()}
-      ${metricsCardHtml()}
       ${dcaAdviceHtml(advice, context)}
       <div class="dividend-hero-aside-stack">
         ${holdingsCardHtml(advice, context)}
         ${addPlan}
       </div>
+      ${metricsCardHtml()}
+      ${scoreCardHtml()}
     </div>
     <div class="decision-detail-grid">
       ${vehicleQualityHtml(context)}
@@ -1171,7 +1163,7 @@ function paintDividend() {
     </div>
     <section class="panel-block dividend-chart-block">
       <div class="panel-heading">
-        <h2 class="section-title">ETF 走势 · 年线与布林</h2>
+        <h2 class="section-title">ETF 走势</h2>
         <div class="range-segment" role="group" aria-label="ETF 走势区间">
           ${Object.entries(INDEX_CHART_RANGE_LABELS)
             .map(

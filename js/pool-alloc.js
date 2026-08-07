@@ -95,11 +95,22 @@ export function buildPoolHoldingsForAllocation({ preferLive = null } = {}) {
 
 function dataStatusBadge(analyzed, quoteMissing = false) {
   if (quoteMissing) {
-    return `<span class="pool-alloc-badge is-warn" title="缺少有效行情，本期冻结">等待行情</span>`;
+    return `<span class="pool-alloc-badge is-warn">等行情</span>`;
   }
-  return analyzed
-    ? `<span class="pool-alloc-badge is-ready" title="已用分析缓存参与分配">已分析</span>`
-    : `<span class="pool-alloc-badge is-neutral" title="暂无分析，按中性倍率参与分配">中性兜底</span>`;
+  return analyzed ? "" : `<span class="pool-alloc-badge is-neutral">中性</span>`;
+}
+
+/** 把分配 band/reason 收成短状态芯片文案。 */
+export function allocStatusChip({ amount = 0, band = "", reason = "" } = {}) {
+  if (Number(amount) > 0) return "可买";
+  const text = `${band} ${reason}`;
+  if (/行情/.test(text)) return "等行情";
+  if (/无目标/.test(text)) return "无目标";
+  if (/已达目标|已满/.test(text)) return "已满";
+  if (/偏贵|高估|不建议|暂停|留现金/.test(text)) return "偏贵";
+  if (/不足|一手|经济/.test(text)) return "攒一手";
+  if (/不投|跳过|skip/i.test(text)) return "不投";
+  return "不投";
 }
 
 /** 组装分配用 holdings：同指数择优/组标记后再交给 allocatePoolBudget。 */
@@ -156,10 +167,10 @@ function progressNoteHtml(holdings) {
   if (prefetch.status === "done" || total === 0) return "";
   const done = Math.min(total, Math.max(analyzed, Number(prefetch.done) || 0));
   if (prefetch.status === "running") {
-    return `<p class="muted pool-alloc-note pool-alloc-progress">分析中 ${done}/${total} · 金额为初步值</p>`;
+    return `<p class="muted pool-alloc-note pool-alloc-progress">分析中 ${done}/${total}</p>`;
   }
   if (analyzed < total) {
-    return `<p class="muted pool-alloc-note pool-alloc-progress">分析中 ${analyzed}/${total} · 金额为初步值</p>`;
+    return `<p class="muted pool-alloc-note pool-alloc-progress">分析中 ${analyzed}/${total}</p>`;
   }
   return "";
 }
@@ -218,12 +229,12 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
   });
 
   if (!(execution.budget > 0) || !holdings.length) {
+    state.lastPoolAllocBySymbol = {};
     return `
-      <section class="panel-block pool-alloc-block" aria-label="全池本期分配">
+      <section class="panel-block pool-alloc-block" aria-label="本期分配">
         <div class="panel-heading">
           <div>
-            <h2 class="section-title">全池本期分配</h2>
-            <p class="muted">${execution.phase === "initial" ? "建仓目标已完成或尚未配置" : "先填写周期预算与目标仓位"}</p>
+            <h2 class="section-title">本期分配</h2>
           </div>
         </div>
       </section>
@@ -237,41 +248,48 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
         name: item.name,
         amount: 0,
         band: item.band,
+        reason: item.reason,
       })),
     )
     .sort((a, b) => b.amount - a.amount);
 
-  const noteParts = [];
-  if (pool.note) noteParts.push(pool.note);
-  noteParts.unshift(`${execution.phaseLabel} · ${strategyName}策略`);
+  const allocBySymbol = {};
+  for (const row of rows) {
+    const chip = allocStatusChip(row);
+    allocBySymbol[row.symbol] = { amount: Number(row.amount) || 0, chip };
+  }
+  state.lastPoolAllocBySymbol = allocBySymbol;
+
   const progressNote = progressNoteHtml(holdings);
   const prelimClass = preliminary ? " is-preliminary" : "";
   const prelimTag = preliminary ? `<em class="pool-alloc-prelim-tag">初步</em>` : "";
-  // 概览只保留一行执行摘要；完整清单统一放在「交易记录」页，避免重复。
   const draftSummary = draftSummaryFromState();
   let draftStatus = "";
-  if (draftSummary.total > 0) {
-    const parts = [];
-    if (draftSummary.pending > 0) parts.push(`待执行 ${draftSummary.pending} 笔`);
-    if (draftSummary.executed > 0) parts.push(`已执行 ${money(draftSummary.executed)}`);
-    if (!parts.length) parts.push("已处理完毕");
-    draftStatus = `<p class="muted pool-alloc-exec-summary">本期执行清单：${parts.join(" · ")} <button class="link-button" type="button" data-open-buys>去交易记录处理</button></p>`;
+  if (draftSummary.pending > 0) {
+    draftStatus = `
+      <div class="pool-alloc-exec-bar" role="status">
+        <span>待确认 ${draftSummary.pending} 笔</span>
+        <button class="primary-button compact" type="button" data-open-buys>去执行</button>
+      </div>`;
+  } else if (draftSummary.executed > 0) {
+    draftStatus = `<p class="muted pool-alloc-exec-summary">已执行 ${money(draftSummary.executed)}</p>`;
   }
 
+  const phaseLine =
+    execution.phase === "initial"
+      ? `${execution.phaseLabel} · 本期 ${money(execution.budget)} · 尚缺 ${money(execution.initialGap)}`
+      : `${execution.phaseLabel} · ${strategyName} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}`;
+
   return `
-    <section class="panel-block pool-alloc-block" aria-label="全池本期分配">
+    <section class="panel-block pool-alloc-block" aria-label="本期分配">
       <div class="panel-heading">
         <div>
-          <h2 class="section-title">全池本期分配</h2>
-            <p class="muted">${
-              execution.phase === "initial"
-                ? `目标 ${money(execution.targetAmount)} · 分 ${execution.initialMonths} 个月 · 本期 ${money(execution.budget)} · 尚缺 ${money(execution.initialGap)} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}执行`
-                : `${escapeHtml(plan.name || "定投计划")} · ${escapeHtml(cadenceLabel)}${escapeHtml(String(dayLabel))}`
-            }</p>
+          <h2 class="section-title">本期分配</h2>
+          <p class="muted">${phaseLine}</p>
         </div>
         <div class="pool-alloc-heading-actions">
-          <button class="ghost-button compact" type="button" data-ai-portfolio-review>AI 审视全池</button>
-          <button class="primary-button compact" type="button" data-generate-exec-drafts>生成本期执行清单</button>
+          <button class="ghost-button compact" type="button" data-ai-portfolio-review>AI 审视</button>
+          <button class="primary-button compact" type="button" data-generate-exec-drafts>生成清单</button>
         </div>
       </div>
       <div class="pool-alloc-summary${prelimClass}">
@@ -282,7 +300,7 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
       </div>
       ${draftStatus}
       <div class="dca-alloc-table" aria-label="各品种建议金额">
-        <div class="dca-alloc-head"><span>品种</span><span>区间</span><span class="num">建议金额</span></div>
+        <div class="dca-alloc-head"><span>品种</span><span>状态</span><span class="num">金额</span></div>
         ${rows
           .map((row) => {
             const active = highlightSymbol && row.symbol === highlightSymbol ? " is-current" : "";
@@ -294,15 +312,17 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
                 ? `<em class="pool-alloc-fee-hint muted">${escapeHtml(feeHints[row.symbol])}</em>`
                 : "";
             const badge = dataStatusBadge(analyzed, quoteMissing);
+            const chip = allocStatusChip(row);
+            const chipClass =
+              row.amount > 0 ? "is-buy" : chip === "偏贵" || chip === "攒一手" ? "is-wait" : "is-skip";
             const nameCell = clickable
               ? `<button class="link-button pool-alloc-name" type="button" data-analyze="${escapeAttr(row.symbol)}">${escapeHtml(row.name)}${badge}${feeHint}</button>`
               : `<span>${escapeHtml(row.name)}${badge}${feeHint}</span>`;
-            return `<div class="dca-alloc-row${active}">${nameCell}<span>${escapeHtml(row.band || "—")}</span><span class="${amountClass}">${row.amount > 0 ? money(row.amount) : "不投"}</span></div>`;
+            return `<div class="dca-alloc-row${active}">${nameCell}<span><span class="alloc-status-chip ${chipClass}">${escapeHtml(chip)}</span></span><span class="${amountClass}">${row.amount > 0 ? money(row.amount) : "—"}</span></div>`;
           })
           .join("")}
       </div>
       ${progressNote}
-      ${noteParts.length ? `<p class="muted pool-alloc-note">${escapeHtml(noteParts.join(" "))}</p>` : ""}
       ${portfolioReviewResultHtml(state.aiPortfolioReview)}
     </section>
   `;

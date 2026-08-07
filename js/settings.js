@@ -35,14 +35,11 @@ export function renderSettings() {
     : canUseKeychain
       ? "输入后保存到 macOS 钥匙串"
       : `请在部署环境设置 ${envKeyName}`;
-  const keyHelp = canUseKeychain
-    ? "桌面版：密钥写入 macOS 钥匙串，不进 config / 备份。"
-    : `云端 / Linux：页面无法安全写入密钥，请在 Vercel/主机环境变量配置 <code>${envKeyName}</code> 后重启；「保存密钥」仅桌面 macOS 可用。`;
   const keyStatus = credential.configured
-    ? `密钥已配置（${credential.source === "environment" ? "环境变量" : "macOS 钥匙串"}）`
+    ? `已配置（${credential.source === "environment" ? "环境变量" : "钥匙串"}）`
     : canUseKeychain
       ? "尚未配置密钥"
-      : `尚未检测到密钥（可设置环境变量 ${envKeyName}）`;
+      : `未检测到密钥（${envKeyName}）`;
   els.settingsForm.innerHTML = `
     ${storageNote}
     <div class="settings-control-grid">
@@ -50,7 +47,7 @@ export function renderSettings() {
         <span>自动刷新</span>
         <span class="config-toggle-control">
           <input type="checkbox" data-quotes-key="auto_refresh_enabled"${autoRefresh.enabled ? " checked" : ""} />
-          <strong>自动更新当前页面</strong>
+          <strong>开启</strong>
         </span>
       </label>
       <label>
@@ -72,7 +69,6 @@ export function renderSettings() {
           <span>启用</span>
         </label>
       </div>
-      <p class="muted settings-ai-help">${keyHelp}</p>
       <div class="settings-control-grid">
         <label>
           <span>提供商</span>
