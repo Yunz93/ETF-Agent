@@ -1,5 +1,6 @@
 import { DEFAULT_TARGET_WEIGHTS } from "./constants.js";
 import { normalizeAddPlanConfig } from "./add-plan.js";
+import { hasInvestmentGoal, normalizeInvestmentGoal } from "./portfolio-goal.js";
 import {
   DEFAULT_EXECUTION_POLICY,
   normalizeExecutionPolicy,
@@ -303,6 +304,7 @@ export function normalizePlan(plan) {
     cash_reserve: normalizeCashReserve(null),
     execution_policy: normalizeExecutionPolicy(null),
     signal_snapshots: {},
+    investment_goal: normalizeInvestmentGoal(null),
   };
   if (!plan || typeof plan !== "object") {
     return {
@@ -354,6 +356,7 @@ export function normalizePlan(plan) {
     cash_reserve: normalizeCashReserve(plan.cash_reserve ?? plan.cashReserve),
     execution_policy: normalizeExecutionPolicy(plan.execution_policy ?? plan.executionPolicy),
     signal_snapshots: normalizeSignalSnapshots(plan.signal_snapshots ?? plan.signalSnapshots),
+    investment_goal: normalizeInvestmentGoal(plan.investment_goal),
   };
 }
 
@@ -541,6 +544,7 @@ export function planPersistenceScore(plan) {
   if (plan.initial_build_completed_at) score += 1;
   const overrides = plan.strategy_overrides;
   if (overrides && typeof overrides === "object" && Object.keys(overrides).length) score += 1;
+  if (hasInvestmentGoal(plan.investment_goal)) score += 2;
   return score;
 }
 
@@ -565,7 +569,7 @@ export function parseWorkspaceTimestamp(value) {
 }
 
 export function chooseWorkspaceSource(remote, local) {
-  if (Array.isArray(remote?.etfs) && remote.etfs.length) {
+  if (Array.isArray(remote?.etfs) && (remote.etfs.length || hasInvestmentGoal(remote.plan?.investment_goal))) {
     // Local cache may be newer when a debounced server PUT did not finish before reload.
     // But never let a weaker/default plan stampede over a richer server plan just because
     // hydrate rewrote local updated_at with a fresher ISO timestamp.
@@ -574,7 +578,7 @@ export function chooseWorkspaceSource(remote, local) {
     }
     return { source: "server", payload: remote, migrate: false };
   }
-  if (Array.isArray(local?.etfs) && local.etfs.length) {
+  if (Array.isArray(local?.etfs) && (local.etfs.length || hasInvestmentGoal(local.plan?.investment_goal))) {
     return { source: "local-cache", payload: local, migrate: true };
   }
   return { source: "default-pool", payload: null, migrate: true };

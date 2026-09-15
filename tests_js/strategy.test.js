@@ -48,8 +48,8 @@ test("rebalance strategy prefers underweight holdings", () => {
     budget: 1000,
     strategy: "rebalance",
     holdings: [
-      { symbol: "510300", targetWeight: 50, actualWeight: 70 },
-      { symbol: "512890", targetWeight: 50, actualWeight: 30 },
+      { symbol: "510300", targetWeight: 50, actualWeight: 70, marketValue: 7000 },
+      { symbol: "512890", targetWeight: 50, actualWeight: 30, marketValue: 3000 },
     ],
   });
   assert.equal(result.deployTotal, 1000);

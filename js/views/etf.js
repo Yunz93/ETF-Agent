@@ -13,6 +13,7 @@ import { drawPriceChart, buyEventMarkers, sellEventMarkers } from "../chart.js";
 import { setSourceStatus } from "../navigation.js";
 import { persistWorkspace } from "../workspace.js";
 import { currentPoolAllocationResult } from "../pool-alloc.js";
+import { renderPortfolioGoalPanels } from "./portfolio-goal.js";
 import {
   buildPortfolioReviewBaseline,
   isPortfolioAiReady,
@@ -579,6 +580,7 @@ export function readPlanFormIntoState() {
           sentiment: readSentimentEnabledFromForm(previousConfig),
         });
   state.plan = {
+    ...state.plan,
     name: String(els.planName?.value || "").trim() || "默认定投计划",
     amount: Number.isFinite(amount) && amount > 0 ? amount : 0,
     capital_base: Number.isFinite(capitalBase) && capitalBase > 0 ? capitalBase : 0,
@@ -2112,6 +2114,7 @@ export function addBuyRecord() {
 export async function renderEtfPool({ refresh = false } = {}) {
   if (!els.etfRows) return;
   syncPlanForm();
+  renderPortfolioGoalPanels();
   if (refresh) homeQuoteRefreshCooldownUntil = 0;
   await refreshQuotes(refresh);
   const execution = planExecutionContext({ plan: state.plan, holdings: currentPlanHoldings() });
@@ -2122,6 +2125,7 @@ export async function renderEtfPool({ refresh = false } = {}) {
   }
   renderInitialSummary();
   renderMetrics();
+  renderPortfolioGoalPanels();
   syncHomeExecutionDrafts({ persist: true });
   renderHomeTodayCard();
   renderHomeReturnsPanel();

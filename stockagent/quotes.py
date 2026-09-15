@@ -159,7 +159,7 @@ def get_price_history(symbol, market="A", range_key="1y"):
     if not symbol or market not in {"A", "HK", "US"}:
         return {"error": "需要有效的 market 与 symbol", "points": []}
     symbol, market, yahoo_symbol = stock_tuple(symbol, market)
-    allowed = {"1m": "1mo", "3m": "3mo", "6m": "6mo", "1y": "1y", "5y": "5y"}
+    allowed = {"1m": "1mo", "3m": "3mo", "6m": "6mo", "1y": "1y", "5y": "5y", "max": "max"}
     yahoo_range = allowed.get(range_key, "1y")
     cache_key = f"{market}:{symbol}:{yahoo_range}"
     now = time.time()
@@ -243,7 +243,7 @@ def get_price_history(symbol, market="A", range_key="1y"):
 
 
 def history_limit(range_key):
-    return {"1m": 30, "3m": 90, "6m": 180, "1y": 260, "5y": 1300}.get(range_key, 260)
+    return {"1m": 30, "3m": 90, "6m": 180, "1y": 260, "5y": 1300, "max": 5200}.get(range_key, 260)
 
 
 def fetch_tencent_history(symbol, market, yahoo_symbol, range_key="1y"):
@@ -266,6 +266,10 @@ def fetch_tencent_history(symbol, market, yahoo_symbol, range_key="1y"):
         payload = json.loads(response.read().decode("utf-8"))
     data = (payload.get("data") or {}).get(code) or {}
     rows = data.get("qfqday") or data.get("day") or []
+    if not rows and range_key == "max":
+        # Some Tencent endpoints reject large limits. Keep the actual shorter
+        # coverage; research must report it rather than invent older prices.
+        return fetch_tencent_history(symbol, market, yahoo_symbol, "5y")
     points = []
     for row in rows:
         if not isinstance(row, (list, tuple)) or len(row) < 3:

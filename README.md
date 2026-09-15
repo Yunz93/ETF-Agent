@@ -13,6 +13,9 @@
   - 历史同评分区间（±5 分）往后 60 天收益回测：平均收益 / 胜率 / 最好最差（逐日复算历史评分，分位只用截至当日的数据，避免未来函数）
   - 规则化「走势解读」点评（走势本身 + 年线与布林关系）+ 一键复制小红书风格笔记文本
 - **定投计划与 ETF 池**
+  - 投资目标：可选填写人民币年化目标、期限、回撤承受值与近期用款；展示资产类别、股票市场、同指数集中度和假设压力损失
+  - 现金流再平衡按投入后的目标金额补缺；初期建仓按绝对目标缺口分配，仍受交易执行约束
+  - 长期历史研究：获取真实 ETF 历史，检查覆盖并比较定额、现金流补缺、年度再平衡基准；支持 3／5／10 年滚动窗口与研究 JSON 导出，历史不足时不输出收益
   - 按代码添加 A 股场内指数 ETF（默认种子池 6 只：A500、纳指100、标普500、红利低波华泰、恒生科技、黄金；同指数不双开）
   - 资金计划分三层：初期建仓目标、周期定投预算、交易成本（最低佣金 / 费率 / 手续费占比上限 / 整手）
   - 建仓可配置月数（1–36），目标金额按月均分，每期预算为 min(剩余缺口, 月额度)；定投阶段按估值/评分/再平衡策略分配，不足经济性最小订单时累计至下期
@@ -120,6 +123,12 @@ curl -fsSL https://raw.githubusercontent.com/Yunz93/StockAgent/v0.0.3/packaging/
 详见 [docs/DESKTOP.md](docs/DESKTOP.md)。
 
 市场情绪 overlay 说明见 [docs/MARKET_SENTIMENT.md](docs/MARKET_SENTIMENT.md)。
+
+组合回测的时间加权收益、XIRR、基础对照与数据限制见 [docs/PORTFOLIO_BACKTEST.md](docs/PORTFOLIO_BACKTEST.md)。
+
+投资目标、组合风险诊断和现金流再平衡口径见 [docs/INVESTMENT_GOAL.md](docs/INVESTMENT_GOAL.md)。
+
+历史覆盖、滚动窗口与价格研究限制见 [docs/PORTFOLIO_RESEARCH.md](docs/PORTFOLIO_RESEARCH.md)。
 
 ## 项目结构
 

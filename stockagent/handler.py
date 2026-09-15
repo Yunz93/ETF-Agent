@@ -205,6 +205,12 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 )
                 return
+            if parsed.path == "/api/strategy/research":
+                from .portfolio_research import run_portfolio_research
+
+                status, body = run_portfolio_research(payload)
+                self.send_json(body, status=status)
+                return
             if parsed.path == "/api/strategy/backtest":
                 from .portfolio_backtest import run_backtest_from_workspace_symbols
 

@@ -51,6 +51,17 @@ class UnknownApiTests(unittest.TestCase):
         payload = json.loads(body)
         self.assertIn("items", payload)
 
+    def test_research_route_reports_invalid_request_and_short_history(self):
+        url = f"http://127.0.0.1:{self.port}/api/strategy/research"
+        for payload, expected in [({}, 400), ({"target_weights": {"510300": 100}, "monthly_budget": 2000, "price_history": {}}, 422)]:
+            request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(request, timeout=5)
+            self.assertEqual(ctx.exception.code, expected)
+            body = json.loads(ctx.exception.read())
+            self.assertIn(body["status"], ("invalid_request", "insufficient_history"))
+            self.assertTrue(body["limitations"])
+
 
 if __name__ == "__main__":
     unittest.main()

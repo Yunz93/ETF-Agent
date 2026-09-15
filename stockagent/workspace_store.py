@@ -3,6 +3,7 @@
 
 import datetime
 import json
+import math
 
 from .defaults import DEFAULT_STRATEGY_CONFIG, DEFAULT_TARGET_WEIGHTS, DEFAULT_WORKSPACE
 from .paths import WORKSPACE_LOCK, WORKSPACE_PATH
@@ -625,6 +626,32 @@ def normalize_cash_reserve(payload):
     return {"balance": round(balance, 2), "history": history}
 
 
+def normalize_investment_goal(payload):
+    source = payload if isinstance(payload, dict) else {}
+
+    def optional_number(key, minimum, maximum):
+        value = source.get(key)
+        if value is None or value == "" or isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (ValueError, TypeError):
+            return None
+        if not math.isfinite(number) or not minimum <= number <= maximum:
+            return None
+        return math.floor(number * 100 + 0.5) / 100
+
+    need = source.get("liquidity_need")
+    return {
+        "currency": "CNY",
+        "annual_return_target_pct": optional_number("annual_return_target_pct", 0, 100),
+        "horizon_years": optional_number("horizon_years", 1, 60),
+        "max_drawdown_pct": optional_number("max_drawdown_pct", 0, 100),
+        "single_index_warn_pct": optional_number("single_index_warn_pct", 1, 100),
+        "liquidity_need": need if need in ("long_term", "within_3_years") else "unknown",
+    }
+
+
 def normalize_plan(payload):
     base = dict(DEFAULT_WORKSPACE["plan"])
     if not isinstance(payload, dict):
@@ -636,6 +663,7 @@ def normalize_plan(payload):
             "cash_reserve": normalize_cash_reserve(base.get("cash_reserve")),
             "execution_policy": normalize_execution_policy(base.get("execution_policy")),
             "signal_snapshots": {},
+            "investment_goal": normalize_investment_goal(None),
         }
     name = str(payload.get("name") or base["name"]).strip() or base["name"]
     cadence = str(payload.get("cadence") or base["cadence"]).strip().lower()
@@ -678,6 +706,7 @@ def normalize_plan(payload):
         "cadence": cadence,
         "day": day,
         "note": str(payload.get("note") or "").strip(),
+        "investment_goal": normalize_investment_goal(payload.get("investment_goal")),
         "strategy": strategy,
         "strategy_config": normalize_strategy_config(raw_config),
         "strategy_overrides": normalize_strategy_overrides(raw_overrides),

@@ -1,0 +1,38 @@
+{
+  "dates": ["2021-01-28", "2021-02-28", "2021-03-28"],
+  "monthly_budget": 10000,
+  "cases": [
+    {
+      "name": "flat prices with contributions",
+      "prices": [100, 100, 100],
+      "ending_value": 30000,
+      "total_return": 0,
+      "max_drawdown": 0,
+      "volatility": 0
+    },
+    {
+      "name": "deposit masks a market crash in account balance",
+      "prices": [100, 50, 50],
+      "ending_value": 25000,
+      "total_return": -0.5,
+      "max_drawdown": 0.5,
+      "volatility": 1.224744871391589
+    },
+    {
+      "name": "round trip prices lose money with later contributions",
+      "prices": [100, 200, 100],
+      "ending_value": 25000,
+      "total_return": 0,
+      "max_drawdown": 0.5,
+      "volatility": 3.674234614174767
+    },
+    {
+      "name": "constant positive returns have zero volatility",
+      "prices": [100, 200, 400],
+      "ending_value": 70000,
+      "total_return": 3,
+      "max_drawdown": 0,
+      "volatility": 0
+    }
+  ]
+}

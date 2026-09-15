@@ -330,7 +330,7 @@ export function allocatePoolBudget({
   }
 
   // —— 建仓期：金额缺口硬顶；倍率只决定缺口间优先级 ——
-  if (preferTargetGap && strategyId !== "rebalance") {
+  if (preferTargetGap) {
     const targetTotal = Number(buildTargetAmount);
     const weightSum = holdings.reduce((sum, item) => {
       const tw = hasTargets
@@ -530,28 +530,25 @@ export function allocatePoolBudget({
     };
   }
 
-  // —— 再平衡：按缺口补仓，目标容忍区为硬上限 ——
+  // 再平衡只分配新增资金：按投入后的目标金额补缺，不用旧占比误判超配。
   if (strategyId === "rebalance") {
+    const targetSum = holdings.reduce((sum, item) => sum + Math.max(0, Number(item.targetWeight) || 0), 0);
+    const missingValue = holdings.some((item) => item.quoteMissing === true ||
+      ((Number(item.shares) > 0 || Number(item.actualWeight) > 0) &&
+        (item.marketValue == null || !Number.isFinite(Number(item.marketValue)))));
+    if (missingValue || Math.abs(targetSum - 100) >= 0.01) {
+      const reason = missingValue ? "部分持仓缺少行情，无法计算投入后的配置，暂留现金" : "目标权重须合计 100%，暂留现金";
+      return { ...empty, note: reason, skipped: holdings.map((item) => ({
+        symbol: item.symbol, name: item.name || item.symbol, band: "待核对", reason,
+      })) };
+    }
+    const postContributionValue = portfolioValue + totalBudget;
     const rows = holdings.map((item) => {
-      const target = hasTargets
-        ? Number(item.targetWeight) > 0
-          ? Number(item.targetWeight)
-          : 0
-        : equal;
-      const actual =
-        item.actualWeight != null && Number.isFinite(Number(item.actualWeight))
-          ? Number(item.actualWeight)
-          : null;
-      const deficit = actual == null ? target : Math.max(0, target - actual);
-      const tilt = buildGapTilt(target, actual);
-      // 明显低配用缺口；已贴近目标保留小额再平衡，达到容忍上限则停买
-      const drift = actual != null ? actual - target : null;
-      const positionBlocked = drift != null && drift >= POSITION_TOLERANCE_PP;
-      const score = positionBlocked
-        ? 0
-        : target > 0
-          ? (deficit > 0 ? deficit : target * 0.05) * tilt
-          : 0;
+      const target = Math.max(0, Number(item.targetWeight) || 0);
+      const currentValue = Math.max(0, Number(item.marketValue) || 0);
+      const actual = portfolioValue > 0 ? currentValue / portfolioValue * 100 : 0;
+      const gap = Math.max(0, postContributionValue * target / 100 - currentValue);
+      const room = Math.floor(gap);
       return {
         symbol: item.symbol,
         name: item.name || item.symbol,
@@ -562,34 +559,16 @@ export function allocatePoolBudget({
         baseMult: 1,
         sentimentMult: 1,
         sentiment: null,
-        band: deficit > 0 ? "待补仓" : positionBlocked ? "仓位已达上限" : "已达标",
-        hint:
-          deficit > 0
-            ? `低于目标 ${deficit.toFixed(1)} pp`
-            : positionBlocked
-              ? `已达到目标容忍上限（偏离 ${drift.toFixed(1)} pp），本期停止新增`
-              : actual == null
-                ? "尚无持仓市值，按目标仓位参与"
-                : "已达或高于目标",
+        band: room > 0 ? "现金流补缺" : "已达目标",
+        hint: room > 0 ? `计入本期预算后，目标金额仍差 ¥${room.toLocaleString("zh-CN")}` : "投入后仍无金额缺口，本期不新增",
         reb: 1,
-        score,
-        deficit,
-        positionBlocked,
-        maxAmount: positionBuyRoom(item, target, actual),
+        score: gap,
+        positionBlocked: room <= 0,
+        maxAmount: room,
       };
     });
 
-    let eligible = rows.filter((row) => row.score > 0 && row.deficit > 0);
-    if (!eligible.length) {
-      eligible = rows
-        .filter((row) => row.targetWeight > 0 && !row.positionBlocked)
-        .map((row) => ({
-          ...row,
-          score: row.targetWeight * row.mult,
-          band: "按目标",
-          hint: "无明显低配，按目标仓位分配",
-        }));
-    }
+    const eligible = rows.filter((row) => row.score > 0 && row.maxAmount > 0);
     const skipped = rows
       .filter((row) => !eligible.some((item) => item.symbol === row.symbol))
       .map((row) => ({
@@ -599,22 +578,15 @@ export function allocatePoolBudget({
         reason: row.hint,
         positionBlocked: row.positionBlocked,
       }));
-    const rebRows = rows;
-    const poolBaseMult = poolWeightedBaseMult(rebRows);
-    const cashRelease = computeCashRelease({
-      budget: totalBudget,
-      cashReserve: reserveBalance,
-      poolBaseMult,
-      preferTargetGap: false,
-    });
     return finalizeEligible({
       totalBudget,
       eligible,
       skipped,
       forceFullDeploy: true,
       strategy: strategyId,
-      cashRelease,
-      poolBaseMult,
+      cashRelease: 0,
+      poolBaseMult: 1,
+      note: "按新增资金后的目标金额补缺，现金池保留",
     });
   }
 
