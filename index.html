@@ -163,6 +163,30 @@
               计划设置
             </button>
             <button
+              id="etfTabGoal"
+              class="etf-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="etfPanelGoal"
+              tabindex="-1"
+              data-etf-tab="goal"
+            >
+              目标与风险
+            </button>
+            <button
+              id="etfTabResearch"
+              class="etf-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="etfPanelResearch"
+              tabindex="-1"
+              data-etf-tab="research"
+            >
+              长期研究
+            </button>
+            <button
               id="etfTabHoldings"
               class="etf-tab"
               type="button"
@@ -195,8 +219,6 @@
             aria-labelledby="etfTabPlan"
             data-etf-panel="plan"
           >
-              <section id="portfolioGoalPanel" class="plan-section" aria-label="目标与组合风险"></section>
-              <section id="portfolioResearchPanel" class="plan-section" aria-label="长期历史研究"></section>
             <section class="plan-section" aria-label="计划参数">
               <div class="plan-section-heading">
                 <h3 class="plan-section-title">计划参数</h3>
@@ -341,6 +363,28 @@
               <p class="muted plan-strategy-custom-note">无 PE 分位时按评分倍率；末档上限固定为 100%。</p>
               </div>
             </section>
+          </div>
+
+          <div
+            id="etfPanelGoal"
+            class="etf-tab-panel"
+            role="tabpanel"
+            aria-labelledby="etfTabGoal"
+            data-etf-panel="goal"
+            hidden
+          >
+            <section id="portfolioGoalPanel" class="plan-section" aria-label="目标与组合风险"></section>
+          </div>
+
+          <div
+            id="etfPanelResearch"
+            class="etf-tab-panel"
+            role="tabpanel"
+            aria-labelledby="etfTabResearch"
+            data-etf-panel="research"
+            hidden
+          >
+            <section id="portfolioResearchPanel" class="plan-section" aria-label="长期历史研究"></section>
           </div>
 
           <div

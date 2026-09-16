@@ -124,7 +124,7 @@ export function renderPortfolioGoalPanels() {
     home.innerHTML = `<section class="panel-block goal-home" aria-label="投资目标检查"><div><h3>投资目标检查</h3><p>年化目标 ${escapeHtml(goalLabel)} · ${escapeHtml(statusLabel)}</p><p class="muted">股票占比 ${pct(assessment.assets.find((group) => group.id === "equity")?.current)} · 目标与历史收益分开评估</p></div><button type="button" class="ghost-button" data-open-goal>查看目标与风险</button></section>`;
     home.querySelector("[data-open-goal]").addEventListener("click", () => {
       callRenderer("switchView", "etf");
-      document.querySelector("#etfTabPlan")?.click();
+      document.querySelector("#etfTabGoal")?.click();
       root?.scrollIntoView({ block: "start" });
     });
   }

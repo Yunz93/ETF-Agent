@@ -3534,6 +3534,16 @@ button:active {
   transition-timing-function: var(--ease-out);
 }
 
+@media (min-width: 900px) {
+  .etf-tabs {
+    justify-content: flex-start;
+  }
+
+  .etf-tab {
+    flex: 0 1 auto;
+  }
+}
+
 .etf-tab.active {
   background: var(--surface);
   color: var(--ink);
