@@ -4,8 +4,10 @@ export const RESEARCH_LABELS = Object.freeze({ fixed: "定额基准", cashflow: 
 
 export function researchRequest(etfs, plan, monthlyBudget) {
   return {
-    target_weights: Object.fromEntries([...etfs].sort((a, b) => a.symbol.localeCompare(b.symbol))
-      .map((item) => [item.symbol, Number(item.target_weight) || 0])),
+    target_weights: Object.fromEntries([...etfs]
+      .filter((item) => Number(item.target_weight) > 0)
+      .sort((a, b) => a.symbol.localeCompare(b.symbol))
+      .map((item) => [item.symbol, Number(item.target_weight)])),
     monthly_budget: Number(monthlyBudget),
     trading_cost: { lot_size: plan.trading_cost?.lot_size ?? 100,
       min_commission: plan.trading_cost?.min_commission ?? 5,

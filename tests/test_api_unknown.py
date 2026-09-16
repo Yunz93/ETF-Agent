@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import http.client
 import sys
 import threading
 import urllib.error
@@ -61,6 +62,18 @@ class UnknownApiTests(unittest.TestCase):
             body = json.loads(ctx.exception.read())
             self.assertIn(body["status"], ("invalid_request", "insufficient_history"))
             self.assertTrue(body["limitations"])
+
+    def test_research_route_rejects_oversized_body_before_json_parse(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("POST", "/api/strategy/research")
+            connection.putheader("Content-Length", "2000001")
+            connection.endheaders()
+            response = connection.getresponse()
+            self.assertEqual(response.status, 413)
+            self.assertEqual(json.loads(response.read())["status"], "request_too_large")
+        finally:
+            connection.close()
 
 
 if __name__ == "__main__":

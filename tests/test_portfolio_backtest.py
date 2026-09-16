@@ -4,7 +4,7 @@ import datetime
 import json
 from pathlib import Path
 
-from stockagent.portfolio_backtest import evaluate_backtest_request, run_backtest_from_workspace_symbols, _run_strategy, _xirr
+from stockagent.portfolio_backtest import evaluate_backtest_request, run_backtest_from_workspace_symbols, run_strategy, _xirr
 
 
 def _series(months, start=1.0, step=0.01):
@@ -36,7 +36,7 @@ class PortfolioBacktestTests(unittest.TestCase):
         days = (datetime.date.fromisoformat(dates[-1]) - datetime.date.fromisoformat(dates[0])).days
         for case in fixture["cases"]:
             with self.subTest(case["name"]):
-                result = _run_strategy(
+                result = run_strategy(
                     mode="fixed", month_dates=dates,
                     prices={"510300": dict(zip(dates, case["prices"]))},
                     pe_series={}, weights={"510300": 100}, monthly_budget=fixture["monthly_budget"],
@@ -144,6 +144,34 @@ class PortfolioBacktestTests(unittest.TestCase):
         status, body = evaluate_backtest_request(
             {"target_weights": {"510300": 50, "518880": 50}},
             price_history={"510300": _series(36), "518880": prices},
+        )
+        self.assertEqual(status, 422)
+        self.assertEqual(body["status"], "insufficient_history")
+
+    def test_middle_month_requires_an_exact_shared_trading_date(self):
+        shifted = _series(37)
+        shifted[20]["date"] = shifted[20]["date"][:-2] + "29"
+        status, body = evaluate_backtest_request(
+            {"target_weights": {"510300": 50, "518880": 50}},
+            price_history={"510300": _series(37), "518880": shifted},
+        )
+        self.assertEqual(status, 422)
+        self.assertEqual(body["status"], "insufficient_history")
+
+    def test_extreme_finite_prices_fail_closed(self):
+        for value in (5e-324, 1e308, 10 ** 1000):
+            prices = _series(36)
+            prices[0]["close"] = value
+            status, body = evaluate_backtest_request(
+                {"target_weights": {"510300": 100}}, price_history={"510300": prices},
+            )
+            self.assertEqual(status, 422)
+            self.assertEqual(body["status"], "insufficient_history")
+
+    def test_extreme_budget_cannot_return_nonfinite_metrics(self):
+        status, body = evaluate_backtest_request(
+            {"target_weights": {"510300": 100}, "monthly_budget": 1e308},
+            price_history={"510300": _series(36, start=10, step=0)},
         )
         self.assertEqual(status, 422)
         self.assertEqual(body["status"], "insufficient_history")
