@@ -142,7 +142,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_write(self):
         parsed = urllib.parse.urlparse(self.path)
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            self.send_json({"error": "Content-Length 无效"}, status=400)
+            return
+        if length < 0:
+            self.send_json({"error": "Content-Length 无效"}, status=400)
+            return
+        if parsed.path == "/api/strategy/research" and length > 2_000_000:
+            self.close_connection = True
+            self.send_json(
+                {"status": "request_too_large", "limitations": ["研究请求不能超过 2 MB"]},
+                status=413,
+            )
+            return
         body = self.rfile.read(length) if length else b"{}"
         try:
             payload = json.loads(body.decode("utf-8") if body else "{}")
@@ -209,7 +223,10 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/strategy/research":
                 from .portfolio_research import run_portfolio_research
 
-                status, body = run_portfolio_research(payload)
+                status, body = run_portfolio_research(
+                    payload,
+                    rate_key=str(self.client_address[0]) if self.client_address else "unknown",
+                )
                 self.send_json(body, status=status)
                 return
             if parsed.path == "/api/strategy/backtest":
@@ -261,7 +278,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def send_json(self, payload, status=200, set_cookie=None):
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        data = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")

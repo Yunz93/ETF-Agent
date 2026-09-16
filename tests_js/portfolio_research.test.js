@@ -16,6 +16,14 @@ test("research captures explicit monthly budget without changing the real plan o
   assert.ok(!JSON.stringify(request).includes("weekly"));
 });
 
+test("research excludes zero-weight watchlist entries before the API limit", () => {
+  const watchlist = [
+    { symbol: "510300", target_weight: 100 },
+    ...Array.from({ length: 13 }, (_, index) => ({ symbol: String(index).padStart(6, "0"), target_weight: 0 })),
+  ];
+  assert.deepEqual(researchRequest(watchlist, plan, 5000).target_weights, { "510300": 100 });
+});
+
 test("stale result tracks changes in targets goals budget and costs but not quote refreshes", () => {
   const request = researchRequest(etfs, plan, 5000);
   assert.equal(researchResultIsStale(request, [...etfs].reverse(), plan, "5000"), false);

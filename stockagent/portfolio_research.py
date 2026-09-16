@@ -6,14 +6,23 @@ import datetime as dt
 import math
 import re
 import statistics
+import threading
+import time
+from collections import defaultdict, deque
 
-from .portfolio_backtest import _run_strategy, _valid_date
+from .investment_goal import normalize_investment_goal
+from .portfolio_backtest import MAX_VALID_PRICE, MIN_VALID_PRICE, run_strategy, valid_date
 from .quotes import get_price_history
-from .workspace_store import normalize_investment_goal
 
 MIN_OBSERVATIONS = 37  # 36 个持有期，不能用 36 个观测冒充三年
 MAX_OBSERVATIONS = 181
+MAX_HISTORY_ROWS = 5_200
+MAX_CONCURRENT_RESEARCH = 2
+MAX_REQUESTS_PER_MINUTE = 6
 MODES = ("fixed", "cashflow", "rebalance")
+_RESEARCH_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_RESEARCH)
+_RATE_LOCK = threading.Lock()
+_RATE_STARTS = defaultdict(deque)
 LIMITATIONS = [
     "这是固定参数价格基准研究，不是工作区完整策略，也不是样本外检验或未来收益预测",
     "来源可能使用原始或前复权收盘价，含分红总回报口径未核验；不补造上市前数据或拼接指数代理",
@@ -36,7 +45,7 @@ def _request(payload):
     if not isinstance(payload, dict):
         raise ValueError("请求必须为对象")
     raw = payload.get("target_weights")
-    if not isinstance(raw, dict) or not 1 <= len(raw) <= 12:
+    if not isinstance(raw, dict):
         raise ValueError("请提供 1–12 只 ETF 的目标权重")
     weights = {}
     for symbol, value in raw.items():
@@ -47,7 +56,9 @@ def _request(payload):
             raise ValueError("目标权重须在 0–100% 之间")
         if weight > 0:
             weights[symbol] = weight
-    if not weights or abs(sum(weights.values()) - 100) >= 0.01:
+    if not 1 <= len(weights) <= 12:
+        raise ValueError("请提供 1–12 只正权重 ETF")
+    if abs(sum(weights.values()) - 100) >= 0.01:
         raise ValueError("目标权重须合计 100%，不会自动归一化")
     budget = _number(payload.get("monthly_budget"))
     if not 0 < budget <= 100_000_000:
@@ -62,7 +73,33 @@ def _request(payload):
         if not 0 <= value <= maximum or (key == "lot_size" and (value < 1 or int(value) != value)):
             raise ValueError(f"交易费用参数无效：{key}")
         cost[key] = value
+    explicit = payload.get("price_history")
+    if explicit is not None:
+        if not isinstance(explicit, dict):
+            raise ValueError("price_history 必须按 ETF 代码分组")
+        unknown = set(explicit) - set(weights)
+        if unknown:
+            raise ValueError("price_history 只能包含当前正权重 ETF")
+        for symbol, rows in explicit.items():
+            if not isinstance(rows, list):
+                raise ValueError(f"{symbol} 的 price_history 必须为数组")
+            if len(rows) > MAX_HISTORY_ROWS:
+                raise ValueError(f"{symbol} 的历史记录不能超过 {MAX_HISTORY_ROWS} 条")
     return weights, budget, cost, normalize_investment_goal(payload.get("investment_goal"))
+
+
+def _rate_allowed(key, now=None):
+    if key is None:
+        return True
+    now = time.monotonic() if now is None else now
+    with _RATE_LOCK:
+        starts = _RATE_STARTS[key]
+        while starts and now - starts[0] >= 60:
+            starts.popleft()
+        if len(starts) >= MAX_REQUESTS_PER_MINUTE:
+            return False
+        starts.append(now)
+        return True
 
 
 def _clean_history(symbol, response, cutoff):
@@ -79,10 +116,10 @@ def _clean_history(symbol, response, cutoff):
         day = row.get("date")
         try:
             close = _number(row.get("close"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             invalid += 1
             continue
-        if not _valid_date(day) or close <= 0:
+        if not valid_date(day) or not MIN_VALID_PRICE <= close <= MAX_VALID_PRICE:
             invalid += 1
             continue
         if day > cutoff:
@@ -104,7 +141,7 @@ def _clean_history(symbol, response, cutoff):
 
 
 def _simulate(mode, dates, prices, weights, budget, cost):
-    return _run_strategy(
+    return run_strategy(
         mode=mode, month_dates=dates, prices=prices, pe_series={}, weights=weights,
         monthly_budget=budget, lot_size=int(cost["lot_size"]),
         min_commission=cost["min_commission"], commission_rate=cost["commission_rate_pct"] / 100,
@@ -128,7 +165,7 @@ def _rolling(mode, months, dates, prices, weights, budget, cost, target):
             "target_hit_pct": round(sum(value >= target for value in returns) / len(returns) * 100, 2) if target is not None else None}
 
 
-def run_portfolio_research(payload, *, history_loader=None, today=None):
+def _run_portfolio_research(payload, *, history_loader=None, today=None):
     """显式历史用于可复现测试；在线路径仅向已有行情服务传代码，不写工作区。"""
     try:
         weights, budget, cost, goal = _request(payload)
@@ -137,8 +174,6 @@ def run_portfolio_research(payload, *, history_loader=None, today=None):
     today = today or dt.date.today()
     cutoff = (today.replace(day=1) - dt.timedelta(days=1)).isoformat()
     explicit = payload.get("price_history")
-    if explicit is not None and not isinstance(explicit, dict):
-        return 400, {"status": "invalid_request", "limitations": ["price_history 必须按 ETF 代码分组"]}
     loader = history_loader or get_price_history
 
     def load(symbol):
@@ -184,13 +219,31 @@ def run_portfolio_research(payload, *, history_loader=None, today=None):
     goal_months = math.ceil(goal["horizon_years"] * 12) if goal["horizon_years"] is not None else None
     if goal_months:
         horizons.add(goal_months)
-    for mode in MODES:
-        metrics = _simulate(mode, dates, prices, weights, budget, cost)
-        rolling = [_rolling(mode, months, dates, prices, weights, budget, cost, goal["annual_return_target_pct"])
-                   for months in sorted(horizons)]
-        base["strategies"].append({"id": mode, "status": "ready", **metrics, "rolling": rolling})
+    try:
+        for mode in MODES:
+            metrics = _simulate(mode, dates, prices, weights, budget, cost)
+            rolling = [_rolling(mode, months, dates, prices, weights, budget, cost, goal["annual_return_target_pct"])
+                       for months in sorted(horizons)]
+            base["strategies"].append({"id": mode, "status": "ready", **metrics, "rolling": rolling})
+    except (ArithmeticError, ValueError):
+        base["status"] = "insufficient_history"
+        base["strategies"] = []
+        base["limitations"] = ["历史价格无法生成有限且可复现的模拟结果", *base["limitations"]]
+        return 422, base
     base.update({"start": dates[0], "end": dates[-1],
                  "goal_horizon_months": goal_months,
                  "goal_horizon_status": "not_configured" if goal_months is None else
                     "insufficient_history" if len(dates) <= goal_months else "historical_only"})
     return 200, base
+
+
+def run_portfolio_research(payload, *, history_loader=None, today=None, rate_key=None):
+    """Bound expensive research work across concurrent HTTP requests."""
+    if not _rate_allowed(rate_key):
+        return 429, {"status": "busy", "limitations": ["研究请求过于频繁，请一分钟后重试"]}
+    if not _RESEARCH_SLOTS.acquire(blocking=False):
+        return 429, {"status": "busy", "limitations": ["已有研究任务运行中，请稍后重试"]}
+    try:
+        return _run_portfolio_research(payload, history_loader=history_loader, today=today)
+    finally:
+        _RESEARCH_SLOTS.release()

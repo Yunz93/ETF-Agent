@@ -4,7 +4,8 @@ import json
 import unittest
 from unittest.mock import Mock, patch
 
-from stockagent.portfolio_research import run_portfolio_research
+import stockagent.portfolio_research as portfolio_research
+from stockagent.portfolio_research import MAX_HISTORY_ROWS, run_portfolio_research
 from stockagent.portfolio_backtest import _lot_buy
 from stockagent.quotes import fetch_tencent_history
 
@@ -97,6 +98,35 @@ class PortfolioResearchTests(unittest.TestCase):
             self.assertEqual(run_portfolio_research(payload, history_loader=loader)[0], 400)
         loader.assert_not_called()
 
+    def test_explicit_history_rejects_unknown_symbols_and_oversized_arrays(self):
+        payload = request(history(40))
+        payload["price_history"]["999999"] = []
+        self.assertEqual(run_portfolio_research(payload)[0], 400)
+        oversized = request([{"date": "2020-01-01", "close": 10}] * (MAX_HISTORY_ROWS + 1))
+        self.assertEqual(run_portfolio_research(oversized)[0], 400)
+
+    def test_zero_weight_symbols_do_not_count_toward_limit(self):
+        payload = request(history(40))
+        payload["target_weights"].update({f"{index:06d}": 0 for index in range(13)})
+        self.assertEqual(run_portfolio_research(payload)[0], 200)
+
+    def test_concurrency_and_rate_guards_fail_fast(self):
+        self.assertTrue(portfolio_research._RESEARCH_SLOTS.acquire(blocking=False))
+        self.assertTrue(portfolio_research._RESEARCH_SLOTS.acquire(blocking=False))
+        try:
+            status, body = run_portfolio_research(request(history(40)))
+            self.assertEqual((status, body["status"]), (429, "busy"))
+        finally:
+            portfolio_research._RESEARCH_SLOTS.release()
+            portfolio_research._RESEARCH_SLOTS.release()
+        key = "test-rate-key"
+        portfolio_research._RATE_STARTS.pop(key, None)
+        for second in range(portfolio_research.MAX_REQUESTS_PER_MINUTE):
+            self.assertTrue(portfolio_research._rate_allowed(key, now=second))
+        self.assertFalse(portfolio_research._rate_allowed(key, now=10))
+        self.assertTrue(portfolio_research._rate_allowed(key, now=61))
+        portfolio_research._RATE_STARTS.pop(key, None)
+
     def test_live_loader_reports_source_and_partial_failure(self):
         loader = Mock(return_value={"points": history(40), "provider": "测试供应商", "updated_at": "测试时刻"})
         _, body = run_portfolio_research(request(), history_loader=loader)
@@ -138,3 +168,12 @@ class PortfolioResearchTests(unittest.TestCase):
         _, body = run_portfolio_research(request(rows))
         self.assertEqual(body["status"], "insufficient_history")
         self.assertEqual(body["coverage"][0]["invalid_rows"], 1)
+
+    def test_extreme_finite_prices_fail_closed_and_remain_json_safe(self):
+        for value in (5e-324, 1e308, 10 ** 1000):
+            rows = history(40)
+            rows[20]["close"] = value
+            status, body = run_portfolio_research(request(rows))
+            self.assertEqual(status, 422)
+            self.assertEqual(body["status"], "insufficient_history")
+            json.dumps(body, allow_nan=False)

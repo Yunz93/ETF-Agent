@@ -7,7 +7,7 @@ let research = null;
 let controller = null;
 
 function resultsHtml(result) {
-  if (result.status === "invalid_request") return `<p class="research-goal-note">${(result.limitations || []).map(escapeHtml).join("；")}</p>`;
+  if (["invalid_request", "busy", "request_too_large"].includes(result.status)) return `<p class="research-goal-note">${(result.limitations || []).map(escapeHtml).join("；")}</p>`;
   const targetLabel = Number.isFinite(result.goal?.annual_return_target_pct) ? `达到 ${pct(result.goal.annual_return_target_pct)} 目标` : "目标未设置";
   const coverage = `<h4>历史覆盖</h4><p class="muted">仅使用截至 ${escapeHtml(result.cutoff || "未知")} 的完整月份，共同月度观测 ${result.observations ?? 0} 个。</p>
     <table class="goal-table research-coverage"><thead><tr><th scope="col">ETF / 来源</th><th scope="col">月份数</th><th scope="col">历史区间</th></tr></thead><tbody>${(result.coverage || []).map((row) => `<tr><th scope="row">${escapeHtml(row.symbol)}<small>${escapeHtml(row.provider)}</small></th><td>${row.months}</td><td>${escapeHtml(row.start || "无数据")}<br>${escapeHtml(row.end || "")}</td></tr>${row.error || row.invalid_rows || row.conflicting_dates ? `<tr><td colspan="3" class="research-data-note">${escapeHtml(row.error || `无效记录 ${row.invalid_rows} 条，冲突日期 ${row.conflicting_dates} 个`)}</td></tr>` : ""}`).join("")}</tbody></table>`;
@@ -49,8 +49,12 @@ export function renderPortfolioResearch() {
       try {
         const response = await fetch("/api/strategy/research", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request), signal: active.signal });
         const result = await response.json();
-        if (!response.ok && !["insufficient_history", "invalid_request"].includes(result.status)) throw new Error("研究服务暂不可用");
-        research = { request, result, message: result.status === "ready" ? "历史比较完成，结果不代表未来收益。" : result.status === "invalid_request" ? "研究参数需要调整。" : "历史不足，暂不输出组合收益。" };
+        if (!response.ok && !["insufficient_history", "invalid_request", "busy", "request_too_large"].includes(result.status)) throw new Error("研究服务暂不可用");
+        const message = result.status === "ready" ? "历史比较完成，结果不代表未来收益。"
+          : result.status === "invalid_request" ? "研究参数需要调整。"
+          : ["busy", "request_too_large"].includes(result.status) ? (result.limitations?.[0] || "研究服务繁忙，请稍后重试。")
+          : "历史不足，暂不输出组合收益。";
+        research = { request, result, message };
       } catch (error) {
         research = { request, result: null, message: active.signal.aborted ? "研究已取消或超时，可重新运行。" : "历史研究请求失败，请检查本地服务后重试。" };
       } finally {
@@ -77,7 +81,7 @@ export function renderPortfolioResearch() {
   }
   root.querySelector('[type="submit"]').disabled = Boolean(controller);
   root.querySelector("[data-research-cancel]").hidden = !controller;
-  root.querySelector("[data-research-export]").hidden = !research?.result;
+  root.querySelector("[data-research-export]").hidden = !research?.result?.price_history;
   if (research) {
     const stale = researchResultIsStale(research.request, state.etfs, state.plan, root.querySelector('[name="budget"]').value);
     root.querySelector('[role="status"]').textContent = stale ? "配置已变化，下方属于上次请求，请重新运行。" : research.message;

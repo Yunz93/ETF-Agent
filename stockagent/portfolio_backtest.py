@@ -13,6 +13,8 @@ from typing import Dict, List, Tuple
 
 
 MIN_MONTHS = 36
+MIN_VALID_PRICE = 1e-6
+MAX_VALID_PRICE = 1e9
 
 
 def _round2(value: float) -> float:
@@ -23,7 +25,7 @@ def _round4(value: float) -> float:
     return round(float(value) + 1e-12, 4)
 
 
-def _valid_date(value):
+def valid_date(value):
     try:
         return datetime.date.fromisoformat(value).isoformat() == value
     except (ValueError, TypeError):
@@ -122,7 +124,7 @@ def _metrics(equity_curve, performance_curve, dates, contributions, fees, turnov
     turnover_pct = (turnover / avg_equity * 100.0) if avg_equity > 0 else 0.0
     contributed = sum(contributions)
     xirr = _xirr(dates, contributions, end)
-    return {
+    result = {
         "ending_value": _round2(end),
         "contributed_capital": _round2(contributed),
         "net_profit": _round2(end - contributed),
@@ -136,9 +138,12 @@ def _metrics(equity_curve, performance_curve, dates, contributions, fees, turnov
         "average_cash_pct": _round4(avg_cash * 100.0),
         "ending_cash_pct": _round4(cash_ratios[-1] * 100.0),
     }
+    if any(isinstance(value, (float, int)) and not math.isfinite(value) for value in result.values()):
+        raise ValueError("历史价格无法生成有限的模拟指标")
+    return result
 
 
-def _run_strategy(
+def run_strategy(
     *,
     mode: str,
     month_dates: List[str],
@@ -179,18 +184,18 @@ def _run_strategy(
         return 0.0
 
     for day in month_dates:
+        day_prices = {}
+        for symbol in symbols:
+            px = prices.get(symbol, {}).get(day)
+            if px is None or not math.isfinite(px) or not MIN_VALID_PRICE <= px <= MAX_VALID_PRICE:
+                raise ValueError(f"{symbol} 在 {day} 缺少有效的精确日期价格")
+            day_prices[symbol] = px
+
         # mark-to-market
         values = {}
         total_pos = 0.0
         for symbol in symbols:
-            px = prices.get(symbol, {}).get(day)
-            if px is None:
-                # carry previous if missing
-                earlier = [d for d in prices.get(symbol, {}) if d <= day]
-                px = prices[symbol][max(earlier)] if earlier else None
-            if px is None or px <= 0:
-                values[symbol] = 0.0
-                continue
+            px = day_prices[symbol]
             values[symbol] = shares[symbol] * px
             total_pos += values[symbol]
         pre_flow_equity = total_pos + cash
@@ -205,12 +210,7 @@ def _run_strategy(
                 for symbol in symbols:
                     target_w = weights[symbol] / 100.0
                     target_val = equity * target_w
-                    px = prices.get(symbol, {}).get(day)
-                    if not px:
-                        earlier = [d for d in prices.get(symbol, {}) if d <= day]
-                        px = prices[symbol][max(earlier)] if earlier else None
-                    if not px:
-                        continue
+                    px = day_prices[symbol]
                     diff = values[symbol] - target_val
                     if diff > px * lot_size:
                         sell_shares = int(diff / px / lot_size) * lot_size
@@ -244,12 +244,7 @@ def _run_strategy(
             if score_sum > 0:
                 for symbol in symbols:
                     alloc = deploy_budget * (scores[symbol] / score_sum)
-                    px = prices.get(symbol, {}).get(day)
-                    if not px:
-                        earlier = [d for d in prices.get(symbol, {}) if d <= day]
-                        px = prices[symbol][max(earlier)] if earlier else None
-                    if not px:
-                        continue
+                    px = day_prices[symbol]
                     buy_shares, notional, fee = _lot_buy(
                         alloc, px, lot_size, min_commission, commission_rate, max_fee_ratio
                     )
@@ -261,12 +256,7 @@ def _run_strategy(
 
         total_pos = 0.0
         for symbol in symbols:
-            px = prices.get(symbol, {}).get(day)
-            if not px:
-                earlier = [d for d in prices.get(symbol, {}) if d <= day]
-                px = prices[symbol][max(earlier)] if earlier else None
-            if px:
-                total_pos += shares[symbol] * px
+            total_pos += shares[symbol] * day_prices[symbol]
         post_trade_equity = total_pos + cash
         if equity > 0:
             growth_factor *= post_trade_equity / equity
@@ -301,7 +291,7 @@ def evaluate_backtest_request(payload: dict, *, price_history=None, pe_history=N
         symbol = digits.zfill(6)
         try:
             w = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if len(symbol) == 6 and math.isfinite(w) and w > 0:
             weights[symbol] = w
@@ -327,7 +317,6 @@ def evaluate_backtest_request(payload: dict, *, price_history=None, pe_history=N
 
     prices: Dict[str, Dict[str, float]] = {}
     pe_series: Dict[str, Dict[str, float]] = {}
-    month_sets = []
 
     for symbol in target_symbols:
         rows = price_history.get(symbol) or []
@@ -338,16 +327,15 @@ def evaluate_backtest_request(payload: dict, *, price_history=None, pe_history=N
             day = str(row.get("date") or "").strip()
             try:
                 close = float(row.get("close"))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
-            if _valid_date(day) and math.isfinite(close) and close > 0:
+            if valid_date(day) and math.isfinite(close) and MIN_VALID_PRICE <= close <= MAX_VALID_PRICE:
                 closes[day] = close
         months = _month_ends(sorted(closes))
         available_by_symbol[symbol] = len(months)
         if len(months) < MIN_MONTHS:
             missing.append(symbol)
         prices[symbol] = closes
-        month_sets.append(set(m[:7] for m in months))
 
         pe_rows = pe_history.get(symbol) or []
         pe_map = {}
@@ -358,9 +346,9 @@ def evaluate_backtest_request(payload: dict, *, price_history=None, pe_history=N
             available = str(row.get("as_of") or day).strip()
             try:
                 pe = float(row.get("pe_percentile") if row.get("pe_percentile") is not None else row.get("pe_pct"))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
-            if _valid_date(day) and _valid_date(available) and math.isfinite(pe) and 0 <= pe <= 100:
+            if valid_date(day) and valid_date(available) and math.isfinite(pe) and 0 <= pe <= 100:
                 pe_map[max(day, available)] = pe
         pe_series[symbol] = pe_map
 
@@ -375,19 +363,8 @@ def evaluate_backtest_request(payload: dict, *, price_history=None, pe_history=N
             ],
         }
 
-    common_months = set.intersection(*month_sets) if month_sets else set()
-    month_dates = []
-    for ym in sorted(common_months):
-        # pick min of each symbol's month-end on that ym (aligned)
-        candidates = []
-        for symbol in target_symbols:
-            ends = [d for d in prices[symbol] if d.startswith(ym)]
-            if ends:
-                candidates.append(max(ends))
-        if len(candidates) == len(target_symbols):
-            month_dates.append(min(candidates))
-    first_common_date = max(min(prices[symbol]) for symbol in target_symbols)
-    month_dates = [day for day in month_dates if day >= first_common_date]
+    common_dates = set.intersection(*(set(prices[symbol]) for symbol in target_symbols))
+    month_dates = _month_ends(sorted(common_dates))
     if len(month_dates) < MIN_MONTHS:
         return 422, {
             "status": "insufficient_history",
@@ -445,19 +422,28 @@ def evaluate_backtest_request(payload: dict, *, price_history=None, pe_history=N
                 "limitations": ["部分交易日缺少此前 45 日内已公布的 PE 分位，无法验证估值倍率策略"],
             })
             continue
-        metrics = _run_strategy(
-            mode=mode,
-            month_dates=month_dates,
-            prices=prices,
-            pe_series=pe_series,
-            weights=weights,
-            monthly_budget=monthly_budget,
-            lot_size=lot_size,
-            min_commission=min_commission,
-            commission_rate=commission_rate,
-            max_fee_ratio=max_fee_ratio,
-            pe_bands=pe_bands,
-        )
+        try:
+            metrics = run_strategy(
+                mode=mode,
+                month_dates=month_dates,
+                prices=prices,
+                pe_series=pe_series,
+                weights=weights,
+                monthly_budget=monthly_budget,
+                lot_size=lot_size,
+                min_commission=min_commission,
+                commission_rate=commission_rate,
+                max_fee_ratio=max_fee_ratio,
+                pe_bands=pe_bands,
+            )
+        except (ArithmeticError, ValueError):
+            return 422, {
+                "status": "insufficient_history",
+                "required_months": MIN_MONTHS,
+                "available_by_symbol": available_by_symbol,
+                "missing_symbols": target_symbols,
+                "limitations": ["历史价格无法生成有限且可复现的模拟结果"],
+            }
         strategies.append({"id": mode, "status": "ready", **metrics})
 
     return 200, {
@@ -504,7 +490,7 @@ def run_backtest_from_workspace_symbols(payload: dict) -> Tuple[int, dict]:
         symbol = digits.zfill(6)
         try:
             w = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             w = 0
         if len(symbol) == 6 and w > 0:
             symbols.append(symbol)
