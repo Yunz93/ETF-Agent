@@ -18,11 +18,14 @@ import {
 import {
   addEtf,
   addBuyRecord,
+  addOtcDcaSchedule,
   cancelBuyEdit,
   importSeedPool,
   readPlanFormIntoState,
+  removeOtcDcaSchedule,
   renderBuys,
   selectEtfChart,
+  toggleOtcDcaSchedule,
 } from "./views/etf.js";
 import { renderDividend, renderEtfPool } from "./views/render.js";
 
@@ -102,7 +105,13 @@ export function bindEvents() {
 
   els.etfForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await addEtf(els.etfSymbol?.value, els.etfShares?.value, els.etfCost?.value, els.etfTargetWeight?.value);
+    await addEtf(
+      els.etfSymbol?.value,
+      els.etfShares?.value,
+      els.etfCost?.value,
+      els.etfTargetWeight?.value,
+      { allowOtc: Boolean(els.etfAllowOtc?.checked) },
+    );
   });
 
   els.buyForm?.addEventListener("submit", (event) => {
@@ -112,9 +121,42 @@ export function bindEvents() {
   els.buyCancelEdit?.addEventListener("click", cancelBuyEdit);
   els.buyFilterSymbol?.addEventListener("change", renderBuys);
   els.buyFilterType?.addEventListener("change", renderBuys);
+  els.buyFilterChannel?.addEventListener("change", renderBuys);
   els.tradeType?.addEventListener("change", () => {
     if (els.buyCancelEdit?.hidden && els.buySubmit) {
       els.buySubmit.textContent = els.tradeType.value === "sell" ? "添加卖出" : "添加买入";
+    }
+  });
+
+  const syncOtcDayHint = () => {
+    const cadence = els.otcDcaCadence?.value || "monthly";
+    if (els.otcDcaDay) {
+      els.otcDcaDay.max = cadence === "monthly" ? "28" : "7";
+      const day = Number.parseInt(els.otcDcaDay.value, 10);
+      if (Number.isFinite(day)) {
+        els.otcDcaDay.value = String(
+          cadence === "monthly" ? Math.min(28, Math.max(1, day)) : Math.min(7, Math.max(1, day)),
+        );
+      }
+    }
+    if (els.otcDcaDayHint) {
+      els.otcDcaDayHint.textContent = cadence === "monthly" ? "执行日（号）" : "执行日（周几 1–7）";
+    }
+  };
+  els.otcDcaCadence?.addEventListener("change", syncOtcDayHint);
+  els.otcDcaForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    addOtcDcaSchedule();
+  });
+  document.addEventListener("click", (event) => {
+    const toggle = event.target.closest?.("[data-otc-toggle]");
+    if (toggle) {
+      toggleOtcDcaSchedule(toggle.dataset.otcToggle);
+      return;
+    }
+    const remove = event.target.closest?.("[data-otc-remove]");
+    if (remove) {
+      removeOtcDcaSchedule(remove.dataset.otcRemove);
     }
   });
 

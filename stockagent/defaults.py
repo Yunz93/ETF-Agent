@@ -196,7 +196,7 @@ DEFAULT_STRATEGY_CONFIG = {
 }
 
 DEFAULT_WORKSPACE = {
-    "version": 9,
+    "version": 10,
     "updated_at": None,
     "etfs": [],
     "buys": [],
@@ -243,6 +243,7 @@ DEFAULT_WORKSPACE = {
             "allow_warning_override": True,
         },
         "signal_snapshots": {},
+        "otc_dca": [],
     },
     "prefs": {},
 }

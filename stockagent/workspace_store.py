@@ -626,6 +626,92 @@ def normalize_cash_reserve(payload):
     return {"balance": round(balance, 2), "history": history}
 
 
+def normalize_otc_dca_schedule(item):
+    if not isinstance(item, dict):
+        return None
+    digits = "".join(ch for ch in str(item.get("symbol") or "") if ch.isdigit())
+    symbol = digits.zfill(6)
+    if len(symbol) != 6 or not digits:
+        return None
+    cadence = str(item.get("cadence") or "monthly").strip().lower()
+    if cadence not in ("weekly", "biweekly", "monthly"):
+        cadence = "monthly"
+    try:
+        day = int(item.get("day", 1))
+    except (TypeError, ValueError):
+        day = 1
+    if cadence == "monthly":
+        day = min(28, max(1, day))
+    else:
+        day = min(7, max(1, day))
+    start_date = str(item.get("start_date") or item.get("startDate") or "").strip()
+    if len(start_date) != 10 or start_date[4] != "-" or start_date[7] != "-":
+        return None
+    try:
+        year, month, day_part = (int(part) for part in start_date.split("-"))
+        datetime.date(year, month, day_part)
+    except (TypeError, ValueError):
+        return None
+    end_raw = str(item.get("end_date") or item.get("endDate") or "").strip()
+    end_date = None
+    if end_raw:
+        if len(end_raw) == 10 and end_raw[4] == "-" and end_raw[7] == "-":
+            try:
+                ey, em, ed = (int(part) for part in end_raw.split("-"))
+                datetime.date(ey, em, ed)
+                end_date = end_raw
+            except (TypeError, ValueError):
+                end_date = None
+        if end_date and end_date < start_date:
+            return None
+    amount = _positive_number(item.get("amount"))
+    unit_price = _positive_number(item.get("unit_price", item.get("unitPrice")))
+    if amount <= 0 or unit_price <= 0:
+        return None
+    schedule_id = str(item.get("id") or "").strip()
+    if not schedule_id:
+        schedule_id = f"otc_{symbol}_{start_date.replace('-', '')}"
+    last_synced = str(
+        item.get("last_synced_date") or item.get("lastSyncedDate") or ""
+    ).strip()
+    if last_synced:
+        try:
+            ly, lm, ld = (int(part) for part in last_synced.split("-"))
+            datetime.date(ly, lm, ld)
+        except (TypeError, ValueError):
+            last_synced = ""
+    fee_rate = _nonnegative_number(item.get("fee_rate_pct", item.get("feeRatePct")), 0)
+    return {
+        "id": schedule_id,
+        "symbol": symbol,
+        "amount": round(amount, 2),
+        "cadence": cadence,
+        "day": day,
+        "start_date": start_date,
+        "end_date": end_date,
+        "unit_price": round(unit_price, 6),
+        "fee_rate_pct": min(10.0, round(fee_rate, 6)),
+        "enabled": True if item.get("enabled") is None else bool(item.get("enabled")),
+        "last_synced_date": last_synced or None,
+        "note": str(item.get("note") or "").strip()[:80],
+    }
+
+
+def normalize_otc_dca_schedules(items):
+    if not isinstance(items, list):
+        return []
+    seen = set()
+    rows = []
+    for item in items:
+        row = normalize_otc_dca_schedule(item)
+        if not row or row["id"] in seen:
+            continue
+        seen.add(row["id"])
+        rows.append(row)
+    rows.sort(key=lambda row: (row["start_date"], row["id"]))
+    return rows
+
+
 def normalize_plan(payload):
     base = dict(DEFAULT_WORKSPACE["plan"])
     if not isinstance(payload, dict):
@@ -638,6 +724,7 @@ def normalize_plan(payload):
             "execution_policy": normalize_execution_policy(base.get("execution_policy")),
             "signal_snapshots": {},
             "investment_goal": normalize_investment_goal(None),
+            "otc_dca": [],
         }
     name = str(payload.get("name") or base["name"]).strip() or base["name"]
     cadence = str(payload.get("cadence") or base["cadence"]).strip().lower()
@@ -663,6 +750,9 @@ def normalize_plan(payload):
     raw_add_plan = payload.get("add_plan")
     if raw_add_plan is None:
         raw_add_plan = payload.get("addPlan")
+    raw_otc = payload.get("otc_dca")
+    if raw_otc is None:
+        raw_otc = payload.get("otcDca")
     return {
         "name": name,
         "amount": _positive_number(payload.get("amount")) or 0,
@@ -698,6 +788,7 @@ def normalize_plan(payload):
             if payload.get("signal_snapshots") is not None
             else payload.get("signalSnapshots")
         ),
+        "otc_dca": normalize_otc_dca_schedules(raw_otc),
     }
 
 
@@ -725,6 +816,9 @@ def normalize_trade_entry(item, kind="buy"):
     trade_id = str(item.get("id") or "").strip()
     if not trade_id:
         trade_id = f"{kind}_{symbol}_{date}_{int(shares)}_{int(price * 10000)}"
+    channel_raw = str(item.get("channel") or "").strip().lower()
+    channel = "otc" if channel_raw == "otc" else "exchange"
+    schedule_id = str(item.get("otc_schedule_id") or item.get("otcScheduleId") or "").strip()
     return {
         "id": trade_id,
         "symbol": symbol,
@@ -733,6 +827,8 @@ def normalize_trade_entry(item, kind="buy"):
         "shares": round(shares, 4),
         "fee": round(_nonnegative_number(item.get("fee")), 2),
         "note": str(item.get("note") or "").strip(),
+        "channel": channel,
+        "otc_schedule_id": schedule_id if channel == "otc" and schedule_id else None,
     }
 
 
@@ -802,7 +898,7 @@ def normalize_workspace(payload):
     if isinstance(payload.get("prefs"), dict):
         workspace["prefs"] = payload["prefs"]
 
-    workspace["version"] = 9
+    workspace["version"] = 10
     workspace["updated_at"] = payload.get("updated_at") or as_of(None)
     return workspace
 

@@ -5,6 +5,7 @@ import {
   DEFAULT_EXECUTION_POLICY,
   normalizeExecutionPolicy,
 } from "./execution-policy.js";
+import { normalizeOtcDcaSchedules } from "./otc-dca.js";
 import {
   normalizeStrategyConfig,
   normalizeStrategyId,
@@ -13,7 +14,7 @@ import {
 
 export { normalizeExecutionPolicy, DEFAULT_EXECUTION_POLICY };
 
-export const WORKSPACE_VERSION = 9;
+export const WORKSPACE_VERSION = 10;
 
 export const DEFAULT_TRADING_COST = Object.freeze({
   min_commission: 5,
@@ -305,6 +306,7 @@ export function normalizePlan(plan) {
     execution_policy: normalizeExecutionPolicy(null),
     signal_snapshots: {},
     investment_goal: normalizeInvestmentGoal(null),
+    otc_dca: [],
   };
   if (!plan || typeof plan !== "object") {
     return {
@@ -315,6 +317,7 @@ export function normalizePlan(plan) {
       cash_reserve: normalizeCashReserve(null),
       execution_policy: normalizeExecutionPolicy(null),
       signal_snapshots: {},
+      otc_dca: [],
     };
   }
   let cadence = String(plan.cadence || base.cadence).toLowerCase();
@@ -357,6 +360,7 @@ export function normalizePlan(plan) {
     execution_policy: normalizeExecutionPolicy(plan.execution_policy ?? plan.executionPolicy),
     signal_snapshots: normalizeSignalSnapshots(plan.signal_snapshots ?? plan.signalSnapshots),
     investment_goal: normalizeInvestmentGoal(plan.investment_goal),
+    otc_dca: normalizeOtcDcaSchedules(plan.otc_dca ?? plan.otcDca),
   };
 }
 
@@ -413,6 +417,9 @@ export function normalizeTrades(items = [], kind = "buy") {
     const id = String(item.id || "").trim() || `${kind}_${symbol}_${date}_${Math.round(shares)}_${Math.round(price * 10000)}`;
     if (seen.has(id)) continue;
     seen.add(id);
+    const channelRaw = String(item.channel || "").trim().toLowerCase();
+    const channel = channelRaw === "otc" ? "otc" : "exchange";
+    const scheduleId = String(item.otc_schedule_id || item.otcScheduleId || "").trim();
     buys.push({
       id,
       symbol,
@@ -421,6 +428,8 @@ export function normalizeTrades(items = [], kind = "buy") {
       shares: Math.round(shares * 1e4) / 1e4,
       fee: Math.round(nonnegative(item.fee) * 100) / 100,
       note: String(item.note || "").trim(),
+      channel,
+      otc_schedule_id: channel === "otc" && scheduleId ? scheduleId : null,
     });
   }
   buys.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.id.localeCompare(b.id)));
