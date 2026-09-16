@@ -39,6 +39,11 @@ import {
   upsertBuy,
   upsertSell,
 } from "../workspace_model.js";
+import {
+  materializeOtcDcaBuys,
+  normalizeOtcDcaSchedule,
+  OTC_CADENCE_LABELS,
+} from "../otc-dca.js";
 import { ADD_PLAN_PRESETS, normalizeAddPlanConfig } from "../add-plan.js";
 import {
   estimatedTradeFee,
@@ -821,8 +826,9 @@ export async function selectEtfChart(symbol) {
   }
 }
 
-export async function addEtf(rawSymbol, shares, cost, targetWeight) {
+export async function addEtf(rawSymbol, shares, cost, targetWeight, options = {}) {
   const symbol = normalizeEtfSymbol(rawSymbol);
+  const allowOtc = Boolean(options.allowOtc);
   if (!symbol) {
     if (els.etfFormStatus) els.etfFormStatus.textContent = "请输入 6 位 ETF 代码，例如 512890";
     return;
@@ -831,39 +837,58 @@ export async function addEtf(rawSymbol, shares, cost, targetWeight) {
     if (els.etfFormStatus) els.etfFormStatus.textContent = `${symbol} 已在计划中`;
     return;
   }
-  if (els.etfFormStatus) els.etfFormStatus.textContent = `正在核验 ${symbol} 行情…`;
+  if (els.etfFormStatus) {
+    els.etfFormStatus.textContent = allowOtc
+      ? `正在加入场外品种 ${symbol}…`
+      : `正在核验 ${symbol} 行情…`;
+  }
   try {
-    const response = await fetch(`/api/etf/quotes?symbols=${encodeURIComponent(symbol)}`);
-    const payload = await response.json();
-    const quote = (payload.quotes || [])[0];
-    if (!quote || quote.price == null) {
-      throw new Error(payload.error || "行情源没有该代码，确认是 A 股场内 ETF");
+    let quote = null;
+    if (!allowOtc) {
+      const response = await fetch(`/api/etf/quotes?symbols=${encodeURIComponent(symbol)}`);
+      const payload = await response.json();
+      quote = (payload.quotes || [])[0];
+      if (!quote || quote.price == null) {
+        throw new Error(payload.error || "行情源没有该代码，确认是 A 股场内 ETF；场外品种可勾选「场外」加入");
+      }
+    } else {
+      try {
+        const response = await fetch(`/api/etf/quotes?symbols=${encodeURIComponent(symbol)}`);
+        const payload = await response.json();
+        quote = (payload.quotes || [])[0] || null;
+      } catch {
+        quote = null;
+      }
     }
     const displayName = resolveEtfDisplayName({
       name: "",
       symbol,
-      quoteName: quote.name,
+      quoteName: quote?.name,
       registryName: registryEtfName(symbol),
       seedName: seedEtfName(symbol),
     });
     state.etfs.push({
       symbol,
-      name: displayName,
+      name: displayName || (allowOtc ? `场外 ${symbol}` : ""),
       shares: Number(shares) > 0 ? Number(shares) : 0,
       cost: Number(cost) > 0 ? Number(cost) : 0,
       target_weight: clampWeight(targetWeight),
-      note: "",
+      note: allowOtc ? "场外" : "",
     });
-    state.quotesBySymbol[symbol] = quote;
+    if (quote) state.quotesBySymbol[symbol] = quote;
     persistWorkspace();
-    if (els.etfFormStatus) els.etfFormStatus.textContent = `已加入 ${displayName || symbol}`;
+    if (els.etfFormStatus) {
+      els.etfFormStatus.textContent = `已加入 ${displayName || symbol}${allowOtc ? "（场外）" : ""}`;
+    }
     if (els.etfSymbol) els.etfSymbol.value = "";
     if (els.etfShares) els.etfShares.value = "";
     if (els.etfCost) els.etfCost.value = "";
     if (els.etfTargetWeight) els.etfTargetWeight.value = "";
+    if (els.etfAllowOtc) els.etfAllowOtc.checked = false;
     renderMetrics();
     renderRows();
     renderBuys();
+    renderOtcDcaPanel();
     renderSidebarEtfs();
   } catch (error) {
     if (els.etfFormStatus) els.etfFormStatus.textContent = `添加失败：${String(error).replace("Error: ", "")}`;
@@ -1824,9 +1849,10 @@ function renderPoolAllocation() {
 }
 
 function renderBuySymbolOptions() {
-  if (!els.buySymbol && !els.buyFilterSymbol) return;
+  if (!els.buySymbol && !els.buyFilterSymbol && !els.otcDcaSymbol) return;
   const current = els.buySymbol?.value || "";
   const currentFilter = els.buyFilterSymbol?.value || "";
+  const currentOtc = els.otcDcaSymbol?.value || "";
   const options = state.etfs
     .map((entry) => {
       const quote = state.quotesBySymbol[entry.symbol];
@@ -1846,6 +1872,158 @@ function renderBuySymbolOptions() {
       els.buyFilterSymbol.value = currentFilter;
     }
   }
+  if (els.otcDcaSymbol) {
+    els.otcDcaSymbol.innerHTML = `<option value="">选择品种</option>${options}`;
+    if (currentOtc && state.etfs.some((item) => item.symbol === currentOtc)) {
+      els.otcDcaSymbol.value = currentOtc;
+    }
+  }
+}
+
+/** 将到期场外定投写入 buys，并同步持仓成本。 */
+export function syncOtcDcaMaterialize({ persist = true } = {}) {
+  if (!state.plan) state.plan = {};
+  const beforeIds = new Set((state.buys || []).map((row) => row.id));
+  const prevSynced = (state.plan.otc_dca || []).map((row) => `${row.id}:${row.last_synced_date || ""}`).join("|");
+  const result = materializeOtcDcaBuys({
+    schedules: state.plan.otc_dca || [],
+    buys: state.buys || [],
+  });
+  state.plan.otc_dca = result.schedules;
+  state.buys = result.buys;
+  const touched = new Set();
+  for (const buy of result.buys) {
+    if (!beforeIds.has(buy.id)) touched.add(buy.symbol);
+  }
+  for (const symbol of touched) syncHoldingFromTrades(symbol);
+  const nextSynced = result.schedules.map((row) => `${row.id}:${row.last_synced_date || ""}`).join("|");
+  if (persist && (result.created > 0 || touched.size > 0 || prevSynced !== nextSynced)) {
+    persistWorkspace();
+  }
+  return result;
+}
+
+export function renderOtcDcaPanel() {
+  if (!els.otcDcaRows) return;
+  renderBuySymbolOptions();
+  const schedules = state.plan?.otc_dca || [];
+  if (els.otcDcaEmpty) els.otcDcaEmpty.hidden = schedules.length > 0;
+  if (!schedules.length) {
+    els.otcDcaRows.innerHTML = "";
+    return;
+  }
+  els.otcDcaRows.innerHTML = schedules
+    .map((row) => {
+      const entry = state.etfs.find((item) => item.symbol === row.symbol);
+      const quote = state.quotesBySymbol[row.symbol];
+      const name = entry ? etfDisplayName(entry, quote) : row.symbol;
+      const cadenceLabel = OTC_CADENCE_LABELS[row.cadence] || row.cadence;
+      const dayLabel = row.cadence === "monthly" ? `${row.day} 号` : `周${row.day}`;
+      const range = row.end_date
+        ? `${escapeHtml(row.start_date)} → ${escapeHtml(row.end_date)}`
+        : `${escapeHtml(row.start_date)} 起`;
+      return `
+        <tr data-otc-id="${escapeAttr(row.id)}">
+          <td>
+            <button class="link-button etf-name" data-analyze="${escapeAttr(row.symbol)}" type="button">${escapeHtml(name)}</button>
+            <span class="muted"> ${escapeHtml(row.symbol)}</span>
+          </td>
+          <td>${money(row.amount)}</td>
+          <td>${escapeHtml(cadenceLabel)} · ${escapeHtml(dayLabel)}</td>
+          <td>${range}</td>
+          <td class="num">${money(row.unit_price, "CNY", 3)}</td>
+          <td class="num">${row.fee_rate_pct}%</td>
+          <td>${row.enabled ? "启用" : "已暂停"}</td>
+          <td class="num">
+            <button class="ghost-button compact" type="button" data-otc-toggle="${escapeAttr(row.id)}">${row.enabled ? "暂停" : "启用"}</button>
+            <button class="ghost-button compact danger" type="button" data-otc-remove="${escapeAttr(row.id)}">删除</button>
+          </td>
+        </tr>`;
+    })
+    .join("");
+  els.otcDcaRows.querySelectorAll("[data-analyze]").forEach((button) => {
+    const symbol = button.dataset.analyze;
+    button.addEventListener("click", () => openAnalysis(symbol));
+    button.addEventListener("pointerenter", () => prioritizeAnalysis(symbol), { passive: true });
+  });
+}
+
+export function addOtcDcaSchedule() {
+  const symbol = String(els.otcDcaSymbol?.value || "").trim();
+  const amount = Number(els.otcDcaAmount?.value);
+  const cadence = els.otcDcaCadence?.value || "monthly";
+  const day = Number.parseInt(els.otcDcaDay?.value, 10);
+  const startDate = String(els.otcDcaStartDate?.value || "").trim();
+  const endDate = String(els.otcDcaEndDate?.value || "").trim();
+  const unitPrice = Number(els.otcDcaUnitPrice?.value);
+  const feeRate = Number(els.otcDcaFeeRatePct?.value);
+  const note = String(els.otcDcaNote?.value || "").trim();
+  if (!symbol) {
+    if (els.otcDcaFormStatus) els.otcDcaFormStatus.textContent = "请选择 ETF";
+    return;
+  }
+  if (!state.etfs.some((item) => item.symbol === symbol)) {
+    if (els.otcDcaFormStatus) els.otcDcaFormStatus.textContent = "该 ETF 不在计划中，请先加入持仓";
+    return;
+  }
+  const draft = normalizeOtcDcaSchedule({
+    id: `otc_${symbol}_${Date.now().toString(36)}`,
+    symbol,
+    amount,
+    cadence,
+    day,
+    start_date: startDate,
+    end_date: endDate || null,
+    unit_price: unitPrice,
+    fee_rate_pct: Number.isFinite(feeRate) && feeRate >= 0 ? feeRate : 0,
+    enabled: true,
+    note,
+  });
+  if (!draft) {
+    if (els.otcDcaFormStatus) {
+      els.otcDcaFormStatus.textContent = "请填写有效的金额、起始日与估算净值";
+    }
+    return;
+  }
+  if (!state.plan) state.plan = {};
+  state.plan.otc_dca = [...(state.plan.otc_dca || []), draft];
+  const result = syncOtcDcaMaterialize({ persist: true });
+  if (els.otcDcaAmount) els.otcDcaAmount.value = "";
+  if (els.otcDcaUnitPrice) els.otcDcaUnitPrice.value = "";
+  if (els.otcDcaFeeRatePct) els.otcDcaFeeRatePct.value = "";
+  if (els.otcDcaNote) els.otcDcaNote.value = "";
+  if (els.otcDcaEndDate) els.otcDcaEndDate.value = "";
+  renderOtcDcaPanel();
+  renderBuys();
+  renderMetrics();
+  renderRows();
+  renderSidebarEtfs();
+  if (els.otcDcaFormStatus) {
+    els.otcDcaFormStatus.textContent =
+      result.created > 0
+        ? `已添加日程，并自动记入 ${result.created} 笔场外定投`
+        : "已添加日程（尚未到执行日，或已同步过）";
+  }
+}
+
+export function toggleOtcDcaSchedule(id) {
+  const schedules = state.plan?.otc_dca || [];
+  const row = schedules.find((item) => item.id === id);
+  if (!row) return;
+  row.enabled = !row.enabled;
+  if (row.enabled) syncOtcDcaMaterialize({ persist: true });
+  else persistWorkspace();
+  renderOtcDcaPanel();
+  renderBuys();
+  renderMetrics();
+  renderRows();
+}
+
+export function removeOtcDcaSchedule(id) {
+  if (!state.plan?.otc_dca?.length) return;
+  state.plan.otc_dca = state.plan.otc_dca.filter((item) => item.id !== id);
+  persistWorkspace();
+  renderOtcDcaPanel();
 }
 
 export function renderBuys() {
@@ -1858,16 +2036,28 @@ export function renderBuys() {
   ].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.id.localeCompare(b.id)));
   const filterSymbol = els.buyFilterSymbol?.value || "";
   const filterType = els.buyFilterType?.value || "";
-  const filteredTrades = trades.filter(
-    (trade) => (!filterSymbol || trade.symbol === filterSymbol) && (!filterType || trade.type === filterType),
-  );
+  const filterChannel = els.buyFilterChannel?.value || "";
+  const filteredTrades = trades.filter((trade) => {
+    if (filterSymbol && trade.symbol !== filterSymbol) return false;
+    if (filterType && trade.type !== filterType) return false;
+    if (filterChannel) {
+      const channel = trade.channel === "otc" ? "otc" : "exchange";
+      if (channel !== filterChannel) return false;
+    }
+    return true;
+  });
   if (els.buyFilterCount) {
-    const filtered = Boolean(filterSymbol || filterType);
-    els.buyFilterCount.textContent = filtered ? `显示 ${filteredTrades.length} / 共 ${trades.length} 笔` : `共 ${trades.length} 笔`;
+    const filtered = Boolean(filterSymbol || filterType || filterChannel);
+    els.buyFilterCount.textContent = filtered
+      ? `显示 ${filteredTrades.length} / 共 ${trades.length} 笔`
+      : `共 ${trades.length} 笔`;
   }
   if (els.buyEmpty) {
     els.buyEmpty.hidden = filteredTrades.length > 0;
-    els.buyEmpty.textContent = filterSymbol || filterType ? "当前筛选条件下暂无交易记录。" : "暂无交易记录。";
+    els.buyEmpty.textContent =
+      filterSymbol || filterType || filterChannel
+        ? "当前筛选条件下暂无交易记录。"
+        : "暂无交易记录。";
   }
   if (!filteredTrades.length) {
     els.buyRows.innerHTML = "";
@@ -1882,10 +2072,12 @@ export function renderBuys() {
       const fee = Math.max(0, Number(trade.fee) || 0);
       const cashImpact = trade.type === "sell" ? amount - fee : amount + fee;
       const editing = editingTrade?.id === trade.id && editingTrade?.type === trade.type;
+      const channel = trade.channel === "otc" ? "otc" : "exchange";
       return `
         <tr data-trade-id="${escapeAttr(trade.id)}" class="${editing ? "is-editing" : ""}">
           <td>${escapeHtml(trade.date)}</td>
           <td><span class="trade-type ${trade.type}">${trade.type === "sell" ? "卖出" : "买入"}</span></td>
+          <td><span class="trade-channel ${channel}">${channel === "otc" ? "场外" : "场内"}</span></td>
           <td>
             <button class="link-button etf-name" data-analyze="${escapeAttr(trade.symbol)}" type="button">${escapeHtml(name)}</button>
             <span class="muted"> ${escapeHtml(trade.symbol)}</span>
@@ -1942,6 +2134,7 @@ function startBuyEdit(type, id) {
   if (!trade) return;
   editingTrade = { id: trade.id, type };
   if (els.tradeType) els.tradeType.value = type;
+  if (els.tradeChannel) els.tradeChannel.value = trade.channel === "otc" ? "otc" : "exchange";
   if (els.buySymbol) els.buySymbol.value = trade.symbol;
   if (els.buyDate) els.buyDate.value = trade.date;
   if (els.buyPrice) els.buyPrice.value = String(trade.price);
@@ -1985,6 +2178,7 @@ function newTradeId(type, symbol, date) {
 
 export function addBuyRecord() {
   const type = els.tradeType?.value === "sell" ? "sell" : "buy";
+  const channel = els.tradeChannel?.value === "otc" ? "otc" : "exchange";
   const symbol = String(els.buySymbol?.value || "").trim();
   const date = String(els.buyDate?.value || "").trim();
   const price = Number(els.buyPrice?.value);
@@ -2069,10 +2263,10 @@ export function addBuyRecord() {
   }
 
   const wasEditing = Boolean(editingTrade);
-  const previousSymbol = editingTrade
+  const previous = editingTrade
     ? ((editingTrade.type === "sell" ? state.sells : state.buys).find((item) => item.id === editingTrade.id) || {})
-        .symbol
     : null;
+  const previousSymbol = previous?.symbol || null;
   if (editingTrade) {
     if (editingTrade.type === "sell") state.sells = state.sells.filter((item) => item.id !== editingTrade.id);
     else state.buys = state.buys.filter((item) => item.id !== editingTrade.id);
@@ -2086,8 +2280,13 @@ export function addBuyRecord() {
     fee:
       Number.isFinite(feeInput) && feeInput >= 0 && els.buyFee?.value !== ""
         ? feeInput
-        : estimatedTradeFee(price * shares, state.plan?.trading_cost),
+        : channel === "otc"
+          ? 0
+          : estimatedTradeFee(price * shares, state.plan?.trading_cost),
     note,
+    channel,
+    otc_schedule_id:
+      channel === "otc" && previous?.otc_schedule_id ? previous.otc_schedule_id : null,
   };
   if (type === "sell") state.sells = upsertSell(state.sells, record);
   else state.buys = upsertBuy(state.buys, record);
@@ -2121,6 +2320,7 @@ export async function renderEtfPool({ refresh = false } = {}) {
   renderPortfolioGoalPanels();
   if (refresh) homeQuoteRefreshCooldownUntil = 0;
   await refreshQuotes(refresh);
+  syncOtcDcaMaterialize({ persist: true });
   const execution = planExecutionContext({ plan: state.plan, holdings: currentPlanHoldings() });
   if (execution.reached && !state.plan.initial_build_completed_at) {
     state.plan.initial_build_completed_at = new Date().toISOString();
@@ -2136,6 +2336,7 @@ export async function renderEtfPool({ refresh = false } = {}) {
   renderExecDraftPanel();
   renderPoolAllocation();
   renderRows();
+  renderOtcDcaPanel();
   renderBuys();
   renderSidebarEtfs();
   if (els.homeEmptyGuide) els.homeEmptyGuide.hidden = state.etfs.length > 0;

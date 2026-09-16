@@ -6,9 +6,9 @@ export function setAppConfig(nextConfig) {
 export const state = {
   // 定投计划内 ETF：[{symbol, name, shares, cost, target_weight, note}]
   etfs: [],
-  // 买入记录：[{id, symbol, date, price, shares, fee, note}]
+  // 买入记录：[{id, symbol, date, price, shares, fee, note, channel, otc_schedule_id}]
   buys: [],
-  // 卖出记录：[{id, symbol, date, price, shares, fee, note}]
+  // 卖出记录：[{id, symbol, date, price, shares, fee, note, channel, otc_schedule_id}]
   sells: [],
   plan: {
     name: "默认定投计划",
@@ -21,6 +21,7 @@ export const state = {
     cadence: "monthly",
     day: 1,
     note: "",
+    otc_dca: [],
     strategy: "valuation",
     strategy_config: {
       pe_bands: [
@@ -216,6 +217,7 @@ export function initEls() {
     importSeedPool: document.querySelector("#importSeedPool"),
     buyForm: document.querySelector("#buyForm"),
     tradeType: document.querySelector("#tradeType"),
+    tradeChannel: document.querySelector("#tradeChannel"),
     buySymbol: document.querySelector("#buySymbol"),
     buyDate: document.querySelector("#buyDate"),
     buyPrice: document.querySelector("#buyPrice"),
@@ -227,9 +229,25 @@ export function initEls() {
     buyFormStatus: document.querySelector("#buyFormStatus"),
     buyFilterSymbol: document.querySelector("#buyFilterSymbol"),
     buyFilterType: document.querySelector("#buyFilterType"),
+    buyFilterChannel: document.querySelector("#buyFilterChannel"),
     buyFilterCount: document.querySelector("#buyFilterCount"),
     buyRows: document.querySelector("#buyRows"),
     buyEmpty: document.querySelector("#buyEmpty"),
+    otcDcaForm: document.querySelector("#otcDcaForm"),
+    otcDcaSymbol: document.querySelector("#otcDcaSymbol"),
+    otcDcaAmount: document.querySelector("#otcDcaAmount"),
+    otcDcaCadence: document.querySelector("#otcDcaCadence"),
+    otcDcaDay: document.querySelector("#otcDcaDay"),
+    otcDcaDayHint: document.querySelector("#otcDcaDayHint"),
+    otcDcaStartDate: document.querySelector("#otcDcaStartDate"),
+    otcDcaEndDate: document.querySelector("#otcDcaEndDate"),
+    otcDcaUnitPrice: document.querySelector("#otcDcaUnitPrice"),
+    otcDcaFeeRatePct: document.querySelector("#otcDcaFeeRatePct"),
+    otcDcaNote: document.querySelector("#otcDcaNote"),
+    otcDcaFormStatus: document.querySelector("#otcDcaFormStatus"),
+    otcDcaRows: document.querySelector("#otcDcaRows"),
+    otcDcaEmpty: document.querySelector("#otcDcaEmpty"),
+    etfAllowOtc: document.querySelector("#etfAllowOtc"),
     execDraftPanel: document.querySelector("#execDraftPanel"),
     etfRefresh: document.querySelector("#etfRefresh"),
     etfChartPanel: document.querySelector("#etfChartPanel"),

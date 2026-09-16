@@ -1350,6 +1350,23 @@ canvas {
   color: var(--sell-marker);
 }
 
+.trade-channel {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  background: color-mix(in oklab, var(--text) 8%, transparent);
+  color: var(--muted);
+}
+
+.trade-channel.otc {
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
 .add-symbol-strip p[role="status"] {
   flex: 1 0 100%;
   margin: 0;

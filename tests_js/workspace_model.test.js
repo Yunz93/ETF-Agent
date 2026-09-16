@@ -284,7 +284,7 @@ test("execution drafts normalize and migrate from missing field", () => {
   assert.equal(drafts[1].side, "buy"); // 缺省兼容旧数据
   assert.equal(drafts[1].date, "2026-07-01");
   assert.equal(drafts[1].stale, true);
-  assert.equal(WORKSPACE_VERSION, 9);
+  assert.equal(WORKSPACE_VERSION, 10);
   assert.equal(normalizePlan({}).execution_policy.premium_block_pct, 5);
   assert.deepEqual(normalizeExecutionDraftsMeta(null).fingerprint, "");
   assert.equal(normalizeDecisionHistory([]).length, 0);

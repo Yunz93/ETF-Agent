@@ -341,6 +341,84 @@
               <p class="muted plan-strategy-custom-note">无 PE 分位时按评分倍率；末档上限固定为 100%。</p>
               </div>
             </section>
+
+            <section class="plan-section" aria-label="场外定投">
+              <div class="plan-section-heading">
+                <h3 class="plan-section-title">场外定投</h3>
+                <p class="muted">按周期自动写入交易记录，无需每日手填；单笔场外买入请在「交易记录」选择渠道为场外。</p>
+              </div>
+              <form id="otcDcaForm" class="plan-config-strip" autocomplete="off">
+                <div class="plan-config-group">
+                  <div class="plan-config-group-heading">
+                    <h4>新增日程</h4>
+                  </div>
+                  <label>
+                    <span>ETF</span>
+                    <select id="otcDcaSymbol" required>
+                      <option value="">选择品种</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>每期金额（元）</span>
+                    <input id="otcDcaAmount" type="number" min="0" step="any" placeholder="1000" required />
+                  </label>
+                  <label>
+                    <span>频率</span>
+                    <select id="otcDcaCadence">
+                      <option value="monthly" selected>每月</option>
+                      <option value="biweekly">每两周</option>
+                      <option value="weekly">每周</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span id="otcDcaDayHint">执行日（号）</span>
+                    <input id="otcDcaDay" type="number" min="1" max="28" step="1" value="1" required />
+                  </label>
+                  <label>
+                    <span>起始日</span>
+                    <input id="otcDcaStartDate" type="date" required />
+                  </label>
+                  <label>
+                    <span>结束日（可选）</span>
+                    <input id="otcDcaEndDate" type="date" />
+                  </label>
+                  <label>
+                    <span>估算净值</span>
+                    <input id="otcDcaUnitPrice" type="number" min="0" step="any" placeholder="1.000" required />
+                  </label>
+                  <label>
+                    <span>申购费率 %</span>
+                    <input id="otcDcaFeeRatePct" type="number" min="0" max="10" step="0.01" placeholder="0" />
+                  </label>
+                  <label class="grow">
+                    <span>备注</span>
+                    <input id="otcDcaNote" type="text" placeholder="可选" maxlength="80" />
+                  </label>
+                  <div class="buy-form-actions">
+                    <button class="primary-button" type="submit">添加场外定投</button>
+                  </div>
+                  <p id="otcDcaFormStatus" class="muted" role="status"></p>
+                </div>
+              </form>
+              <div class="table-wrap">
+                <table class="stock-table buy-table">
+                  <thead>
+                    <tr>
+                      <th>ETF</th>
+                      <th>每期</th>
+                      <th>频率</th>
+                      <th>区间</th>
+                      <th class="num">净值</th>
+                      <th class="num">费率</th>
+                      <th>状态</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="otcDcaRows"></tbody>
+                </table>
+              </div>
+              <div id="otcDcaEmpty" class="empty-state">暂无场外定投日程。设置后将按执行日自动记入交易记录。</div>
+            </section>
           </div>
 
           <div
@@ -371,6 +449,10 @@
               <label>
                 <span>成本价</span>
                 <input id="etfCost" type="number" min="0" step="any" placeholder="0" />
+              </label>
+              <label class="plan-complete-check">
+                <input id="etfAllowOtc" type="checkbox" />
+                <span>场外（跳过行情核验）</span>
               </label>
               <button class="primary-button" type="submit">加入计划</button>
               <p id="etfFormStatus" class="muted" role="status"></p>
@@ -446,6 +528,13 @@
                 </select>
               </label>
               <label>
+                <span>渠道</span>
+                <select id="tradeChannel">
+                  <option value="exchange">场内</option>
+                  <option value="otc">场外</option>
+                </select>
+              </label>
+              <label>
                 <span>ETF</span>
                 <select id="buySymbol" required>
                   <option value="">选择品种</option>
@@ -456,7 +545,7 @@
                 <input id="buyDate" type="date" required />
               </label>
               <label>
-                <span>成交价</span>
+                <span>成交价 / 净值</span>
                 <input id="buyPrice" type="number" min="0" step="any" placeholder="1.234" required />
               </label>
               <label>
@@ -487,6 +576,11 @@
                 <option value="buy">仅买入</option>
                 <option value="sell">仅卖出</option>
               </select>
+              <select id="buyFilterChannel" aria-label="筛选渠道">
+                <option value="">全部渠道</option>
+                <option value="exchange">仅场内</option>
+                <option value="otc">仅场外</option>
+              </select>
               <span id="buyFilterCount" class="muted" aria-live="polite"></span>
             </div>
             <div class="table-wrap">
@@ -495,6 +589,7 @@
                   <tr>
                     <th>日期</th>
                     <th>类型</th>
+                    <th>渠道</th>
                     <th>ETF</th>
                     <th class="num">成交价</th>
                     <th class="num">份额</th>
@@ -542,6 +637,6 @@
       </main>
     </div>
 
-    <script type="module" src="./js/main.js?v=20260911a"></script>
+    <script type="module" src="./js/main.js?v=20260916a"></script>
   </body>
 </html>
