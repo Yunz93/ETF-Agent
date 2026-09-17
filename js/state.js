@@ -213,6 +213,7 @@ export function initEls() {
     homeTodayCard: document.querySelector("#homeTodayCard"),
     homeReturnsPanel: document.querySelector("#homeReturnsPanel"),
     etfRows: document.querySelector("#etfRows"),
+    targetAllocationEditor: document.querySelector("#targetAllocationEditor"),
     etfEmpty: document.querySelector("#etfEmpty"),
     importSeedPool: document.querySelector("#importSeedPool"),
     buyForm: document.querySelector("#buyForm"),

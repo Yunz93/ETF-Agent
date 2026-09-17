@@ -14,6 +14,7 @@ import { setSourceStatus } from "../navigation.js";
 import { persistWorkspace } from "../workspace.js";
 import { currentPoolAllocationResult } from "../pool-alloc.js";
 import { renderStrategySimulation } from "./strategy-simulation.js";
+import { validateTargetAllocation } from "../target-allocation.js";
 import {
   buildPortfolioReviewBaseline,
   isPortfolioAiReady,
@@ -636,8 +637,77 @@ function renderMetrics() {
   els.etfMetrics.hidden = !state.etfs.length;
 }
 
+function renderTargetAllocationEditor() {
+  const root = els.targetAllocationEditor;
+  if (!root) return;
+  root.hidden = state.etfs.length === 0;
+  if (root.hidden) return;
+  const fingerprint = state.etfs.map((entry) => entry.symbol).join("|");
+  if (root.dataset.symbols !== fingerprint) {
+    root.dataset.symbols = fingerprint;
+    root.dataset.dirty = "false";
+    root.innerHTML = `<div class="target-allocation-heading"><div><h4>目标仓位配置</h4><p class="muted">按整个 ETF 组合分配，合计需为 100%。修改后点击保存。</p></div><strong data-target-total></strong></div>
+      <form class="target-allocation-form" autocomplete="off"><div class="target-allocation-grid">${state.etfs.map((entry) => `<label><span>${escapeHtml(etfDisplayName(entry, state.quotesBySymbol[entry.symbol]))} <small>${escapeHtml(entry.symbol)}</small></span><span class="target-allocation-input"><input type="number" min="0" max="100" step="0.01" required data-target-symbol="${escapeAttr(entry.symbol)}" value="${holdingInputValue(entry.target_weight)}" aria-label="${escapeAttr(entry.symbol)} 目标仓位" /><span>%</span></span></label>`).join("")}</div>
+      <div class="target-allocation-actions"><button class="primary-button" type="submit">保存目标仓位</button><button class="ghost-button" type="button" data-target-reset>撤销修改</button><p class="muted" data-target-status role="status"></p></div></form>`;
+    const form = root.querySelector("form");
+    const status = root.querySelector("[data-target-status]");
+    const readRows = () => [...form.querySelectorAll("[data-target-symbol]")].map((input) => ({ symbol: input.dataset.targetSymbol, value: input.value }));
+    const update = () => {
+      const result = validateTargetAllocation(readRows());
+      root.querySelector("[data-target-total]").textContent = result.total == null ? "合计待检查" : `合计 ${result.total.toFixed(2)}%`;
+      form.querySelector('[type="submit"]').disabled = !result.ok || root.dataset.dirty !== "true";
+      if (root.dataset.dirty === "true") status.textContent = result.ok ? "待保存" : result.message;
+    };
+    form.addEventListener("input", () => { root.dataset.dirty = "true"; update(); });
+    root.querySelector("[data-target-reset]").addEventListener("click", () => {
+      for (const input of form.querySelectorAll("[data-target-symbol]")) {
+        const entry = state.etfs.find((item) => item.symbol === input.dataset.targetSymbol);
+        input.value = holdingInputValue(entry?.target_weight ?? 0);
+      }
+      root.dataset.dirty = "false";
+      status.textContent = "已撤销未保存的修改。";
+      update();
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (root.dataset.symbols !== state.etfs.map((entry) => entry.symbol).join("|")) return;
+      const result = validateTargetAllocation(readRows());
+      if (!result.ok) { status.textContent = result.message; return; }
+      const values = new Map(result.weights.map((row) => [row.symbol, row.value]));
+      for (const entry of state.etfs) entry.target_weight = values.get(entry.symbol);
+      root.dataset.dirty = "false";
+      status.textContent = "正在保存…";
+      update();
+      const inputs = [...form.querySelectorAll("[data-target-symbol]")];
+      inputs.forEach((input) => { input.disabled = true; });
+      root.querySelector("[data-target-reset]").disabled = true;
+      renderRows();
+      renderSidebarEtfs();
+      renderPoolAllocation();
+      renderStrategySimulation();
+      await persistWorkspace({ immediate: true });
+      inputs.forEach((input) => { input.disabled = false; });
+      root.querySelector("[data-target-reset]").disabled = false;
+      if (state.workspaceSync.status !== "synced") {
+        root.dataset.dirty = "true";
+        update();
+      }
+      status.textContent = state.workspaceSync.status === "synced"
+        ? "目标仓位已保存。今日执行如有旧方案，请重新评估后使用新配置。"
+        : "已保存在本机，服务器同步失败；请检查连接后重试。";
+    });
+    update();
+  } else if (root.dataset.dirty !== "true") {
+    for (const input of root.querySelectorAll("[data-target-symbol]")) {
+      const entry = state.etfs.find((item) => item.symbol === input.dataset.targetSymbol);
+      input.value = holdingInputValue(entry?.target_weight ?? 0);
+    }
+  }
+}
+
 function renderRows() {
   if (!els.etfRows) return;
+  renderTargetAllocationEditor();
   if (!state.etfs.length) {
     els.etfRows.innerHTML = "";
     if (els.etfEmpty) els.etfEmpty.hidden = false;
@@ -679,9 +749,7 @@ function renderRows() {
           </td>
           <td class="num">${price != null ? price.toFixed(3) : "—"}</td>
           <td class="num ${changeClass}">${change != null ? `${signed(change)}%` : "—"}</td>
-          <td class="num etf-input-cell etf-col-target">
-            <input type="number" min="0" max="100" step="any" value="${holdingInputValue(target)}" placeholder="0" data-field="target_weight" data-symbol="${escapeAttr(entry.symbol)}" aria-label="配置目标权重" title="池内目标权重" />
-          </td>
+          <td class="num etf-col-target" title="池内目标权重">${target.toFixed(2)}%</td>
           <td class="etf-input-cell etf-col-strategy">
             <select class="etf-strategy-select" data-field="strategy_override" data-symbol="${escapeAttr(entry.symbol)}" aria-label="本品种定投策略" title="覆盖全局策略">
               ${strategyOptions}
@@ -717,13 +785,8 @@ function renderRows() {
       const entry = state.etfs.find((item) => item.symbol === input.dataset.symbol);
       if (!entry) return;
       const value = Number(input.value);
-      if (input.dataset.field === "target_weight") {
-        entry.target_weight = clampWeight(value);
-        input.value = holdingInputValue(entry.target_weight);
-      } else {
-        entry[input.dataset.field] = Number.isFinite(value) && value >= 0 ? value : 0;
-        input.value = holdingInputValue(entry[input.dataset.field]);
-      }
+      entry[input.dataset.field] = Number.isFinite(value) && value >= 0 ? value : 0;
+      input.value = holdingInputValue(entry[input.dataset.field]);
       persistWorkspace();
       renderMetrics();
       renderRows();

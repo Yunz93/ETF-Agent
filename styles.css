@@ -4644,6 +4644,40 @@ button:active {
   box-shadow: var(--panel-shadow);
 }
 
+.target-allocation-editor {
+  margin: 12px 0;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  box-shadow: var(--panel-shadow);
+}
+
+.target-allocation-heading,
+.target-allocation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.target-allocation-heading { justify-content: space-between; }
+.target-allocation-heading h4,
+.target-allocation-heading p { margin: 0; }
+.target-allocation-heading p { margin-top: 4px; }
+.target-allocation-heading > strong { color: var(--accent); }
+.target-allocation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+.target-allocation-grid label { display: grid; gap: 6px; min-width: 0; }
+.target-allocation-grid label > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.target-allocation-grid small { color: var(--muted); }
+.target-allocation-input { display: flex; align-items: center; gap: 6px; }
+.target-allocation-input input { width: 100%; min-width: 0; }
+.target-allocation-actions [data-target-status] { flex: 1 1 100%; margin: 0; }
+
 .table-wrap {
   border: 0;
   border-radius: var(--radius-lg);
