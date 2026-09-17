@@ -80,6 +80,8 @@ export function confirmDraftIntoLedger({
       note != null
         ? String(note)
         : draft.note || (side === "sell" ? `卖出纪律 ${draft.period}` : `执行清单 ${draft.period}`),
+    channel: "exchange",
+    otc_schedule_id: null,
   };
 
   let nextBuys = buys || [];

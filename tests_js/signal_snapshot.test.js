@@ -93,7 +93,7 @@ test("workspace v9 defaults and stale pending without snapshot", () => {
   const plan = normalizePlan({});
   assert.equal(plan.execution_policy.premium_block_pct, 5);
   assert.deepEqual(plan.signal_snapshots, {});
-  assert.equal(WORKSPACE_VERSION, 9);
+  assert.equal(WORKSPACE_VERSION, 10);
   const drafts = normalizeExecutionDrafts([
     {
       id: "draft_old",
