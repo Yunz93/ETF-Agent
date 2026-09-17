@@ -270,6 +270,7 @@ export function buildTradePlan({
       sentimentByMarket,
       analysisRegistry,
       cashReserve: Number(plan.cash_reserve?.balance) || 0,
+      strategyFrozenBySymbol,
     });
   }
 
@@ -386,8 +387,20 @@ export function buildTradePlan({
     quotes,
   });
 
+  // Strategy facts follow the same monthly snapshot as buys; positions and executable quotes stay live.
+  const sellHoldings = projectedHoldings
+    .map((holding) => {
+      const frozen = strategyFrozenBySymbol?.[holding.symbol];
+      if (!frozen) return holding;
+      return { ...holding,
+        pePct: frozen.analysis_usable === false ? null : frozen.pe_pct,
+        grade: frozen.analysis_usable === false ? null : frozen.grade,
+        assetClass: frozen.asset_class || holding.assetClass,
+        analyzed: frozen.analysis_usable !== false,
+      };
+    });
   const sellSuggestions = buildRebalanceSellSuggestions({
-    holdings: projectedHoldings,
+    holdings: sellHoldings,
     quotes,
     plan,
     now,
@@ -395,7 +408,7 @@ export function buildTradePlan({
     absoluteTargetsBySymbol: Object.fromEntries(
       (holdings || []).map((h) => [h.symbol, absoluteTargetAmount(plan, h.targetWeight)]),
     ),
-  });
+  }).filter((row) => !strategyFrozenBySymbol || strategyFrozenBySymbol[row.symbol]);
 
   const sellDrafts = [];
   for (const row of sellSuggestions) {
@@ -403,8 +416,9 @@ export function buildTradePlan({
     if (keptIds.has(id)) continue;
     const holding = (holdings || []).find((h) => h.symbol === row.symbol) || {};
     const quote = quotes?.[row.symbol] || null;
-    const analysisUsable = Boolean(holding.analyzed);
-    const strategyId = plan.strategy_overrides?.[row.symbol] || plan.strategy || "valuation";
+    const frozen = strategyFrozenBySymbol?.[row.symbol];
+    const analysisUsable = frozen ? frozen.analysis_usable !== false : Boolean(holding.analyzed);
+    const strategyId = frozen?.strategy || plan.strategy_overrides?.[row.symbol] || plan.strategy || "valuation";
     const policy = evaluateExecutionPolicy({
       side: "sell",
       phase: resolvedPhase,
@@ -488,6 +502,7 @@ export function buildTradePlan({
   return {
     buyDrafts,
     sellDrafts,
+    sellSuggestions,
     blockedDrafts,
     projectedHoldings,
     conflicts,

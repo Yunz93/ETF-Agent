@@ -126,7 +126,7 @@ ETF_ANALYSIS_REGISTRY = {
         "index_name": "纳斯达克100",
         "index_full_name": "纳斯达克100",
         "danjuan_code": "NDX",
-        "etf_name": "纳指100ETF博时",
+        "etf_name": "纳指100ETF国泰",
         "history_source": "tencent",
         "history_symbol": "us.NDX",
     },

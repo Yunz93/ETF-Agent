@@ -101,6 +101,7 @@ test("allocation preserves budget and leaves cash when the pool is expensive", (
 test("allocation keeps all cash when every holding is paused", () => {
   const result = allocatePoolBudget({
     budget: 2000,
+    strategyOverrides: { "512890": "grade" },
     holdings: [
       { symbol: "510300", targetWeight: 50, pePct: 0.9 },
       { symbol: "512890", targetWeight: 50, grade: "E" },
@@ -303,8 +304,9 @@ test("dividend valuation mixes PE with spread percentile", () => {
     assetClass: "dividend",
     spreadPct: 0.8,
   });
-  assert.equal(spreadOnly.mult, 1.5);
-  assert.match(spreadOnly.hint, /混合/);
+  assert.equal(spreadOnly.mult, 1);
+  assert.match(spreadOnly.hint, /无法判断估值/);
+  assert.doesNotMatch(spreadOnly.hint, /PE 分位≤/);
 });
 
 test("equity_growth uses flat 1x with extreme 0.5x protection at ≥95%", () => {

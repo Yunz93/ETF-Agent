@@ -218,6 +218,7 @@ export function allocatePoolBudget({
   goldMacro = null,
   cashReserve = 0,
   buildTargetAmount = null,
+  strategyFrozenBySymbol = null,
 } = {}) {
   const totalBudget = Number(budget);
   const strategyId = normalizeStrategyId(strategy);
@@ -239,6 +240,13 @@ export function allocatePoolBudget({
   }
 
   function rowMultiplier(item, fallbackStrategy) {
+    const frozen = strategyFrozenBySymbol?.[item.symbol];
+    if (strategyFrozenBySymbol && !frozen) return { mult: 0, baseMult: 0, sentimentMult: 1,
+      band: "本期快照未包含", hint: "请重新评估本期策略后再加入执行", strategyId: fallbackStrategy, frozen: true };
+    if (frozen && frozen.effective_mult != null && Number.isFinite(Number(frozen.effective_mult))) {
+      return { mult: frozen.effective_mult, baseMult: frozen.base_mult, sentimentMult: frozen.sentiment_mult,
+        band: frozen.band, hint: "本期冻结信号；金额按当前剩余目标和资金核对", strategyId: frozen.strategy, frozen: true };
+    }
     const { id, overridden } = resolveRowStrategy(item);
     const grid = dcaMultiplier({
       strategy: overridden ? id : fallbackStrategy,
@@ -257,6 +265,8 @@ export function allocatePoolBudget({
   }
 
   function withSentiment(item, grid) {
+    if (grid.frozen) return grid;
+    if (item.analyzed === false) return { ...grid, mult: Math.min(1, grid.mult), baseMult: Math.min(1, grid.mult), sentimentMult: 1 };
     const rowStrategyId = grid.strategyId || strategyId;
     const sentCfg = config.sentiment;
     const allowed =
@@ -320,6 +330,7 @@ export function allocatePoolBudget({
 
   function positionBuyRoom(item, targetWeight, actualWeight) {
     const maxWeight = Math.min(100, Math.max(0, targetWeight + POSITION_TOLERANCE_PP));
+    if (maxWeight >= 100) return Infinity;
     if (actualWeight != null && actualWeight >= maxWeight) return 0;
     const currentValue = Number(item.marketValue);
     if (!(portfolioValue > 0) || !Number.isFinite(currentValue) || maxWeight >= 100) {
@@ -548,21 +559,21 @@ export function allocatePoolBudget({
       const currentValue = Math.max(0, Number(item.marketValue) || 0);
       const actual = portfolioValue > 0 ? currentValue / portfolioValue * 100 : 0;
       const gap = Math.max(0, postContributionValue * target / 100 - currentValue);
-      const room = Math.floor(gap);
+      const grid = withSentiment(item, rowMultiplier(item, strategyId));
+      const room = Math.floor(gap * Math.max(0, Math.min(1, grid.mult)));
       return {
         symbol: item.symbol,
         name: item.name || item.symbol,
         targetWeight: target,
         actualWeight: actual,
         analyzed: item.analyzed !== false,
-        mult: 1,
-        baseMult: 1,
-        sentimentMult: 1,
-        sentiment: null,
-        band: room > 0 ? "现金流补缺" : "已达目标",
-        hint: room > 0 ? `计入本期预算后，目标金额仍差 ¥${room.toLocaleString("zh-CN")}` : "投入后仍无金额缺口，本期不新增",
+        ...grid,
+        baseMult: grid.baseMult ?? grid.mult,
+        sentimentMult: grid.sentimentMult ?? 1,
+        band: grid.mult <= 0 ? grid.band : room > 0 ? `${grid.band} · 现金流补缺` : "已达目标",
+        hint: grid.mult <= 0 ? grid.hint : room > 0 ? `计入本期预算后，金额缺口 ¥${Math.floor(gap).toLocaleString("zh-CN")}，按策略限制投入 ¥${room.toLocaleString("zh-CN")}` : "投入后仍无金额缺口，本期不新增",
         reb: 1,
-        score: gap,
+        score: gap * Math.max(0, grid.mult),
         positionBlocked: room <= 0,
         maxAmount: room,
       };

@@ -4,7 +4,7 @@
 覆盖：
 - 技术指标数学（SMA / 年线乖离 / 布林 / RSI / KDJ / 分位）
 - 评分分项与档位映射
-- 股债利差历史序列的回推口径与前向填充
+- 股债利差历史序列的发布时间契约与前向填充
 - 历史同评分回测
 - 完整 analyze_dividend_data 组装与小红书笔记文本
 """
@@ -182,18 +182,16 @@ class ScoringTests(unittest.TestCase):
 
 
 class SpreadSeriesTests(unittest.TestCase):
-    def test_forward_fill_and_payout_approximation(self):
+    def test_current_snapshot_cannot_reconstruct_historical_dividends(self):
         index_rows = [
             {"date": "2024-01-01", "close": 100, "high": 101, "low": 99, "pe": 10.0},
             {"date": "2024-01-02", "close": 100, "high": 101, "low": 99, "pe": 8.0},
             {"date": "2024-01-03", "close": 100, "high": 101, "low": 99, "pe": None},
         ]
         treasury = [{"date": "2024-01-01", "yield10y": 2.0}]
-        # 当前股息率 5%、当前 PE 10 → 派息水平 50；PE=8 时 dy=6.25%
+        # 当前快照不能生成任何历史分红事实。
         series = dividend.build_spread_series(index_rows, 0.05, 10.0, treasury)
-        self.assertAlmostEqual(series[0], 5.0 - 2.0)
-        self.assertAlmostEqual(series[1], 50 / 8 - 2.0)
-        self.assertIsNone(series[2])
+        self.assertEqual(series, [None, None, None])
 
     def test_missing_inputs_return_empty(self):
         self.assertEqual(dividend.build_spread_series([], 0.05, 10, []), [])
@@ -359,13 +357,14 @@ class AnalyzeTests(unittest.TestCase):
 
     def test_analyze_degrades_without_valuation_and_bond(self):
         payload = dividend.analyze_dividend_data(self.index_rows, {}, [], None, self.settings)
-        # 蛋卷缺失时用中证官网 PE 序列自算分位；国债缺失时利差为空但评分仍有效
+        # PE 保留为描述信息；红利模型缺少股息/国债必需因素时不合成总分
         self.assertIsNone(payload["spread"]["value"])
         self.assertIsNotNone(payload["valuation"]["pe"])
         self.assertIsNotNone(payload["valuation"]["pe_percentile_10y"])
-        self.assertIsNotNone(payload["score"]["total"])
+        self.assertIsNone(payload["score"]["total"])
+        self.assertIn("spread", payload["score"]["missing_required"])
         self.assertIn("今日盘面：", payload["note_text"])
-        self.assertIn("回推派息水平", payload["spread"]["note"])
+        self.assertIn("不回推历史", payload["spread"]["note"])
 
     def test_a500_csindex_pe_rows_yield_percentile(self):
         """563360 danjuan_code 为空时，csindex 风格含 pe 的 index_rows 仍能算近十年分位。"""
@@ -647,7 +646,7 @@ class AnalysisRoutingTests(unittest.TestCase):
         self.assertEqual(dividend._market_prefixed_index("399006"), "sz399006")
         self.assertEqual(dividend._market_prefixed_index("000300"), "sh000300")
 
-    def test_tencent_index_pe_backfill_not_marked_degraded(self):
+    def test_tencent_history_does_not_backfill_current_pe(self):
         """有蛋卷点位估值时，腾讯日线无每日 PE 只记 index.note，不进 errors（避免「部分数据降级」）。"""
         dividend.clear_dividend_cache()
         rows = [
@@ -683,21 +682,22 @@ class AnalysisRoutingTests(unittest.TestCase):
             payload = dividend.get_dividend_dashboard(refresh=True, symbol="513180")
         self.assertNotIn("index_pe", payload.get("errors") or {})
         self.assertIn("无每日 PE", (payload.get("index") or {}).get("note") or "")
-        self.assertAlmostEqual(rows[-1]["pe"], 22.0, places=4)
+        self.assertIsNone(rows[-1]["pe"])
+        self.assertEqual(payload["backtest"]["status"], "insufficient_point_in_time_history")
 
-    def test_fill_missing_pe_scales_with_price(self):
+    def test_fill_missing_pe_preserves_missing_history(self):
         rows = [
             {"date": "2024-01-02", "close": 1.0, "pe": None},
             {"date": "2024-01-03", "close": 1.1, "pe": 12.0},
             {"date": "2024-01-04", "close": 2.0, "pe": None},
         ]
         dividend.fill_missing_pe(rows, 44.5)
-        # 锚点是最后一根收盘（2.0）：pe_t = 44.5 × close_t / 2.0
-        self.assertAlmostEqual(rows[0]["pe"], 44.5 * 1.0 / 2.0, places=4)
+        # 缺失历史 PE 不用当前快照推算。
+        self.assertIsNone(rows[0]["pe"])
         # 已有真实 PE 的行不覆盖
         self.assertEqual(rows[1]["pe"], 12.0)
-        # 最新行等于当前 PE
-        self.assertAlmostEqual(rows[2]["pe"], 44.5, places=4)
+        # 最新历史行也不插入日期未知的当前快照。
+        self.assertIsNone(rows[2]["pe"])
 
     def test_fill_missing_pe_guards(self):
         self.assertEqual(dividend.fill_missing_pe([], 10), [])

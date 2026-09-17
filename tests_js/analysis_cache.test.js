@@ -9,6 +9,13 @@ import {
 } from "../js/analysis-cache.js";
 import { state } from "../js/state.js";
 
+function analysisFields() {
+  return { asset_class: "equity_core", updated_at: new Date().toISOString(),
+    valuation: { pe: 12, pe_percentile_10y: 0.5 },
+    technicals: { bias_pct: 0, rsi14: 50 }, spread: { value: 2 },
+    score: { status: "diagnostic_only", grade: "C", total: 60, missing_required: [] } };
+}
+
 test("analysisCacheKey falls back for empty symbol", () => {
   assert.equal(analysisCacheKey(""), "__default__");
   assert.equal(analysisCacheKey("512890"), "512890");
@@ -18,10 +25,10 @@ test("isAnalysisFresh respects TTL and errors", () => {
   assert.equal(isAnalysisFresh(null), false);
   assert.equal(isAnalysisFresh({ error: "x" }), false);
   assert.equal(isAnalysisFresh({ supported: false }), false);
-  assert.equal(isAnalysisFresh({ supported: true, updated_at: new Date().toISOString() }), true);
+  assert.equal(isAnalysisFresh({ supported: true, ...analysisFields(), updated_at: new Date().toISOString() }), true);
   assert.equal(
     isAnalysisFresh({
-      supported: true,
+      supported: true, ...analysisFields(),
       updated_at: new Date(Date.now() - 31 * 60_000).toISOString(),
     }),
     false,
@@ -31,7 +38,7 @@ test("isAnalysisFresh respects TTL and errors", () => {
 test("fetchAnalysis skips network when full cache is fresh", async () => {
   const key = analysisCacheKey("512890");
   state.analysisCache[key] = {
-    supported: true,
+    supported: true, ...analysisFields(),
     symbol: "512890",
     updated_at: new Date().toISOString(),
     score: { grade: "B" },
@@ -40,7 +47,7 @@ test("fetchAnalysis skips network when full cache is fresh", async () => {
   let called = 0;
   globalThis.fetch = async () => {
     called += 1;
-    return { json: async () => ({ supported: true }) };
+    return { json: async () => ({ supported: true, ...analysisFields() }) };
   };
   try {
     const payload = await fetchAnalysis("512890");
@@ -55,7 +62,7 @@ test("fetchAnalysis skips network when full cache is fresh", async () => {
 test("fetchAnalysis refetches when only lite cache exists", async () => {
   const key = analysisCacheKey("510300");
   state.analysisCache[key] = {
-    supported: true,
+    supported: true, ...analysisFields(),
     lite: true,
     symbol: "510300",
     updated_at: new Date().toISOString(),
@@ -69,7 +76,7 @@ test("fetchAnalysis refetches when only lite cache exists", async () => {
     assert.doesNotMatch(String(url), /lite=1/);
     return {
       json: async () => ({
-        supported: true,
+        supported: true, ...analysisFields(),
         symbol: "510300",
         updated_at: new Date().toISOString(),
         score: { grade: "A" },

@@ -61,7 +61,7 @@ export const ETF_QUOTE_TTL_MS = 60_000;
 export const ANALYSIS_CACHE_TTL_MS = 30 * 60_000;
 
 export const GRADE_GUIDE =
-  "A 很有吸引力 · B 偏有利 · C 中性 · D 偏弱 · E 很弱";
+  "A 指标偏低位 · B 较低位 · C 中性 · D 较高位 · E 偏高位；不代表未来收益";
 
 /** 定投池内 ETF 均可分析；无指数映射时后端走 ETF 行情兜底。 */
 export function analysisSupported(appConfig, symbol) {

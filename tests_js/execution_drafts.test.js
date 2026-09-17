@@ -28,6 +28,13 @@ function liveQuote(price, extra = {}) {
 }
 
 
+function analysisFields() {
+  return { asset_class: "equity_core", updated_at: "2026-07-15T10:00:00",
+    valuation: { pe: 12, pe_percentile_10y: 0.5 },
+    technicals: { bias_pct: 0, rsi14: 50 }, spread: { value: 2 },
+    score: { status: "diagnostic_only", grade: "C", total: 60, missing_required: [] } };
+}
+
 test("execution draft normalization pads symbols and drops invalid rows", () => {
   const drafts = normalizeExecutionDrafts([
     {
@@ -67,8 +74,8 @@ test("buildExecutionDraftsFromAllocation creates lot-sized pending drafts", () =
     "510300": liveQuote(4.0),
   };
   state.analysisCache = {
-    "512890": { supported: true, valuation: { pe_percentile_10y: 0.15 }, score: { grade: "A" }, asset_class: "dividend" },
-    "510300": { supported: true, valuation: { pe_percentile_10y: 0.55 }, score: { grade: "C" }, asset_class: "equity_core" },
+    "512890": { supported: true, ...analysisFields(), valuation: { pe: 12, pe_percentile_10y: 0.15 }, score: { grade: "A" }, asset_class: "dividend" },
+    "510300": { supported: true, ...analysisFields(), valuation: { pe: 12, pe_percentile_10y: 0.55 }, score: { grade: "C" }, asset_class: "equity_core" },
   };
   state.plan = {
     name: "测试",
@@ -121,14 +128,14 @@ test("buildExecutionDraftsFromAllocation includes sell-side drafts when overweig
   // 512890 MV 40000 / total 100000 = 40% vs target 20%, pe rich
   state.analysisCache = {
     "512890": {
-      supported: true,
-      valuation: { pe_percentile_10y: 0.92 },
+      supported: true, ...analysisFields(),
+      valuation: { pe: 12, pe_percentile_10y: 0.92 },
       score: { grade: "E" },
       asset_class: "dividend",
     },
     "510300": {
-      supported: true,
-      valuation: { pe_percentile_10y: 0.4 },
+      supported: true, ...analysisFields(),
+      valuation: { pe: 12, pe_percentile_10y: 0.4 },
       score: { grade: "C" },
       asset_class: "equity_core",
     },
@@ -168,14 +175,14 @@ test("sellSuggestionForSymbol mirrors checklist sell advice for the ETF detail",
   };
   state.analysisCache = {
     "512890": {
-      supported: true,
-      valuation: { pe_percentile_10y: 0.92 },
+      supported: true, ...analysisFields(),
+      valuation: { pe: 12, pe_percentile_10y: 0.92 },
       score: { grade: "E" },
       asset_class: "dividend",
     },
     "510300": {
-      supported: true,
-      valuation: { pe_percentile_10y: 0.4 },
+      supported: true, ...analysisFields(),
+      valuation: { pe: 12, pe_percentile_10y: 0.4 },
       score: { grade: "C" },
       asset_class: "equity_core",
     },
@@ -217,7 +224,7 @@ test("updateExecutionDraft preserves confirmed rows when regenerating", () => {
   state.etfs = [{ symbol: "512890", name: "红利低波ETF", shares: 0, target_weight: 100 }];
   state.quotesBySymbol = { "512890": liveQuote(1.0) };
   state.analysisCache = {
-    "512890": { supported: true, valuation: { pe_percentile_10y: 0.15 }, score: { grade: "A" } },
+    "512890": { supported: true, ...analysisFields(), valuation: { pe: 12, pe_percentile_10y: 0.15 }, score: { grade: "A" } },
   };
   state.plan = {
     amount: 3000,

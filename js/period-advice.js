@@ -21,11 +21,13 @@ import {
   buildPoolHoldingsForAllocation,
   prepareHoldingsForAllocation,
 } from "./pool-alloc.js";
-import { planExecutionContext } from "./decision-support.js";
+import { planExecutionContext, planPeriod } from "./decision-support.js";
 import {
   analysisRegistryFromConfig,
   sentimentByMarketFromState,
 } from "./market-sentiment.js";
+import { getCurrentSignalSnapshot } from "./signal-snapshot.js";
+import { evaluateExecutionPolicy } from "./execution-policy.js";
 import { goldMacroFromState } from "./gold-macro.js";
 
 export const STANCE = Object.freeze({
@@ -65,9 +67,16 @@ export function getPeriodAdvice({
   holdings = null,
   sentimentByMarket = null,
   goldMacro = null,
+  now = new Date(),
 } = {}) {
-  const activePlan = plan || state.plan || {};
-  const { strategy, overridden } = resolveSymbolStrategy(activePlan, symbol);
+  const livePlan = plan || state.plan || {};
+  const snapshot = getCurrentSignalSnapshot(livePlan, planPeriod(livePlan, now).start);
+  const frozen = snapshot?.schema_version === 2 ? snapshot : null;
+  const activePlan = frozen ? { ...livePlan, strategy: frozen.strategy, strategy_config: frozen.strategy_config } : livePlan;
+  const frozenRow = frozen?.holdings?.[symbol];
+  const resolved = resolveSymbolStrategy(activePlan, symbol);
+  const strategy = frozenRow?.strategy || resolved.strategy;
+  const overridden = strategy !== normalizeStrategyId(activePlan.strategy) || resolved.overridden;
   const strategyName = overridden
     ? `${strategyLabel(strategy)}(指定)`
     : strategyLabel(strategy);
@@ -75,16 +84,16 @@ export function getPeriodAdvice({
   const strategyOverrides = activePlan.strategy_overrides;
   const rawPoolHoldings =
     holdings ||
-    buildPoolHoldingsForAllocation({ preferLive: preferLive || null });
+    buildPoolHoldingsForAllocation({ preferLive: preferLive || null, now });
   const poolHoldings = prepareHoldingsForAllocation(rawPoolHoldings);
   const holding = poolHoldings.find((item) => item.symbol === symbol) || null;
-  const execution = planExecutionContext({ plan: activePlan, holdings: poolHoldings });
+  const execution = planExecutionContext({ plan: activePlan, holdings: poolHoldings, now });
   const budget = execution.budget;
   const markets = sentimentByMarket || sentimentByMarketFromState();
   const macro = goldMacro || holding?.goldMacro || goldMacroFromState();
   const registry = analysisRegistryFromConfig();
 
-  const grid = dcaMultiplier({
+  const liveGrid = dcaMultiplier({
     strategy,
     strategyConfig,
     pePct: holding?.pePct,
@@ -95,20 +104,26 @@ export function getPeriodAdvice({
     goldMacro: macro,
   });
 
+  const grid = frozenRow ? { mult: frozenRow.base_mult, band: frozenRow.band,
+    hint: "本期冻结信号；金额按当前剩余目标和资金核对" } : liveGrid;
+  if (!frozenRow && holding?.analyzed === false) grid.mult = Math.min(1, grid.mult);
+
   const market = holding
     ? sentimentMarketForHolding(holding, strategyConfig.sentiment, registry)
     : null;
   const sentSnap = market && markets ? markets[market] : null;
   const sentAllowed =
+    (frozenRow ? frozenRow.analysis_usable !== false : holding?.analyzed !== false) &&
     strategyConfig.sentiment.enabled &&
     strategyConfig.sentiment.mode === "overlay" &&
     strategyConfig.sentiment.apply_to.includes(strategy);
-  const sent =
+  const sent = frozenRow ? { mult: frozenRow.sentiment_mult ?? 1, score: frozenRow.sentiment_score,
+    zone: "frozen", band: "本期冻结", hint: "" } :
     sentAllowed && grid.mult > 0
       ? sentimentMultiplier(sentSnap, strategyConfig.sentiment)
       : { mult: 1, zone: "unknown", band: "未启用", hint: "", score: null };
-  const effectiveMult =
-    grid.mult <= 0 ? 0 : Math.round(grid.mult * (sentAllowed ? sent.mult : 1) * 1000) / 1000;
+  const effectiveMult = frozenRow ? frozenRow.effective_mult :
+    grid.mult <= 0 ? 0 : Math.round(Math.min(1.8, grid.mult * (sentAllowed ? sent.mult : 1)) * 1000) / 1000;
 
   const pool = allocatePoolBudget({
     budget,
@@ -122,6 +137,7 @@ export function getPeriodAdvice({
     analysisRegistry: registry,
     goldMacro: macro,
     cashReserve: Number(activePlan.cash_reserve?.balance) || 0,
+    strategyFrozenBySymbol: frozen?.holdings,
   });
   const mine = symbol ? allocationForSymbol(pool, symbol) : null;
   const amount = mine?.amount ?? 0;
@@ -263,6 +279,19 @@ export function getPeriodAdvice({
       }
     : null;
 
+  const liveQuote = preferLive?.symbol === symbol ? preferLive.etf : null;
+  const readiness = evaluateExecutionPolicy({
+    quote: state.quotesBySymbol?.[symbol] || liveQuote || null,
+    side: "buy", phase: execution.phase, strategy,
+    analysisUsable: frozenRow ? frozenRow.analysis_usable !== false : Boolean(holding?.analyzed),
+    indexCode: holding?.indexCode || frozenRow?.index_code || "",
+    now, executionPolicy: livePlan.execution_policy,
+  });
+  if (stance === STANCE.INVEST && ["blocked", "preview"].includes(readiness.status)) {
+    bullets.push(`执行待核对：${readiness.reasons.join("；")}`);
+  }
+  if (frozenRow) bullets.push("本期信号已冻结；行情与交易限制按当前数据复核");
+
   return {
     symbol,
     strategy,
@@ -285,8 +314,8 @@ export function getPeriodAdvice({
       : null,
     band: grid.band,
     hint: grid.hint,
-    grade: holding?.grade || null,
-    pePct: holding?.pePct ?? null,
+    grade: frozenRow?.grade ?? holding?.grade ?? null,
+    pePct: frozenRow?.pe_pct ?? holding?.pePct ?? null,
     pool,
     execution,
     mine,
@@ -294,6 +323,8 @@ export function getPeriodAdvice({
     bullets,
     multBreakdown,
     position,
-    canAdd: stance === STANCE.INVEST,
+    readiness,
+    signalSnapshotId: frozen?.id || null,
+    canAdd: stance === STANCE.INVEST && ["ready", "warning"].includes(readiness.status),
   };
 }

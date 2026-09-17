@@ -1,3 +1,5 @@
+import { lookThroughPortfolio, portfolioStressScenarios } from "./portfolio-risk.js";
+
 /** 投资目标和组合结构诊断。所有收益目标与压力情景均不作为收益预测。 */
 
 function optionalNumber(value, min, max) {
@@ -11,6 +13,9 @@ export function normalizeInvestmentGoal(value) {
   const source = value && typeof value === "object" ? value : {};
   return {
     currency: "CNY",
+    account_cash: optionalNumber(source.account_cash, 0, 1e12),
+    account_debt: optionalNumber(source.account_debt, 0, 1e12),
+    near_term_cash_need: optionalNumber(source.near_term_cash_need, 0, 1e12),
     annual_return_target_pct: optionalNumber(source.annual_return_target_pct, 0, 100),
     horizon_years: optionalNumber(source.horizon_years, 1, 60),
     max_drawdown_pct: optionalNumber(source.max_drawdown_pct, 0, 100),
@@ -62,7 +67,7 @@ export function classifyExposure(entry, metadata = {}) {
 
 const STRESS_LOSSES = Object.freeze({ equity: 45, gold: 10, bond: 5, commodity: 30 });
 
-export function assessPortfolioGoal({ etfs = [], quotes = {}, registry = {}, goal = null } = {}) {
+export function assessPortfolioGoal({ etfs = [], quotes = {}, registry = {}, goal = null, plan = {}, disclosures = {}, today = new Date() } = {}) {
   const normalizedGoal = normalizeInvestmentGoal(goal);
   const rows = etfs.map((entry) => {
     const metadata = registry[entry.symbol] || {};
@@ -106,17 +111,32 @@ export function assessPortfolioGoal({ etfs = [], quotes = {}, registry = {}, goa
     if (!available || assets.some((group) => group.id === "unknown" && group[basis] > 0)) return null;
     return assets.reduce((sum, group) => sum + (group[basis] || 0) * (STRESS_LOSSES[group.id] || 0) / 100, 0);
   };
+  const scenarios = portfolioStressScenarios(rows, { currentAvailable, targetAvailable, totalValue, goal: normalizedGoal,
+    initialTargetPct: optionalNumber(plan.initial_target_pct, 0, 100) });
+  const lookthrough = lookThroughPortfolio(rows, disclosures, today);
   const currentStress = stress("current", currentAvailable);
   const targetStress = stress("target", targetAvailable);
   const warnings = [];
+  if (normalizedGoal.account_cash == null || normalizedGoal.account_debt == null) warnings.push("请填写本账户现金余额（含现金池）和负债（无负债填0），才能评估账户损失；资金基数不能代替实时余额。");
+  if (normalizedGoal.account_cash != null && normalizedGoal.account_debt != null && currentAvailable && totalValue + normalizedGoal.account_cash <= normalizedGoal.account_debt) warnings.push("本账户净资产非正，不能计算百分比压力损失，请核对负债。");
+  if (normalizedGoal.near_term_cash_need != null && normalizedGoal.account_cash != null && normalizedGoal.near_term_cash_need > normalizedGoal.account_cash) warnings.push("近期用款超过账户现金，请先核对资金安排。");
+  if (lookthrough.known != null && lookthrough.known < 99.99) warnings.push(`底层持仓披露覆盖目标组合 ${lookthrough.known.toFixed(1)}%，其余暴露未知，不能据此宣称充分分散。`);
+  const minCommission = Number(plan.trading_cost?.min_commission);
+  const feeLimit = Number(plan.trading_cost?.max_fee_ratio_pct);
+  const efficientAmount = minCommission > 0 && feeLimit > 0 ? minCommission / (feeLimit / 100) : null;
+  const smallOrders = efficientAmount && plan.amount > 0 ? rows.filter((row) => row.target > 0 && plan.amount * row.target / 100 < efficientAmount) : [];
+  if (smallOrders.length) warnings.push(`当前费用约束要求单笔约 ${Math.ceil(efficientAmount).toLocaleString("zh-CN")} 元起，${smallOrders.length} 只 ETF 按权重分配的单期额度不足。等待资金累计或减少下单次数，整手与实际费用仍以执行页为准。`);
   if (!targetAvailable && rows.length) warnings.push(`目标权重合计 ${targetSum.toFixed(1)}%，请在持仓管理中调整至 100%。`);
   if (!pricesComplete) warnings.push("部分持仓缺少有效报价，当前占比与压力损失暂不计算。");
   if (assets.some((group) => group.id === "unknown" && (group.target > 0 || group.current > 0))) {
     warnings.push("部分资产类别尚未识别，不能完整评估组合风险。");
   }
-  for (const [label, loss] of [["当前配置", currentStress], ["目标配置", targetStress]]) {
-    if (normalizedGoal.max_drawdown_pct != null && loss != null && loss > normalizedGoal.max_drawdown_pct) {
-      warnings.push(`${label}在假设情景中损失 ${loss.toFixed(1)}%，超过你填写的 ${normalizedGoal.max_drawdown_pct}% 回撤承受值。`);
+  for (const scenario of scenarios) {
+    for (const [label, loss, basis] of [
+      ["当前配置", scenario.accountCurrent ?? scenario.current, scenario.accountCurrent != null ? "账户净资产" : "ETF池，尚未计现金"],
+      ["目标配置", scenario.accountTarget ?? scenario.target, scenario.accountTarget != null ? "初期ETF投入比例，其余假设现金" : "ETF池"],
+    ]) {
+      if (normalizedGoal.max_drawdown_pct != null && loss != null && loss > normalizedGoal.max_drawdown_pct) warnings.push(`${label}在假设情景「${scenario.label}」中损失 ${loss.toFixed(1)}%，超过你填写的 ${normalizedGoal.max_drawdown_pct}% 回撤承受值（${basis}口径）。`);
     }
   }
   if (normalizedGoal.liquidity_need === "within_3_years" && assets.find((group) => group.id === "equity")?.target > 0) {
@@ -141,7 +161,7 @@ export function assessPortfolioGoal({ etfs = [], quotes = {}, registry = {}, goa
   return {
     goal: normalizedGoal, configured, rows, assets, regions, indices,
     totalValue, targetSum, pricesComplete, currentAvailable, targetAvailable,
-    currentStress, targetStress, warnings,
+    currentStress, targetStress, warnings, scenarios, lookthrough, efficientAmount,
     status: !configured ? "incomplete" : warnings.length ? "review" : "unverified",
   };
 }

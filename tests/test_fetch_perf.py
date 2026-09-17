@@ -115,7 +115,7 @@ class HistoryCacheReuseTests(unittest.TestCase):
 
     def test_etf_as_index_history_reuses_price_history_cache(self):
         points = [
-            {"date": f"2023-{min(12, 1 + i // 20):02d}-{1 + (i % 20):02d}", "close": 1.0 + i * 0.01}
+            {"date": f"2023-{min(12, 1 + i // 20):02d}-{1 + (i % 20):02d}", "close": 1.0 + i * 0.01, "high": 1.1 + i * 0.01, "low": 0.9 + i * 0.01}
             for i in range(120)
         ]
         HISTORY_CACHE["A:512890:5y"] = {

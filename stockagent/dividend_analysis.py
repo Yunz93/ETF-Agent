@@ -17,7 +17,7 @@ from .dividend_constants import (
     WEEKDAY_ZH,
 )
 from .dividend_registry import dividend_settings, valuation_framework_applicable
-from .indicators import RollingPercentile, bias_pct, bollinger, kdj, percentile_rank, rsi, sma, sma_series
+from .indicators import bias_pct, bollinger, kdj, percentile_rank, rsi, sma, sma_series
 from .symbols import as_of
 
 def clamp(value, low=0.0, high=100.0):
@@ -25,7 +25,7 @@ def clamp(value, low=0.0, high=100.0):
 
 
 def annualized_tracking_error(etf_rows, index_rows, lookback=252):
-    """同日收盘收益差的年化标准差，返回百分比。"""
+    """Legacy name: market-price return deviation volatility, not NAV tracking error."""
     etf_by_date = {row.get("date"): row.get("close") for row in etf_rows or [] if row.get("date")}
     index_by_date = {row.get("date"): row.get("close") for row in index_rows or [] if row.get("date")}
     dates = sorted(set(etf_by_date) & set(index_by_date))
@@ -36,11 +36,56 @@ def annualized_tracking_error(etf_rows, index_rows, lookback=252):
             index_return = float(index_by_date[current]) / float(index_by_date[previous]) - 1
         except (TypeError, ValueError, ZeroDivisionError):
             continue
-        differences.append(etf_return - index_return)
+        if math.isfinite(etf_return) and math.isfinite(index_return):
+            differences.append(etf_return - index_return)
     differences = differences[-lookback:]
     if len(differences) < 30:
         return None
     return round(statistics.stdev(differences) * math.sqrt(252) * 100, 3)
+
+def finite_number(value, minimum=None, maximum=None):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or (minimum is not None and number < minimum) or (maximum is not None and number > maximum):
+        return None
+    return number
+
+
+def available_on(available, date):
+    try:
+        return datetime.date.fromisoformat(str(available)) <= datetime.date.fromisoformat(str(date))
+    except ValueError:
+        return False
+
+
+def analysis_model(settings):
+    """Heuristic diagnostics, with explicit factor applicability and mandatory inputs."""
+    asset = settings.get("asset_class") or ("dividend" if settings.get("index_code") in {"H30269", "000922"} else "equity_core")
+    overseas = str(settings.get("history_symbol") or "").lower().startswith(("us", "hk")) or str(settings.get("index_code") or "").upper() in {"SPX", "SP500", "NDX", "HSI", "HSTECH"}
+    if not valuation_framework_applicable(asset):
+        return "technical", TECH_SCORE_WEIGHTS, False
+    if asset == "dividend" and not overseas:
+        return "dividend", SCORE_WEIGHTS, True
+    if asset == "equity_growth":
+        return "growth", {"valuation": 0.50, "trend": 0.30, "technical": 0.20}, False
+    return "core", {"valuation": 0.60, "trend": 0.25, "technical": 0.15}, False
+
+
+def point_in_time_valuation(row):
+    """Historical facts must carry source, verified PIT flag and availability date.
+
+    No current snapshot or reconstructed earnings can satisfy this contract.
+    An adapter may set the flag only when its publication-time semantics are verified.
+    """
+    available = str(row.get("valuation_available_at") or "")
+    date = str(row.get("date") or "")
+    return bool(row.get("valuation_point_in_time") is True and row.get("valuation_source")
+                and available_on(available, date))
+
 
 def spread_anchor_score(spread):
     """股债利差绝对水平锚点分（利差越厚越值得买）。"""
@@ -147,40 +192,45 @@ def percentile_label(percentile):
     return "历史低位"
 
 def build_spread_series(index_rows, dividend_yield, current_pe, treasury_rows):
-    """用「当前股息率×当前PE」近似恒定派息水平，回推历史股息率与股债利差。
+    """Use published historical dividend yields only; current arguments are compatibility-only.
 
-    dy_t ≈ (dy_now × pe_now) / pe_t，利差 = dy_t - 十年国债（按日期前向填充）。
-    该口径用于历史分位与回测，非精确历史股息率。
+    Historical dividend_yield is a fraction, treasury yield10y is percentage points.
+    Treasury observations also require source/available_at evidence; no future release is used.
     """
-    if not dividend_yield or not current_pe or not treasury_rows:
+    if not treasury_rows:
         return []
-    payout = dividend_yield * 100 * current_pe
-    yields = {row["date"]: row["yield10y"] for row in treasury_rows}
-    sorted_yield_dates = sorted(yields)
     series = []
-    yield_index = 0
-    last_yield = None
+    yields = sorted(
+        (bond for bond in treasury_rows if bond.get("source")
+         and available_on(bond.get("available_at"), "9999-12-31")
+         and available_on(bond.get("date"), "9999-12-31")
+         and finite_number(bond.get("yield10y")) is not None),
+        key=lambda bond: max(bond["date"], bond["available_at"]),
+    )
+    pointer = 0
+    latest = None
     for row in index_rows:
-        pe = row.get("pe")
-        date = row["date"]
-        while yield_index < len(sorted_yield_dates) and sorted_yield_dates[yield_index] <= date:
-            last_yield = yields[sorted_yield_dates[yield_index]]
-            yield_index += 1
-        if pe is None or not pe or last_yield is None:
+        while pointer < len(yields) and max(yields[pointer]["date"], yields[pointer]["available_at"]) <= row["date"]:
+            bond = yields[pointer]
+            if latest is None or bond["date"] >= latest["date"]:
+                latest = bond
+            pointer += 1
+        historical_yield = finite_number(row.get("dividend_yield"), minimum=0)
+        if not point_in_time_valuation(row) or historical_yield is None or latest is None:
             series.append(None)
-            continue
-        series.append(payout / pe - last_yield)
+        else:
+            series.append(historical_yield * 100 - finite_number(latest["yield10y"]))
     return series
 
-def compute_score_series(index_rows, spread_series, framework="valuation"):
+def compute_score_series(index_rows, spread_series, framework="valuation", weights=None):
     """逐日复算综合评分（分位只用截至当日的历史），用于回测。"""
     closes = [row["close"] for row in index_rows]
     highs = [row["high"] for row in index_rows]
     lows = [row["low"] for row in index_rows]
-    pes = [row.get("pe") for row in index_rows]
+    pes = [finite_number(row.get("pe"), minimum=0.000001) if point_in_time_valuation(row) else None for row in index_rows]
     n = len(closes)
     technical_only = framework == "technical"
-    weights = TECH_SCORE_WEIGHTS if technical_only else SCORE_WEIGHTS
+    weights = weights or (TECH_SCORE_WEIGHTS if technical_only else SCORE_WEIGHTS)
 
     ma250 = sma_series(closes, 250)
 
@@ -206,6 +256,9 @@ def compute_score_series(index_rows, spread_series, framework="valuation"):
     k_values = [None] * n
     k = d = 50.0
     for i in range(8, n):
+        if any(row.get("ohlc_complete") is False for row in index_rows[i - 8:i + 1]):
+            k = d = 50.0
+            continue
         window_high = max(highs[i - 8 : i + 1])
         window_low = min(lows[i - 8 : i + 1])
         span = window_high - window_low
@@ -214,19 +267,16 @@ def compute_score_series(index_rows, spread_series, framework="valuation"):
         d = (d * 2 + k) / 3
         k_values[i] = k
 
-    pe_rank = RollingPercentile()
-    spread_rank = RollingPercentile()
     scores = [None] * n
     min_rank_samples = 250
     for i in range(n):
         pe = pes[i]
         spread = spread_series[i] if i < len(spread_series) else None
-        pe_pct = pe_rank.rank(pe) if len(pe_rank) >= min_rank_samples else None
-        spread_pct = spread_rank.rank(spread) if len(spread_rank) >= min_rank_samples else None
-        if pe is not None:
-            pe_rank.add(pe)
-        if spread is not None:
-            spread_rank.add(spread)
+        start = max(0, i + 1 - TEN_YEARS_TRADING_DAYS)
+        pe_window = [value for value in pes[start:i + 1] if value is not None]
+        spread_window = [value for value in spread_series[start:i + 1] if value is not None]
+        pe_pct = percentile_rank(pe_window, pe) if len(pe_window) >= min_rank_samples else None
+        spread_pct = percentile_rank(spread_window, spread) if len(spread_window) >= min_rank_samples else None
 
         bias = None
         if ma250[i]:
@@ -242,13 +292,7 @@ def compute_score_series(index_rows, spread_series, framework="valuation"):
                 {"k": k_values[i]} if k_values[i] is not None else None,
             ),
         }
-        if technical_only:
-            if components["trend"] is None and components["technical"] is None:
-                continue
-        elif components["trend"] is None or (
-            components["spread"] is None and components["valuation"] is None
-        ):
-            # 估值框架：至少要有趋势 + 一个估值维度
+        if any(components.get(key) is None for key in weights):
             continue
         scores[i] = combine_score(components, weights=weights)
     return scores
@@ -287,13 +331,7 @@ def backtest_forward_returns(index_rows, scores, target_score, horizon=BACKTEST_
 def win_rate_label(win_rate_pct):
     if win_rate_pct is None:
         return "样本不足"
-    if win_rate_pct >= 80:
-        return "正收益概率很高"
-    if win_rate_pct >= 65:
-        return "正收益概率较高"
-    if win_rate_pct >= 50:
-        return "胜率一般"
-    return "胜率偏低"
+    return f"历史样本正收益占比 {win_rate_pct:.1f}%（不代表未来概率）"
 
 def build_commentary(score_block, technicals, spread_block, valuation_block):
     """规则化「今日盘面」：位置 → 支撑压力 → 结论动作。"""
@@ -305,7 +343,7 @@ def build_commentary(score_block, technicals, spread_block, valuation_block):
     grade = score_block.get("grade")
 
     if position == "below_lower":
-        lines.append("指数已跌破布林下轨，短线进入超卖区域，恐慌盘释放中。")
+        lines.append("指数已跌破布林下轨，短线指标进入超卖区域；价格下跌原因需另行核实。")
     elif position == "lower_half":
         lines.append("目前的形态属于“上有压力，下有支撑”的震荡磨底阶段：上方是布林中轨压力，下方有下轨托底。")
     elif position == "upper_half":
@@ -315,18 +353,18 @@ def build_commentary(score_block, technicals, spread_block, valuation_block):
 
     if bias is not None:
         if bias <= -5:
-            lines.append(f"当前价格显著低于年线（乖离 {bias:+.2f}%），长期买点信号增强。")
+            lines.append(f"当前价格显著低于年线（乖离 {bias:+.2f}%），仅表明价格低于长期均线，不足以判断买点。")
         elif bias < 0:
-            lines.append(f"价格回落到年线附近（乖离 {bias:+.2f}%），回调释放了风险，并没有破坏长期上涨逻辑，反而提供了更好的介入性价比。")
+            lines.append(f"价格回落到年线附近（乖离 {bias:+.2f}%），是否改善投资价值仍需核实盈利和估值。")
         elif bias <= 5:
-            lines.append(f"价格站在年线上方（乖离 {bias:+.2f}%），趋势健康但已不算便宜。")
+            lines.append(f"价格站在年线上方（乖离 {bias:+.2f}%），该指标不直接说明估值贵贱。")
         else:
             lines.append(f"价格大幅偏离年线（乖离 {bias:+.2f}%），注意均值回归风险。")
 
     if rsi_value is not None and 30 <= rsi_value <= 70:
-        lines.append(f"RSI {rsi_value:.0f}、KDJ 处于{technicals.get('kdj_label', '中性区间')}，没有超卖，短期大概率继续震荡，不会立刻大涨。")
+        lines.append(f"RSI {rsi_value:.0f}、KDJ 处于{technicals.get('kdj_label', '中性区间')}，处于常用中性区间，不能据此预测短期涨跌。")
     elif rsi_value is not None and rsi_value < 30:
-        lines.append(f"RSI 已到 {rsi_value:.0f} 的超卖区，短线随时可能出现修复反弹。")
+        lines.append(f"RSI 已到 {rsi_value:.0f} 的超卖区，超卖状态可能持续，不能据此确认反弹。")
     elif rsi_value is not None:
         lines.append(f"RSI 高达 {rsi_value:.0f}，短线情绪偏热，谨防冲高回落。")
 
@@ -334,10 +372,12 @@ def build_commentary(score_block, technicals, spread_block, valuation_block):
     if spread is not None:
         lines.append(
             f"股息率 {valuation_block.get('dividend_yield_pct', 0):.2f}% 对比十年国债 {spread_block.get('bond_yield', 0):.2f}%，"
-            f"股债利差 {spread:.2f} 个百分点，处在{spread_block.get('label', '—')}，红利资产的底仓价值仍在。"
+            f"股债利差 {spread:.2f} 个百分点，处在{spread_block.get('label', '—')}，仅描述当前股息与债券收益率差异。"
         )
 
-    if grade in ("A", "B") and position in ("upper_half", "above_upper"):
+    if grade is None:
+        lines.append("盘面观察：必需数据不足，暂停综合判断。")
+    elif grade in ("A", "B") and position in ("upper_half", "above_upper"):
         lines.append("盘面观察：评分偏乐观，但短线并不超卖，更适合等日 K 回落到布林中轨附近再观察。")
     elif grade in ("A", "B"):
         lines.append("盘面观察：评分与位置偏友好，性价比支撑较强。")
@@ -394,7 +434,7 @@ def build_note_text(payload):
         bt_text = ""
         if backtest.get("samples"):
             bt_text = (
-                f"；历史同评分区间，往后{backtest.get('horizon_days')}天平均收益"
+                f"；历史同口径诊断分区间，往后{backtest.get('horizon_days')}天平均收益"
                 f"{backtest.get('avg_return_pct'):+.1f}%，{win_rate_label(backtest.get('win_rate_pct'))}"
             )
         lines.append(f"-综合评分{score['total']:.0f}分（{score.get('grade')}档，{score.get('action')}；评分仅作诊断，执行以定投策略为准）{bt_text}")
@@ -410,6 +450,7 @@ def build_note_text(payload):
 def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_quote=None, settings=None, chart_rows=None):
     """把原始数据组装成完整仪表盘 payload（纯函数，离线可测）。"""
     settings = settings or dividend_settings()
+    model, score_weights, spread_applicable = analysis_model(settings)
     valuation = valuation or {}
     treasury_rows = treasury_rows or []
 
@@ -423,7 +464,9 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
     bias = bias_pct(closes, 250)
     boll = bollinger(closes, 20, 2.0)
     rsi14 = rsi(closes, 14)
-    kdj_values = kdj(highs, lows, closes, 9, 3, 3)
+    ohlc_start = max((i + 1 for i, row in enumerate(index_rows) if row.get("ohlc_complete") is False), default=0)
+    ohlc_complete = len(index_rows) - ohlc_start >= 9
+    kdj_values = kdj(highs[ohlc_start:], lows[ohlc_start:], closes[ohlc_start:], 9, 3, 3) if ohlc_complete else None
     technicals = {
         "ma250": round(ma250, 2) if ma250 is not None else None,
         "bias_pct": round(bias, 2) if bias is not None else None,
@@ -432,27 +475,29 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
         "rsi_label": rsi_state_label(rsi14),
         "kdj": {key: round(value, 1) for key, value in kdj_values.items()} if kdj_values else None,
         "kdj_label": kdj_state_label(kdj_values),
+        "ohlc_complete": ohlc_complete,
     }
 
     # ---- 估值 ----
-    pes = [row.get("pe") for row in index_rows]
+    pes = [finite_number(row.get("pe"), minimum=0.000001) for row in index_rows]
     pe_tail = [pe for pe in pes[-TEN_YEARS_TRADING_DAYS:] if pe is not None]
-    current_pe = valuation.get("pe") or latest.get("pe")
-    pe_percentile = valuation.get("pe_percentile")
+    current_pe = finite_number(valuation.get("pe"), minimum=0.000001) or finite_number(latest.get("pe"), minimum=0.000001)
+    pe_percentile = finite_number(valuation.get("pe_percentile"), minimum=0, maximum=1) if current_pe is not None else None
     if pe_percentile is None and current_pe is not None and len(pe_tail) >= 250:
         pe_percentile = percentile_rank(pe_tail, current_pe)
-    dividend_yield = valuation.get("dividend_yield")
+    dividend_yield = finite_number(valuation.get("dividend_yield"), minimum=0)
     valuation_block = {
         "pe": round(current_pe, 2) if current_pe is not None else None,
-        "pb": round(valuation["pb"], 2) if valuation.get("pb") is not None else None,
+        "pb": round(finite_number(valuation.get("pb")), 2) if finite_number(valuation.get("pb")) is not None else None,
         "pe_percentile_10y": round(pe_percentile, 4) if pe_percentile is not None else None,
         "dividend_yield_pct": round(dividend_yield * 100, 2) if dividend_yield is not None else None,
-        "roe_pct": round(valuation["roe"] * 100, 1) if valuation.get("roe") is not None else None,
-        "source": valuation.get("source") or "中证指数官网",
+        "roe_pct": round(finite_number(valuation.get("roe")) * 100, 1) if finite_number(valuation.get("roe")) is not None else None,
+        "source": valuation.get("source") or "历史行情所附估值",
+        "percentile_basis": "供应商报告分位" if valuation.get("pe_percentile") is not None else "可用历史样本（最多 2500 个交易日）",
     }
 
     # ---- 股债利差 ----
-    bond_yield = treasury_rows[-1]["yield10y"] if treasury_rows else None
+    bond_yield = finite_number(treasury_rows[-1].get("yield10y")) if treasury_rows and spread_applicable else None
     spread_value = None
     spread_percentile = None
     spread_series = []
@@ -467,18 +512,17 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
         "percentile": round(spread_percentile, 4) if spread_percentile is not None else None,
         "label": percentile_label(spread_percentile),
         "bond_yield": round(bond_yield, 2) if bond_yield is not None else None,
-        "note": "历史分位按「当前股息率×当前PE」回推派息水平近似计算",
+        "applicable": spread_applicable,
+        "note": "仅使用有发布时间证据的历史股息率；缺失时不回推历史" if spread_applicable else "该资产不使用中国国债股息利差评分",
     }
     bond_block = {
         "yield10y": round(bond_yield, 2) if bond_yield is not None else None,
-        "date": treasury_rows[-1]["date"] if treasury_rows else None,
+        "date": treasury_rows[-1]["date"] if treasury_rows and spread_applicable else None,
         "source": "东方财富数据中心（中债）",
     }
 
     # ---- 综合评分 ----
-    asset_class = settings.get("asset_class") or "equity_core"
-    framework = "technical" if not valuation_framework_applicable(asset_class) else "valuation"
-    score_weights = TECH_SCORE_WEIGHTS if framework == "technical" else SCORE_WEIGHTS
+    framework = "technical" if model == "technical" else "valuation"
     components = {
         "spread": None
         if framework == "technical"
@@ -486,14 +530,15 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
         "valuation": None
         if framework == "technical"
         else (
-            score_valuation(pe_percentile, valuation.get("pb"))
+            score_valuation(pe_percentile)
             if pe_percentile is not None
             else None
         ),
         "trend": score_trend(bias),
         "technical": score_technical(rsi14, kdj_values),
     }
-    total = combine_score(components, weights=score_weights)
+    missing_required = [key for key in score_weights if components.get(key) is None]
+    total = None if missing_required else combine_score(components, weights=score_weights)
     grade = grade_for_score(total, framework=framework)
     component_labels = {
         "spread": "股债性价比",
@@ -506,6 +551,10 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
         "grade": grade["grade"],
         "action": grade["action"],
         "framework": framework,
+        "model": model,
+        "status": "insufficient_data" if missing_required else "diagnostic_only",
+        "missing_required": missing_required,
+        "limitations": "经验指标权重，未经收益最优性验证；不表示盈利预测或投入倍率",
         "components": [
             {
                 "key": key,
@@ -520,9 +569,23 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
     }
 
     # ---- 历史同评分回测 ----
-    scores = compute_score_series(index_rows, spread_series, framework=framework)
-    backtest = backtest_forward_returns(index_rows, scores, total)
+    scores = compute_score_series(index_rows, spread_series, framework=framework, weights=score_weights)
+    # The historical target uses the same PIT factors/window as its comparison samples.
+    # A current provider percentile may use a different universe/window and is never substituted.
+    historical_target = scores[-1] if scores and total is not None else None
+    backtest = backtest_forward_returns(index_rows, scores, historical_target)
+    backtest["target_score"] = historical_target
+    backtest["target_basis"] = "同一发布时间口径与滚动窗口重算的最新历史诊断分"
     backtest["label"] = win_rate_label(backtest.get("win_rate_pct"))
+    backtest["status"] = "descriptive_only" if backtest["samples"] else "insufficient_history"
+    backtest["point_in_time_required"] = framework != "technical"
+    backtest["methodology"] = "不重叠历史价格收益样本；非独立样本、未含交易费用及分红、不代表未来概率"
+    if framework != "technical" and historical_target is None:
+        backtest["status"] = "insufficient_point_in_time_history"
+        backtest["reason"] = "缺少满足评分所需的当时可获得估值历史；不以当前 PE 或分红回填历史"
+    elif not backtest["samples"]:
+        backtest["reason"] = "当前诊断或相似历史样本不足"
+
 
     # ---- 盘面点评（指数口径，与评分/估值同一套 technicals）----
     commentary = build_commentary(score_block, technicals, spread_block, valuation_block)
@@ -562,6 +625,13 @@ def analyze_dividend_data(index_rows, valuation=None, treasury_rows=None, etf_qu
         "spread": spread_block,
         "technicals": technicals,
         "score": score_block,
+        "data_quality": {
+            "decision_usable": not missing_required,
+            "missing_required": missing_required,
+            "historical_valuation_basis": "verified_publication_time_only",
+            "historical_pe_observations": len(pe_tail),
+            "historical_point_in_time_observations": sum(point_in_time_valuation(row) for row in index_rows),
+        },
         "backtest": backtest,
         "commentary": commentary,
         "chart": {

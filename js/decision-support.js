@@ -257,7 +257,7 @@ export function orderPreview(amount, price, options = {}) {
     minimumEconomicAmount > 0 && quote > 0
       ? Math.max(lotSize, Math.ceil(minimumEconomicAmount / quote / lotSize) * lotSize)
       : lotSize;
-  if (!(budget > 0) || !(quote > 0)) {
+  if (!Number.isFinite(budget) || !Number.isFinite(quote) || !(budget > 0) || !(quote > 0)) {
     return {
       shares: 0,
       estimatedAmount: 0,
@@ -272,12 +272,33 @@ export function orderPreview(amount, price, options = {}) {
       blockedReason: "invalid",
     };
   }
-  let affordableShares = Math.floor(Math.max(0, budget - minCommission) / quote / lotSize) * lotSize;
-  while (
-    affordableShares > 0 &&
-    affordableShares * quote + estimatedTradeFee(affordableShares * quote, tradingCost) > budget
-  ) {
-    affordableShares -= lotSize;
+  // Both minimum and proportional commission constrain notional. Solve the
+  // bound directly; decrementing one lot at a time can take billions of steps.
+  const commissionRate = Math.max(0, Number(tradingCost.commission_rate_pct) || 0) / 100;
+  const notionalBudget = Math.max(0, Math.min(budget - minCommission, budget / (1 + commissionRate)));
+  let affordableShares = Math.floor(notionalBudget / quote / lotSize) * lotSize;
+  if (!Number.isSafeInteger(affordableShares)) affordableShares = 0;
+  // Cent rounding can push the displayed total slightly above a fractional
+  // budget. Find the exact affordable lot count with at most 53 comparisons
+  // (the safe-integer width), never one iteration per rejected lot.
+  const roundedCash = (quantity) => {
+    const amount = Math.round(quantity * quote * 100) / 100;
+    const fee = Math.round(estimatedTradeFee(amount, tradingCost) * 100) / 100;
+    return Math.round((amount + fee) * 100) / 100;
+  };
+  if (affordableShares > 0 && affordableShares * quote +
+      estimatedTradeFee(affordableShares * quote, tradingCost) > budget) {
+    affordableShares = Math.max(0, affordableShares - lotSize);
+  }
+  if (affordableShares > 0 && roundedCash(affordableShares) > budget) {
+    let lower = 0;
+    let upper = Math.floor(affordableShares / lotSize);
+    for (let iteration = 0; lower < upper && iteration < 53; iteration += 1) {
+      const middle = lower + Math.ceil((upper - lower) / 2);
+      if (roundedCash(middle * lotSize) <= budget) lower = middle;
+      else upper = middle - 1;
+    }
+    affordableShares = lower * lotSize;
   }
   const affordableAmount = Math.round(affordableShares * quote * 100) / 100;
   const affordableFee = estimatedTradeFee(affordableAmount, tradingCost);

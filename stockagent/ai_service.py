@@ -7,6 +7,7 @@ import copy
 import datetime
 import hashlib
 import json
+import math
 import time
 
 from .ai_providers import AIProviderError, PORTFOLIO_REVIEW_SCHEMA, request_review
@@ -27,7 +28,7 @@ SYSTEM_PROMPT = """你是 ETF Agent 的 ETF 分析器。只能使用输入 JSON 
 商品/债券类 ETF（asset_class 为 commodity/bond，或 data_quality.valuation_framework 为 technical）
 没有股票 PE/股息估值口径：not_applicable_fields 中的估值与股债利差属于框架不适用，
 不得据此判定数据质量差、也不得据此削弱或否定规则补仓建议。
-可结合 portfolio 指出组合层面矛盾（超配/低配对本期建议的影响）；portfolio.positions 的 actual_weight_pct 为成本口径占比。
+可结合 portfolio 指出组合层面矛盾（超配/低配对本期建议的影响）；portfolio.positions 的 actual_weight_pct 为当前市值口径占比；缺少行情时为 null，不能用成本替代。
 
 文案规则（很重要）：
 - summary、focus_title、analysis_sections、watch_items、conditions_to_reverse、data_limitations
@@ -55,6 +56,8 @@ PORTFOLIO_SYSTEM_PROMPT = """你是 ETF Agent 的全池分配审视器。只能�
 识别组合层矛盾（集中度、同指数重复持仓、超配/低配与估值的冲突、现金池释放时机），
 而不是取代规则引擎重新算一遍。
 数据不足时降低置信度并保持规则分配。不要承诺收益，不要给出确定性买卖指令。
+金额提案必须交由统一交易引擎重新校验，展示文本中不要给出具体买入金额或份额。
+只有不同的非空叶子字段可作证据，每只调整的 ETF 必须至少引用一项该 ETF 的决策指标；名称和代码不是调整依据。
 
 文案规则（很重要）：
 - summary、focus_title、analysis_sections、watch_items、conditions_to_reverse、data_limitations、
@@ -71,7 +74,7 @@ watch_items、evidence、conditions_to_reverse、data_limitations: 字符串数�
 所有字段都必须出现；数组每项不超过 80 个汉字，最多 3 项（per_symbol_adjustments 最多 8 项），没有内容时返回空数组。
 action 为 keep 时 per_symbol_adjustments 应为空；仅在确有组合层修正时使用 adjust。"""
 
-AI_ANALYSIS_VERSION = 4
+AI_ANALYSIS_VERSION = 5
 ALLOWED_ACTIONS = {"keep", "increase", "reduce", "pause"}
 ALLOWED_PORTFOLIO_ACTIONS = {"keep", "adjust"}
 ALLOWED_CONFIDENCE = {"low", "medium", "high"}
@@ -144,7 +147,8 @@ FIELD_LABELS = (
 
 def _number(value, default=0.0):
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else float(default)
     except (TypeError, ValueError):
         return float(default)
 
@@ -277,6 +281,8 @@ def _workspace_snapshot(workspace, symbol):
         "initial_build_completed": bool(plan.get("initial_build_completed_at")),
         "trading_cost": plan.get("trading_cost") or {},
         "plan_strategy": plan.get("strategy"),
+        "investment_goal": copy.deepcopy(plan.get("investment_goal") or {}),
+        "execution_policy": copy.deepcopy(plan.get("execution_policy") or {}),
         "holding": {
             key: holding.get(key) for key in ("symbol", "shares", "cost", "target_weight")
         },
@@ -347,13 +353,42 @@ def _data_quality(analysis):
 
 
 def _evidence_paths(payload, prefix=""):
+    """Only known, non-empty facts count; containers and nulls are not evidence."""
     paths = set()
-    if isinstance(payload, dict):
-        for key, value in payload.items():
+    if isinstance(payload, (dict, list)):
+        children = payload.items() if isinstance(payload, dict) else enumerate(payload)
+        for key, value in children:
             path = f"{prefix}.{key}" if prefix else str(key)
-            paths.add(path)
             paths.update(_evidence_paths(value, path))
+    elif prefix and payload is not None and payload != "":
+        if not isinstance(payload, float) or math.isfinite(payload):
+            paths.add(prefix)
     return paths
+
+
+def _validated_evidence(raw, allowed):
+    evidence = list(dict.fromkeys(_short_list(raw)))
+    valid = evidence if allowed is None else [path for path in evidence if path in allowed]
+    return valid, [path for path in evidence if path not in valid]
+
+
+_DECISION_FIELDS = {
+    "actual_weight_pct", "target_weight", "market_value", "target_gap",
+    "pe_percentile_10y", "spread_percentile", "score_total", "grade",
+    "premium_discount_pct", "bid_ask_spread_pct", "freshness",
+}
+
+
+def _holding_evidence_symbols(evidence, holdings):
+    symbols = set()
+    for path in evidence:
+        parts = path.split(".")
+        if len(parts) != 3 or parts[0] != "holdings" or not parts[1].isdigit():
+            continue
+        index = int(parts[1])
+        if index < len(holdings) and parts[2] in _DECISION_FIELDS:
+            symbols.add(holdings[index].get("symbol"))
+    return symbols
 
 
 def _validate_proposal(raw, allowed_evidence=None):
@@ -361,11 +396,7 @@ def _validate_proposal(raw, allowed_evidence=None):
     confidence = str(raw.get("confidence") or "").strip().lower()
     if action not in ALLOWED_ACTIONS or confidence not in ALLOWED_CONFIDENCE:
         raise AIProviderError("大模型校正字段无效", code="invalid_output")
-    evidence = _short_list(raw.get("evidence"))
-    valid_evidence = evidence if allowed_evidence is None else [
-        item for item in evidence if item in allowed_evidence
-    ]
-    invalid_evidence = [item for item in evidence if item not in valid_evidence]
+    valid_evidence, invalid_evidence = _validated_evidence(raw.get("evidence"), allowed_evidence)
     data_limitations = _short_list(raw.get("data_limitations"))
     if invalid_evidence:
         confidence = "low"
@@ -376,7 +407,12 @@ def _validate_proposal(raw, allowed_evidence=None):
             ]
         )
     # 偏离规则建议时至少需要 2 条合法证据，否则强制低置信度
-    if action != "keep" and len(valid_evidence) < 2:
+    has_decision_evidence = any(
+        path.startswith(("analysis.valuation.", "analysis.technicals.", "analysis.spread.",
+                         "analysis.score.", "analysis.etf.product_quality.", "position."))
+        for path in valid_evidence
+    )
+    if action != "keep" and (len(valid_evidence) < 2 or not has_decision_evidence):
         confidence = "low"
         note = "偏离规则建议但证据不足，已保留规则建议"
         if note not in data_limitations:
@@ -449,7 +485,7 @@ def apply_policy(baseline, proposal, data_quality, position, settings):
     }
 
 
-def _cached_quote_price(symbol):
+def _cached_quote(symbol):
     """从进程内行情缓存取市价；无缓存返回 None（不触发网络请求）。"""
     code = str(symbol or "").strip()
     if not code:
@@ -463,7 +499,7 @@ def _cached_quote_price(symbol):
                 continue
             price = _number(quote.get("price"))
             if price > 0:
-                return price
+                return quote
         return None
 
     for entry in QUOTE_MARKET_CACHE.values():
@@ -483,6 +519,11 @@ def _cached_quote_price(symbol):
         if found is not None:
             return found
     return None
+
+
+def _cached_quote_price(symbol):
+    quote = _cached_quote(symbol)
+    return _number(quote.get("price")) if quote else None
 
 
 def _holding_mark_value(item):
@@ -604,42 +645,42 @@ def record_ai_usage(usage):
     return normalized
 
 
-def _portfolio_snapshot(workspace):
-    """组合上下文：actual_weight_pct 用 shares×cost 成本口径（离线可算）。"""
+def _portfolio_snapshot(workspace, quotes=None):
+    """Current market weights only; missing held prices invalidate the denominator."""
     plan = workspace.get("plan") or {}
-    budget = max(0.0, _number(plan.get("amount")))
     rows = []
-    total_cost = 0.0
-    prepared = []
     for item in workspace.get("etfs") or []:
         symbol = str(item.get("symbol") or "").strip()
         if not symbol:
             continue
+        quote = (quotes or {}).get(symbol) or _cached_quote(symbol) or {}
         shares = max(0.0, _number(item.get("shares")))
-        cost = max(0.0, _number(item.get("cost")))
-        value = shares * cost if shares > 0 and cost > 0 else 0.0
-        total_cost += value
-        prepared.append(
-            {
-                "symbol": symbol,
-                "name": str(item.get("name") or "").strip(),
-                "target_weight": _number(item.get("target_weight")),
-                "cost_value": value,
-            }
-        )
-    for row in prepared:
-        pct = (row["cost_value"] / total_cost * 100.0) if total_cost > 0 else 0.0
-        rows.append(
-            {
-                "symbol": row["symbol"],
-                "name": row["name"],
-                "target_weight": round(row["target_weight"], 2),
-                "actual_weight_pct": round(pct, 2),
-            }
-        )
+        price = _number(quote.get("price"))
+        value = shares * price if price > 0 else (0.0 if shares == 0 else None)
+        target_weight = max(0.0, _number(item.get("target_weight")))
+        target = max(0.0, _number(plan.get("capital_base"))) * min(
+            100.0, max(0.0, _number(plan.get("initial_target_pct")))
+        ) / 100 * target_weight / 100
+        rows.append({
+            "symbol": symbol,
+            "name": str(item.get("name") or "").strip(),
+            "shares": shares,
+            "target_weight": round(target_weight, 2),
+            "market_value": round(value, 2) if value is not None else None,
+            "target_amount": round(target, 2),
+            "target_gap": round(max(0.0, target - value), 2) if value is not None else None,
+            "market_timestamp": quote.get("market_timestamp"),
+            "freshness": market_freshness(quote.get("market") or "A", quote.get("market_timestamp")).get("status"),
+        })
+    complete = all(row["market_value"] is not None for row in rows)
+    total = sum(row["market_value"] for row in rows) if complete else None
+    for row in rows:
+        row["actual_weight_pct"] = round(row["market_value"] / total * 100, 2) if total else (0.0 if complete else None)
     return {
-        "budget": round(budget, 2),
-        "weight_basis": "cost",
+        "budget": round(max(0.0, _number(plan.get("amount"))), 2),
+        "weight_basis": "market",
+        "weights_complete": complete,
+        "market_value": round(total, 2) if total is not None else None,
         "positions": rows,
     }
 
@@ -698,6 +739,8 @@ def review_recommendation(request_payload, force=False):
         "baseline_recommendation": baseline,
         "ai_proposal": proposal,
         "policy_decision": policy,
+        "amounts_executable": False,
+        "requires_execution_validation": True,
         "final_recommendation": {
             "amount": policy["final_amount"],
             "action": proposal["action"],
@@ -792,7 +835,11 @@ def _compact_holding_snapshot(workspace_etf, analysis):
         ).strip()[:80],
         "asset_class": (analysis or {}).get("asset_class"),
         "target_weight": round(_number(workspace_etf.get("target_weight")), 2),
-        "actual_weight_pct": None,  # filled by caller with cost-basis weights
+        "actual_weight_pct": None,  # filled after all current quotes are collected
+        "index_code": (analysis or {}).get("index_code"),
+        "market_timestamp": ((analysis or {}).get("etf") or {}).get("market_timestamp"),
+        "premium_discount_pct": (((analysis or {}).get("etf") or {}).get("product_quality") or {}).get("premium_discount_pct"),
+        "bid_ask_spread_pct": (((analysis or {}).get("etf") or {}).get("product_quality") or {}).get("bid_ask_spread_pct"),
         "pe_percentile_10y": valuation.get("pe_percentile_10y"),
         "spread_percentile": spread.get("percentile"),
         "score_total": score.get("total"),
@@ -802,10 +849,7 @@ def _compact_holding_snapshot(workspace_etf, analysis):
 
 def _build_portfolio_holdings(workspace):
     """池内持仓紧凑快照；分析取不到则记入降级，不阻塞。"""
-    portfolio = _portfolio_snapshot(workspace)
-    weight_by_symbol = {
-        row["symbol"]: row["actual_weight_pct"] for row in portfolio.get("positions") or []
-    }
+    quotes = {}
     holdings = []
     degraded = []
     critical = []
@@ -828,8 +872,17 @@ def _build_portfolio_holdings(workspace):
             if snapshot.get("pe_percentile_10y") is None and snapshot.get("score_total") is None:
                 degraded.append(f"{symbol}.valuation")
                 critical.append(f"{symbol}.valuation")
-        snapshot["actual_weight_pct"] = weight_by_symbol.get(symbol, 0.0)
+        quotes[symbol] = analysis.get("etf") or {}
+        quality = _data_quality(analysis)
+        if not quality["may_increase"]:
+            critical.append(f"{symbol}.freshness_or_analysis")
         holdings.append(snapshot)
+    portfolio = _portfolio_snapshot(workspace, quotes)
+    positions = {row["symbol"]: row for row in portfolio["positions"]}
+    for snapshot in holdings:
+        snapshot.update({key: value for key, value in positions[snapshot["symbol"]].items() if key not in ("name", "symbol")})
+        if snapshot["actual_weight_pct"] is None:
+            critical.append(f"{snapshot['symbol']}.market_value")
     return holdings, {
         "degraded_fields": sorted(set(degraded)),
         "critical_degraded_fields": sorted(set(critical)),
@@ -837,18 +890,12 @@ def _build_portfolio_holdings(workspace):
     }
 
 
-def _validate_portfolio_proposal(raw, allowed_evidence=None):
+def _validate_portfolio_proposal(raw, allowed_evidence=None, holdings=None):
     action = str(raw.get("action") or "").strip().lower()
     confidence = str(raw.get("confidence") or "").strip().lower()
     if action not in ALLOWED_PORTFOLIO_ACTIONS or confidence not in ALLOWED_CONFIDENCE:
         raise AIProviderError("全池校正字段无效", code="invalid_output")
-    evidence = _short_list(raw.get("evidence"))
-    valid_evidence = (
-        evidence
-        if allowed_evidence is None
-        else [item for item in evidence if item in allowed_evidence]
-    )
-    invalid_evidence = [item for item in evidence if item not in valid_evidence]
+    valid_evidence, invalid_evidence = _validated_evidence(raw.get("evidence"), allowed_evidence)
     data_limitations = _short_list(raw.get("data_limitations"))
     if invalid_evidence:
         confidence = "low"
@@ -878,6 +925,13 @@ def _validate_portfolio_proposal(raw, allowed_evidence=None):
         if len(adjustments) >= 8:
             break
 
+    if action == "adjust" and holdings is not None:
+        supported_symbols = _holding_evidence_symbols(valid_evidence, holdings)
+        if any(item["symbol"] not in supported_symbols for item in adjustments):
+            confidence = "low"
+            data_limitations = _short_list([
+                "调整品种缺少相关持仓证据，已保留规则分配。", *data_limitations
+            ])
     sections = _analysis_sections(raw.get("analysis_sections"))
     return {
         "action": action,
@@ -899,7 +953,7 @@ def apply_portfolio_policy(baseline, proposal, data_quality, settings):
     keep_rule = (
         proposal.get("confidence") == "low"
         or proposal.get("action") != "adjust"
-        or len(proposal.get("evidence") or []) < 2
+        or len(set(proposal.get("evidence") or [])) < 2
     )
     may_increase = data_quality.get("may_increase") is True
     reasons = []
@@ -969,6 +1023,17 @@ def apply_portfolio_policy(baseline, proposal, data_quality, settings):
     }
 
 
+_REVIEW_PLAN_FIELDS = (
+    "amount", "strategy", "capital_base", "initial_target_pct", "initial_months",
+    "initial_build_started_at", "initial_build_completed_at", "cadence",
+    "investment_goal", "trading_cost", "execution_policy", "strategy_config", "strategy_overrides",
+)
+
+
+def _review_plan_snapshot(plan):
+    return {key: copy.deepcopy(plan.get(key)) for key in _REVIEW_PLAN_FIELDS}
+
+
 def review_portfolio(request_payload, force=False):
     settings = ai_settings()
     if not settings.get("enabled"):
@@ -993,6 +1058,12 @@ def review_portfolio(request_payload, force=False):
         "plan": {
             "budget": round(max(0.0, _number(plan.get("amount"))), 2),
             "strategy": str(plan.get("strategy") or "")[:40],
+            "investment_goal": copy.deepcopy(plan.get("investment_goal") or {}),
+            "capital_base": plan.get("capital_base"),
+            "initial_target_pct": plan.get("initial_target_pct"),
+            "initial_build_completed_at": plan.get("initial_build_completed_at"),
+            "trading_cost": copy.deepcopy(plan.get("trading_cost") or {}),
+            "execution_policy": copy.deepcopy(plan.get("execution_policy") or {}),
             "cash_reserve_balance": round(max(0.0, _number(cash_reserve.get("balance"))), 2),
         },
         "data_quality": quality,
@@ -1014,12 +1085,17 @@ def review_portfolio(request_payload, force=False):
         schema_name="portfolio_review",
     )
     record_ai_usage(usage)
-    proposal = _validate_portfolio_proposal(raw, _evidence_paths(model_input))
+    proposal = _validate_portfolio_proposal(raw, _evidence_paths(model_input), holdings)
     policy = apply_portfolio_policy(baseline, proposal, quality, settings)
     result = {
         "baseline": baseline,
         "ai_proposal": proposal,
         "policy_decision": policy,
+        "amounts_executable": False,
+        "requires_execution_validation": True,
+        "review_plan": _review_plan_snapshot(plan),
+        "holdings": holdings,
+        "data_quality": quality,
         "final_allocations": [
             {
                 "symbol": row["symbol"],

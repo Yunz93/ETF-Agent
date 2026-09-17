@@ -3657,6 +3657,54 @@ button:active {
 .research-form { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
 .research-form label { display: grid; gap: 8px; color: var(--muted); font-size: 12px; width: min(100%, 280px); }
 .research-form input { width: 100%; min-height: 42px; }
+
+/* The simulator reuses the plan surface, with a single comparison below it. */
+.simulation-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 20px; margin: 20px 0; }
+.simulation-form > label { display: grid; gap: 8px; color: var(--muted); font-size: 12px; min-width: 0; }
+.simulation-form input, .simulation-form select { width: 100%; min-width: 0; min-height: 42px; }
+.simulation-composition, .simulation-rules, .simulation-actions { grid-column: 1 / -1; }
+.simulation-weight-list { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 13px; }
+.simulation-weight-list b { margin-left: 6px; font-variant-numeric: tabular-nums; }
+.simulation-rules { border-top: 1px solid var(--line); padding-top: 8px; font-size: 13px; line-height: 1.8; }
+.simulation-rules p { margin: 6px 0; }
+.simulation-actions { display: flex; gap: 12px; }
+.simulation-actions button:active { transform: translateY(1px); }
+.simulation-conclusion { border-top: 1px solid var(--line); padding: 20px 0 8px; }
+.simulation-conclusion h4 { font-size: 20px; line-height: 1.6; margin: 0 0 8px; }
+.simulation-conclusion p, .simulation-note { font-size: 12px; line-height: 1.8; }
+.simulation-summary th:first-child { width: 36%; }
+.simulation-table-scroll { overflow-x: auto; margin-bottom: 16px; }
+.simulation-table { min-width: 620px; }
+.simulation-table th:first-child { width: 28%; }
+.simulation-details { border-top: 1px solid var(--line); padding: 16px 0; font-size: 13px; line-height: 1.8; }
+.simulation-details summary { cursor: pointer; font-weight: 600; }
+.simulation-details li { margin: 8px 0; }
+.simulation-trade-scroll { max-height: 380px; }
+.simulation-chart { margin: 28px 0; font-variant-numeric: tabular-nums; }
+.simulation-chart figcaption { font-size: 14px; font-weight: 600; }
+.simulation-chart figcaption span { font-size: 12px; font-weight: 400; margin-left: 8px; }
+.simulation-legend { display: flex; gap: 24px; font-size: 13px; margin: 12px 0; }
+.simulation-legend span:first-child { color: var(--accent-ink); }
+.simulation-legend span:last-child { color: var(--warn); }
+.simulation-plot { display: flex; height: 220px; gap: 12px; }
+.simulation-axis { display: flex; flex-direction: column; justify-content: space-between; padding: 3px 0; text-align: right; color: var(--muted); font-size: 11px; }
+.simulation-plot svg { flex: 1; min-width: 0; height: 220px; overflow: visible; }
+.simulation-plot line { stroke: var(--line); stroke-width: 1; }
+.simulation-line { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.simulation-line-0 { stroke: var(--accent-ink); }
+.simulation-line-1 { stroke: var(--warn); stroke-dasharray: 6 4; }
+.simulation-dates { display: flex; justify-content: space-between; font-size: 11px; margin: 8px 0; }
+.simulation-scrubber { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted); }
+.simulation-scrubber input { flex: 1; min-width: 0; accent-color: var(--accent); }
+.simulation-readout { font-size: 12px; line-height: 1.8; }
+@media (max-width: 600px) {
+  .simulation-form { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
+  .simulation-summary { font-size: 12px; }
+  .simulation-summary th, .simulation-summary td { padding: 10px 4px; overflow-wrap: anywhere; }
+  .simulation-conclusion h4 { font-size: 17px; }
+  .simulation-chart figcaption span { display: block; margin: 4px 0 0; }
+  .simulation-weight-list { gap: 8px 16px; }
+}
 #portfolioResearchPanel p, .research-limits { font-size: 13px; line-height: 1.7; }
 #portfolioResearchPanel h4 { margin: 24px 0 8px; font-size: 14px; }
 .research-stale, .research-goal-note { color: var(--warn); }

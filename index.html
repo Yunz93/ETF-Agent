@@ -138,7 +138,6 @@
             <button class="primary-button" type="button" data-import-seed-pool>导入默认种子池</button>
           </div>
           <div id="homeTodayCard" class="home-today-card" hidden></div>
-          <div id="homePortfolioGoal"></div>
           <div id="execDraftPanel" class="exec-draft-panel" hidden></div>
           <div id="homeReturnsPanel" class="home-returns-panel" hidden></div>
           <div id="homeConfirmSheet" class="home-confirm-sheet" hidden></div>
@@ -163,28 +162,16 @@
               计划设置
             </button>
             <button
-              id="etfTabGoal"
+              id="etfTabSimulation"
               class="etf-tab"
               type="button"
               role="tab"
               aria-selected="false"
-              aria-controls="etfPanelGoal"
+              aria-controls="etfPanelSimulation"
               tabindex="-1"
-              data-etf-tab="goal"
+              data-etf-tab="simulation"
             >
-              目标与风险
-            </button>
-            <button
-              id="etfTabResearch"
-              class="etf-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="etfPanelResearch"
-              tabindex="-1"
-              data-etf-tab="research"
-            >
-              长期研究
+              策略模拟
             </button>
             <button
               id="etfTabHoldings"
@@ -366,25 +353,14 @@
           </div>
 
           <div
-            id="etfPanelGoal"
+            id="etfPanelSimulation"
             class="etf-tab-panel"
             role="tabpanel"
-            aria-labelledby="etfTabGoal"
-            data-etf-panel="goal"
+            aria-labelledby="etfTabSimulation"
+            data-etf-panel="simulation"
             hidden
           >
-            <section id="portfolioGoalPanel" class="plan-section" aria-label="目标与组合风险"></section>
-          </div>
-
-          <div
-            id="etfPanelResearch"
-            class="etf-tab-panel"
-            role="tabpanel"
-            aria-labelledby="etfTabResearch"
-            data-etf-panel="research"
-            hidden
-          >
-            <section id="portfolioResearchPanel" class="plan-section" aria-label="长期历史研究"></section>
+            <section id="strategySimulationPanel" class="plan-section" aria-label="策略模拟"></section>
           </div>
 
           <div

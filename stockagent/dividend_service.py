@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import copy
 import time
 
-from .dividend_analysis import analyze_dividend_data, annualized_tracking_error
+from .dividend_analysis import analyze_dividend_data, annualized_tracking_error, analysis_model
 from .dividend_registry import (
     _normalize_etf_symbol,
     proxy_valuation_note,
@@ -20,7 +20,6 @@ from .dividend_sources import (
     fetch_index_history,
     fetch_legulegu_index_valuation,
     fetch_treasury_yield_history,
-    fill_missing_pe,
 )
 from .gold_macro import get_gold_macro
 from .symbols import as_of
@@ -58,7 +57,7 @@ def slim_dividend_payload(payload):
     if isinstance(backtest, dict):
         slim["backtest"] = {
             key: backtest.get(key)
-            for key in ("samples", "avg_return_pct", "win_rate_pct", "label")
+            for key in ("samples", "avg_return_pct", "win_rate_pct", "label", "status", "reason", "methodology", "point_in_time_required")
             if key in backtest
         }
     slim["lite"] = True
@@ -167,9 +166,10 @@ def get_dividend_dashboard(refresh=False, symbol=None, lite=False):
         futures = {
             pool.submit(_load_index): "index",
             pool.submit(_load_valuation): "valuation",
-            pool.submit(fetch_treasury_yield_history): "treasury",
             pool.submit(fetch_eastmoney_fund_profile, settings.get("etf_symbol") or requested): "fund_profile",
         }
+        if analysis_model(settings)[2]:
+            futures[pool.submit(fetch_treasury_yield_history)] = "treasury"
         if not proxy:
             futures[pool.submit(fetch_etf_as_index_history, settings.get("etf_symbol") or requested)] = "etf_history"
         if etf_quote is None:
@@ -237,9 +237,6 @@ def get_dividend_dashboard(refresh=False, symbol=None, lite=False):
         has_daily_pe = any(row.get("pe") is not None for row in index_rows[-30:])
         errors["valuation"] = missing_danjuan_note(has_daily_pe)
 
-    if valuation and valuation.get("pe") is not None:
-        fill_missing_pe(index_rows, valuation.get("pe"))
-
     if etf_quote is not None:
         product_quality = dict(etf_quote.get("product_quality") or {})
         if fund_profile:
@@ -247,8 +244,9 @@ def get_dividend_dashboard(refresh=False, symbol=None, lite=False):
         if not proxy and etf_history_rows:
             tracking_error = annualized_tracking_error(etf_history_rows, index_rows)
             if tracking_error is not None:
-                product_quality["tracking_error_pct"] = tracking_error
-                product_quality["tracking_error_window"] = "近一年"
+                product_quality["price_deviation_volatility_pct"] = tracking_error
+                product_quality["price_deviation_volatility_window"] = "最多 252 个共同观测期"
+                product_quality["price_deviation_volatility_basis"] = "同日市场价格收益差；未统一净值、币种、时区和分红，不是基金跟踪误差"
         etf_quote["product_quality"] = product_quality
 
     payload = analyze_dividend_data(
@@ -271,18 +269,7 @@ def get_dividend_dashboard(refresh=False, symbol=None, lite=False):
             payload["index"]["source_url"] = (
                 "https://finance.sina.com.cn/" if index_source == "新浪财经" else "https://finance.qq.com/"
             )
-            # 腾讯/新浪日线本来就无每日 PE；有点位估值时已用价格回推填历史序列。
-            # 这是方法近似，不是缺数——写入 index.note，避免「部分数据降级」横幅误伤港美/创业板。
-            if "valuation" not in errors and valuation and valuation.get("pe") is not None:
-                payload["index"]["note"] = (
-                    f"日线来自{index_source}（无每日 PE）；"
-                    "历史 PE 按当前估值随价格回推，利差分位与回测为近似"
-                )
-            elif "valuation" not in errors:
-                errors["index_pe"] = (
-                    f"该指数日线来自{index_source}，无每日 PE；"
-                    "且当前估值也不可用，利差分位与回测暂缺"
-                )
+            payload["index"]["note"] = f"日线来自{index_source}（无每日 PE）；当前估值仅用于当前诊断，不回填历史"
     if str(asset_class or "").strip().lower() == "commodity":
         try:
             payload["gold_macro"] = get_gold_macro(refresh=refresh)
@@ -295,6 +282,8 @@ def get_dividend_dashboard(refresh=False, symbol=None, lite=False):
                 "score": None,
             }
 
+    if not analysis_model(settings)[2]:
+        not_applicable["spread"] = "此资产不适用中国国债股息利差；未取中国国债数据"
     if errors:
         payload["errors"] = errors
     if not_applicable:
@@ -333,6 +322,9 @@ def get_dividend_dashboard(refresh=False, symbol=None, lite=False):
             "role": "基金规模、管理费与托管费",
         },
     ]
+    if not analysis_model(settings)[2]:
+        payload["sources"] = [source for source in payload["sources"] if source.get("role") != "中国十年期国债收益率"]
+
     if payload.get("gold_macro"):
         payload["sources"].append(
             {

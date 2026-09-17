@@ -134,14 +134,14 @@ test("spread thresholds and missing spread", () => {
   );
 });
 
-test("stale quote stays executable; valuation analysis missing is preview; fixed ignores analysis", () => {
+test("stale quote is preview; missing valuation is preview; fresh fixed ignores analysis", () => {
   assert.equal(
     evaluateExecutionPolicy({
       side: "buy",
       quote: quote({ premium: 0.5, spread: 0.1, ageMin: 16 }),
       now,
     }).status,
-    "ready",
+    "preview",
   );
   assert.equal(
     evaluateExecutionPolicy({
@@ -165,7 +165,7 @@ test("stale quote stays executable; valuation analysis missing is preview; fixed
   );
 });
 
-test("unix-second market_timestamp parses for age metrics without blocking", () => {
+test("unix-second timestamps enforce stale preview while fresh quotes remain ready", () => {
   const ageMin = 20;
   const tsSec = Math.floor((now.getTime() - ageMin * 60000) / 1000);
   const stale = evaluateExecutionPolicy({
@@ -177,7 +177,7 @@ test("unix-second market_timestamp parses for age metrics without blocking", () 
     },
     now,
   });
-  assert.equal(stale.status, "ready");
+  assert.equal(stale.status, "preview");
   assert.ok(stale.metrics.quote_age_minutes >= 19);
   assert.equal(
     evaluateExecutionPolicy({

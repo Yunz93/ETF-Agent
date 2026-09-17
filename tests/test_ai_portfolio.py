@@ -10,6 +10,9 @@ from stockagent.ai_service import (
     apply_portfolio_policy,
     review_portfolio,
     _validate_portfolio_proposal,
+    _evidence_paths,
+    _portfolio_snapshot,
+    _validate_proposal,
 )
 from stockagent.state import AI_REVIEW_CACHE, AI_USAGE_SESSION
 
@@ -125,6 +128,48 @@ class PortfolioPolicyTests(unittest.TestCase):
         self.assertEqual(by_symbol["510300"]["final_amount"], 400)  # 下调仍可
 
 
+class EvidenceAndMarketSnapshotTests(unittest.TestCase):
+    def test_only_nonempty_leaf_facts_include_array_indices(self):
+        self.assertEqual(_evidence_paths({"holdings": [{"pe": 0, "missing": None}], "empty": {}, "blank": ""}), {"holdings.0.pe"})
+
+    def test_repeated_evidence_cannot_authorize_single_or_portfolio_change(self):
+        for validate, action in ((_validate_proposal, "increase"), (_validate_portfolio_proposal, "adjust")):
+            proposal = validate({"action": action, "confidence": "high", "evidence": ["baseline.budget", "baseline.budget"]}, {"baseline.budget"})
+            self.assertEqual(proposal["confidence"], "low")
+            self.assertEqual(proposal["evidence"], ["baseline.budget"])
+
+    def test_adjustment_requires_related_holding_not_names_or_other_symbols(self):
+        holdings = [{"symbol": "512890", "actual_weight_pct": 80, "name": "红利"}, {"symbol": "510300", "actual_weight_pct": 20}]
+        payload = {"holdings": holdings, "baseline": {"budget": 1000}}
+        raw = {"action": "adjust", "confidence": "high", "per_symbol_adjustments": [{"symbol": "512890", "multiplier": 0.5}], "evidence": ["baseline.budget", "holdings.1.actual_weight_pct"]}
+        self.assertEqual(_validate_portfolio_proposal(raw, _evidence_paths(payload), holdings)["confidence"], "low")
+        raw["evidence"] = ["baseline.budget", "holdings.0.name"]
+        self.assertEqual(_validate_portfolio_proposal(raw, _evidence_paths(payload), holdings)["confidence"], "low")
+        raw["evidence"] = ["baseline.budget", "holdings.0.actual_weight_pct"]
+        self.assertEqual(_validate_portfolio_proposal(raw, _evidence_paths(payload), holdings)["confidence"], "high")
+
+    def test_weights_and_target_gaps_use_current_price(self):
+        workspace = {"plan": {"capital_base": 10000, "initial_target_pct": 60}, "etfs": [
+            {"symbol": "512890", "shares": 1000, "cost": 1, "target_weight": 50},
+            {"symbol": "510300", "shares": 500, "cost": 4, "target_weight": 50},
+        ]}
+        snapshot = _portfolio_snapshot(workspace, {"512890": {"price": 4}, "510300": {"price": 2}})
+        self.assertEqual(snapshot["weight_basis"], "market")
+        first, second = snapshot["positions"]
+        self.assertEqual(first["actual_weight_pct"], 80)
+        self.assertEqual(second["actual_weight_pct"], 20)
+        self.assertEqual(first["target_gap"], 0)
+        self.assertEqual(second["target_gap"], 2000)
+
+    def test_missing_one_held_price_invalidates_all_weights(self):
+        with patch("stockagent.ai_service._cached_quote", return_value=None):
+            snapshot = _portfolio_snapshot({"etfs": [
+                {"symbol": "512890", "shares": 1, "cost": 99}, {"symbol": "510300", "shares": 1, "cost": 99}
+            ]}, {"512890": {"price": 4}})
+        self.assertFalse(snapshot["weights_complete"])
+        self.assertTrue(all(row["actual_weight_pct"] is None for row in snapshot["positions"]))
+
+
 class PortfolioReviewEntryTests(unittest.TestCase):
     def setUp(self):
         AI_REVIEW_CACHE.clear()
@@ -192,6 +237,14 @@ class PortfolioReviewEntryTests(unittest.TestCase):
         kwargs = provider.call_args.kwargs
         self.assertEqual(kwargs.get("schema_name"), "portfolio_review")
         self.assertEqual(AI_USAGE_SESSION["requests"], 1)
+        model_input = provider.call_args.args[4]
+        self.assertIn("investment_goal", model_input["plan"])
+        self.assertIn("execution_policy", model_input["plan"])
+        self.assertIn("trading_cost", model_input["plan"])
+        self.assertIn("target_gap", model_input["holdings"][0])
+        self.assertIn("premium_discount_pct", model_input["holdings"][0])
+        self.assertFalse(result["amounts_executable"])
+        self.assertTrue(result["requires_execution_validation"])
 
 
 if __name__ == "__main__":

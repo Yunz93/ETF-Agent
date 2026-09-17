@@ -29,7 +29,7 @@ const STATUS_RANK = Object.freeze({
 export function normalizeExecutionPolicy(value) {
   const source = value && typeof value === "object" ? value : {};
   const num = (raw, fallback) => {
-    const n = Number(raw);
+    const n = raw == null || raw === "" || typeof raw === "boolean" ? NaN : Number(raw);
     return Number.isFinite(n) && n >= 0 ? n : fallback;
   };
   return {
@@ -93,6 +93,7 @@ function worseStatus(a, b) {
 }
 
 function finiteOrNull(value) {
+  if (value == null || typeof value === "boolean" || typeof value === "object" || String(value).trim() === "") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -119,7 +120,7 @@ export function quoteAgeMinutes(quote, now = new Date()) {
   if (!Number.isFinite(ts)) return null;
   const nowMs = now instanceof Date ? now.getTime() : parseQuoteTimestampMs(now);
   const basis = Number.isFinite(nowMs) ? nowMs : Date.now();
-  return Math.max(0, (basis - ts) / 60000);
+  return (basis - ts) / 60000;
 }
 
 /**
@@ -150,6 +151,11 @@ export function evaluateExecutionPolicy({
   if (!(resolvedPrice > 0)) {
     status = "blocked";
     reasons.push("缺少有效成交价格");
+  }
+
+  if (ageMin == null || ageMin < -1 || ageMin > policy.quote_max_age_minutes) {
+    status = worseStatus(status, "preview");
+    reasons.push(ageMin == null ? "缺少行情时间，仅供预览" : ageMin < -1 ? "行情时间异常，仅供预览" : `行情已超过 ${policy.quote_max_age_minutes} 分钟，请刷新后复核`);
   }
 
   if (premium == null) {

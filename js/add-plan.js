@@ -251,3 +251,98 @@ export function buildAddPlan({
     levels,
   };
 }
+
+/** Explicitly saved plan; prices and tier budgets never move on a render. */
+export function createAddPlanSession({ symbol, period, expires, buys = [], previousSession = null, remainingAmount = null, now = new Date(), ...options }) {
+  let amount = Number(options.amount);
+  if (remainingAmount != null && Number.isFinite(Number(remainingAmount))) amount = Math.min(amount, Math.max(0, Number(remainingAmount)));
+  const prior = normalizeAddPlanSessions({ [symbol]: previousSession })[symbol] || null;
+  const today = now.toLocaleDateString("sv-SE");
+  const previous = prior ? evaluateAddPlanSession(prior, { buys, today }) : null;
+  if (prior?.period === period && prior?.expires === expires) amount = Math.min(amount, previous.remaining);
+  const preview = buildAddPlan({ ...options, amount });
+  if (!preview.applicable || !Number.isFinite(amount)) return null;
+  const history = prior ? [...(prior.previous_snapshots || []), {
+    period: prior.period, expires: prior.expires, created_at: prior.created_at,
+    anchor_price: prior.anchor_price, anchor: prior.anchor, amount: prior.amount,
+    preset_label: prior.preset_label, levels: prior.levels,
+    closed_at: now.toISOString(), spent: previous.spent, remaining: previous.remaining,
+  }].slice(-24) : [];
+  const session = {
+    symbol, period, expires, created_at: now.toISOString(),
+    anchor_price: preview.anchorPrice, anchor: preview.anchor,
+    amount, preset_label: preview.presetLabel,
+    levels: preview.levels.map(({ drawdownPct, ratio }) => ({ drawdown_pct: drawdownPct, ratio })),
+    baseline_buy_ids: buys.filter((row) => row.symbol === symbol).map((row) => row.id),
+    previous_snapshots: history,
+  };
+  return normalizeAddPlanSessions({ [symbol]: session })[symbol] || null;
+}
+
+function validSessionDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number(value.slice(0, 4)) < 1) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function validSessionTimestamp(value) {
+  return typeof value === "string" && validSessionDate(value.slice(0, 10)) && value[10] === "T" && Number.isFinite(Date.parse(value));
+}
+
+function normalizeSessionSnapshot(row) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  if (!(Number(row.anchor_price) > 0) || !Number.isFinite(Number(row.anchor_price)) || !(Number(row.amount) > 0) || !Number.isFinite(Number(row.amount))) return null;
+  if (!validSessionDate(row.period) || !validSessionDate(row.expires) || row.expires <= row.period || !validSessionTimestamp(row.created_at)) return null;
+  if (!Array.isArray(row.levels) || !row.levels.length || row.levels.length > 4 || row.levels.some((level) =>
+    !level || !Number.isFinite(Number(level.drawdown_pct)) || Number(level.drawdown_pct) < 0.5 || Number(level.drawdown_pct) > 30 || !Number.isFinite(Number(level.ratio)) || !(Number(level.ratio) > 0)
+  )) return null;
+  const levels = normalizeLevels(row.levels);
+  if (!levels || !levels.every(level => level.ratio > 0)) return null;
+  return { period: row.period, expires: row.expires, created_at: row.created_at,
+    anchor_price: Number(row.anchor_price), anchor: row.anchor === "cost" ? "cost" : "price", amount: Number(row.amount),
+    preset_label: String(row.preset_label || "已保存档位"), levels };
+}
+
+export function normalizeAddPlanSessions(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const entries = [];
+  for (const [symbol, row] of Object.entries(raw).slice(0, 100)) {
+    if (!/^\d{6}$/.test(symbol)) continue;
+    const snapshot = normalizeSessionSnapshot(row);
+    if (!snapshot) continue;
+    const history = (Array.isArray(row.previous_snapshots) ? row.previous_snapshots : []).slice(-24).flatMap((item) => {
+      const historical = normalizeSessionSnapshot(item);
+      if (!historical || !validSessionTimestamp(item.closed_at)) return [];
+      const spent = Number(item.spent);
+      const remaining = Number(item.remaining);
+      if (!Number.isFinite(spent) || spent < 0 || !Number.isFinite(remaining) || remaining < 0 || remaining > historical.amount) return [];
+      return [{ ...historical, closed_at: item.closed_at, spent, remaining }];
+    });
+    entries.push([symbol, { symbol, ...snapshot,
+      baseline_buy_ids: Array.isArray(row.baseline_buy_ids) ? row.baseline_buy_ids.slice(0, 5000).map(String) : [],
+      previous_snapshots: history,
+    }]);
+  }
+  return Object.fromEntries(entries);
+}
+
+export function evaluateAddPlanSession(session, { price, buys = [], today, tradingCost = {} } = {}) {
+  if (!session) return null;
+  const expired = today >= session.expires || today < session.period;
+  const baseline = new Set(session.baseline_buy_ids || []);
+  const spent = buys.filter((row) => row.symbol === session.symbol && !baseline.has(row.id) && row.date >= session.period && row.date < session.expires)
+    .reduce((sum, row) => sum + Math.max(0, Number(row.shares) * Number(row.price)) + Math.max(0, Number(row.fee) || 0), 0);
+  let remainingSpent = spent;
+  const levels = session.levels.map((level, index) => {
+    const original = session.amount * level.ratio;
+    const consumed = Math.min(original, remainingSpent);
+    remainingSpent -= consumed;
+    const amount = Math.max(0, original - consumed);
+    const trigger = session.anchor_price * (1 - level.drawdown_pct / 100);
+    const preview = orderPreview(amount, trigger, tradingCost);
+    return { name: LEVEL_NAMES[index] || `第${index + 1}档`, drawdownPct: level.drawdown_pct, trigger, amount,
+      shares: preview.shares, completed: amount <= 0, triggered: !expired && amount > 0 && price > 0 && price <= trigger };
+  });
+  return { applicable: true, levels, expired, anchorPrice: session.anchor_price, presetLabel: session.preset_label,
+    remaining: Math.max(0, session.amount - spent), spent };
+}

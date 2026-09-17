@@ -25,6 +25,7 @@ import {
   selectEtfChart,
 } from "./views/etf.js";
 import { renderDividend, renderEtfPool } from "./views/render.js";
+import { renderStrategySimulation } from "./views/strategy-simulation.js";
 
 export function bindEvents() {
   const etfTabs = [...document.querySelectorAll("[data-etf-tab]")];
@@ -41,6 +42,7 @@ export function bindEvents() {
     etfPanels.forEach((panel) => {
       panel.hidden = panel.dataset.etfPanel !== name;
     });
+    if (name === "simulation") renderStrategySimulation();
     if (focus) tab.focus();
   };
 

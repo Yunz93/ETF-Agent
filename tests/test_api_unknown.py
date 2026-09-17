@@ -75,6 +75,28 @@ class UnknownApiTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_simulation_route_and_body_limit(self):
+        from unittest.mock import patch
+        from tests.test_strategy_simulation import request as simulation_request
+
+        url = f"http://127.0.0.1:{self.port}/api/strategy/simulate"
+        with patch("stockagent.strategy_simulation._rate_allowed", return_value=True):
+            request = urllib.request.Request(url, data=json.dumps(simulation_request()).encode(),
+                                             headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(request, timeout=5) as response:
+                result = json.loads(response.read())
+            self.assertEqual(result["status"], "ready")
+            self.assertEqual([s["id"] for s in result["strategies"]], ["periodic", "dip"])
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("POST", "/api/strategy/simulate")
+            connection.putheader("Content-Length", "2000001")
+            connection.endheaders()
+            response = connection.getresponse()
+            self.assertEqual(response.status, 413)
+        finally:
+            connection.close()
+
 
 if __name__ == "__main__":
     unittest.main()

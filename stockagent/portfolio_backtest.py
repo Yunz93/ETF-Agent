@@ -241,6 +241,9 @@ def run_strategy(
                 else:
                     scores[symbol] = (weights[symbol] / 100.0) * mult
             score_sum = sum(scores.values())
+            # PE 倍率同时约束总投入；归一权重不能把 0.5 倍还原成满仓。
+            if mode == "current":
+                deploy_budget *= min(1.0, max(0.0, score_sum))
             if score_sum > 0:
                 for symbol in symbols:
                     alloc = deploy_budget * (scores[symbol] / score_sum)

@@ -25,15 +25,27 @@ function poolSymbols() {
 }
 
 export function isAnalysisUsable(payload) {
-  return Boolean(payload && payload.supported !== false && !payload.error);
+  if (!payload || payload.supported === false || payload.error) return false;
+  if (payload.score?.status && !["ready", "diagnostic_only"].includes(payload.score.status)) return false;
+  if (payload.data_quality?.decision_usable === false || payload.score?.missing_required?.length) return false;
+  const cls = payload.asset_class;
+  const finite = (v) => v != null && typeof v !== "boolean" && typeof v !== "object" && String(v).trim() !== "" && Number.isFinite(Number(v));
+  const technical = finite(payload.technicals?.bias_pct) && (finite(payload.technicals?.rsi14) || finite(payload.technicals?.kdj?.k));
+  if (!technical) return false;
+  if (["commodity", "bond"].includes(cls)) return true;
+  const pe = payload.valuation?.pe;
+  const percentile = payload.valuation?.pe_percentile_10y;
+  if (!finite(pe) || Number(pe) <= 0 || !finite(percentile) || Number(percentile) < 0 || Number(percentile) > 1) return false;
+  return cls !== "dividend" || finite(payload.spread?.value);
 }
 
 /** 缓存有效：有载荷、无错误、且未超过 TTL。 */
 export function isAnalysisFresh(payload, now = Date.now()) {
   if (!isAnalysisUsable(payload)) return false;
   const updated = Date.parse(String(payload.updated_at || ""));
-  if (!Number.isFinite(updated)) return true;
-  return now - updated < ANALYSIS_CACHE_TTL_MS;
+  if (!Number.isFinite(updated)) return false;
+  const age = now - updated;
+  return age >= -60_000 && age < ANALYSIS_CACHE_TTL_MS;
 }
 
 function persistSessionCache() {
@@ -128,7 +140,8 @@ export async function fetchAnalysis(symbol, { force = false, lite = false } = {}
       if (lite && payload && typeof payload === "object") payload.lite = true;
       // 全量结果覆盖 lite；勿用过期 lite 覆盖已有全量
       const existing = state.analysisCache[key];
-      if (lite && isAnalysisUsable(existing) && !existing.lite) {
+      if (lite && isAnalysisFresh(existing) && !existing.lite && isAnalysisUsable(payload)
+          && Date.parse(existing.updated_at) >= Date.parse(payload.updated_at)) {
         return existing;
       }
       return storeAnalysis(symbol, payload);

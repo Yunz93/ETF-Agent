@@ -20,6 +20,7 @@ datas = [
     (str(ROOT / "index.html"), "."),
     (str(ROOT / "js"), "js"),
     (str(ROOT / "styles.css"), "."),
+    (str(ROOT / "docs" / "STRATEGY_REPLAY.md"), "docs"),
     (str(ROOT / "config.json"), "."),
     (str(ROOT / "requirements.txt"), "."),
     (str(ROOT / "desktop"), "desktop"),

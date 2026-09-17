@@ -3,17 +3,17 @@
  */
 
 import { normalizeStrategyConfig, normalizeStrategyId } from "./strategy.js";
-import { DEFAULT_PE_BANDS, dcaMultiplier } from "./strategy-multipliers.js";
+import { DEFAULT_PE_BANDS, dcaMultiplier, sentimentMarketForHolding, sentimentMultiplier } from "./strategy-multipliers.js";
 import { normalizeExecutionPolicy } from "./execution-policy.js";
 
 function round4(value) {
-  const n = Number(value);
+  const n = value == null || value === "" || typeof value === "boolean" ? NaN : Number(value);
   if (!Number.isFinite(n)) return null;
   return Math.round(n * 1e4) / 1e4;
 }
 
 function pePct01(value) {
-  const n = Number(value);
+  const n = value == null || value === "" || typeof value === "boolean" ? NaN : Number(value);
   if (!Number.isFinite(n)) return null;
   return n <= 1 ? n : n / 100;
 }
@@ -131,7 +131,9 @@ function holdingSignalRow({
     hysteresisPp,
   });
   // 同档位冻结：同一期内用快照 pe 参与倍率；跨期新建时用滞回后的 pe 档
-  const peForMult = peHyst.pe_pct != null ? peHyst.pe_pct : holding.pePct;
+  const useHysteresis = strategy === "custom" || (strategy === "valuation" && holding.assetClass === "equity_core");
+  const peForMult = useHysteresis && peHyst.band_index != null
+    ? Number(config.pe_bands[peHyst.band_index].max_pct) / 100 : holding.pePct;
   const grid = dcaMultiplier({
     strategy,
     strategyConfig: config,
@@ -142,15 +144,11 @@ function holdingSignalRow({
     biasPct: holding.biasPct,
     goldMacro: holding.goldMacro,
   });
-  const market =
-    sentimentByMarket && holding.assetClass
-      ? sentimentByMarket[String(holding.assetClass).toLowerCase()] ||
-        sentimentByMarket.A ||
-        null
-      : sentimentByMarket?.A || null;
-  const sentimentMult = Number(market?.mult);
-  const baseMult = Number(grid.mult);
-  const sent = Number.isFinite(sentimentMult) && sentimentMult > 0 ? sentimentMult : 1;
+  const marketKey = sentimentMarketForHolding(holding, config.sentiment);
+  const market = sentimentByMarket?.[marketKey] || null;
+  const canOverlay = holding.analyzed !== false && config.sentiment.enabled && config.sentiment.mode === "overlay" && config.sentiment.apply_to.includes(strategy);
+  const sent = canOverlay ? sentimentMultiplier(market, config.sentiment).mult : 1;
+  const baseMult = holding.analyzed === false ? Math.min(1, Number(grid.mult)) : Number(grid.mult);
   const effective = Math.min(1.8, (Number.isFinite(baseMult) ? baseMult : 1) * sent);
   return {
     pe_pct: peHyst.pe_pct,
@@ -158,12 +156,12 @@ function holdingSignalRow({
     asset_class: holding.assetClass || null,
     spread_pct: round4(holding.spreadPct),
     bias_pct: round4(holding.biasPct),
-    sentiment_market: market?.market || market?.label || null,
-    sentiment_score: Number.isFinite(Number(market?.score)) ? Number(market.score) : null,
+    sentiment_market: marketKey,
+    sentiment_score: market?.score != null && Number.isFinite(Number(market.score)) ? Number(market.score) : null,
     base_mult: Number.isFinite(baseMult) ? Math.round(baseMult * 1000) / 1000 : null,
     sentiment_mult: Math.round(sent * 1000) / 1000,
     effective_mult: Math.round(effective * 1000) / 1000,
-    band: peHyst.band || grid.band || null,
+    band: grid.band || null,
     band_index: peHyst.band_index,
     data_as_of: holding.dataAsOf || null,
     analysis_usable: Boolean(holding.analyzed),
@@ -204,8 +202,9 @@ export function buildSignalSnapshot({
   const created = now instanceof Date ? now.toISOString() : String(now || new Date().toISOString());
   const snapshotId =
     String(id || "").trim() ||
-    `sig_${period || "na"}_${created.replace(/[:.]/g, "").slice(0, 15)}`;
+    `sig_${period || "na"}_${created.replace(/[:.]/g, "")}`;
   return {
+    schema_version: 2,
     id: snapshotId,
     period: String(period || "").trim(),
     created_at: created,
@@ -220,7 +219,7 @@ export function getCurrentSignalSnapshot(plan = {}, period = "") {
   const map = plan?.signal_snapshots;
   if (!map || typeof map !== "object") return null;
   const key = String(period || "").trim();
-  if (key && map[key]) return map[key];
+  if (key) return map[key] || null;
   const keys = Object.keys(map)
     .filter((k) => /^\d{4}-\d{2}-\d{2}$/.test(k))
     .sort();

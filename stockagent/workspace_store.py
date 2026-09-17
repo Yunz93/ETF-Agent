@@ -221,6 +221,7 @@ def normalize_signal_snapshots(payload):
             (
                 period,
                 {
+                    "schema_version": 2 if raw.get("schema_version") == 2 else 1,
                     "id": str(raw.get("id") or "").strip() or f"sig_{period}",
                     "period": period,
                     "created_at": str(raw.get("created_at") or "").strip() or None,
@@ -426,7 +427,7 @@ def normalize_execution_drafts(payload):
                 "id": draft_id,
                 "period": period,
                 "symbol": symbol,
-                "name": str(item.get("name") or "").strip(),
+                "name": "纳指100ETF国泰" if symbol == "513100" and item.get("name") == "纳指100ETF博时" else str(item.get("name") or "").strip(),
                 "side": side,
                 "suggested_amount": round(suggested, 2),
                 "order_amount": round(order_amount, 2),
@@ -467,7 +468,7 @@ def normalize_etf_entry(item):
 
     return {
         "symbol": symbol,
-        "name": str(item.get("name") or "").strip(),
+        "name": "纳指100ETF国泰" if symbol == "513100" and item.get("name") == "纳指100ETF博时" else str(item.get("name") or "").strip(),
         "shares": _positive_number(item.get("shares")),
         "cost": _positive_number(item.get("cost")),
         "target_weight": _clamp_weight(target),
@@ -551,6 +552,130 @@ def normalize_strategy_overrides(payload):
 
 
 ADD_PLAN_PRESETS = ("auto", "steady", "deep", "custom")
+
+
+def normalize_fund_disclosures(payload):
+    from urllib.parse import urlparse
+    import math
+    import datetime
+    if not isinstance(payload, dict):
+        return {}
+    result = {}
+    for symbol, report in list(payload.items())[:100]:
+        if not isinstance(report, dict) or not str(symbol).isdigit() or len(str(symbol)) != 6:
+            continue
+        source = str(report.get("source_url") or "")
+        if not isinstance(report.get("holdings"), list) or len(report["holdings"]) > 1000:
+            continue
+        try:
+            url = urlparse(source)
+            if url.scheme not in ("https", "http") or not url.hostname:
+                continue
+        except ValueError:
+            continue
+        try:
+            datetime.date.fromisoformat(report.get("as_of"))
+        except (ValueError, TypeError):
+            continue
+        holdings, seen, invalid = [], set(), False
+        for row in report["holdings"][:1000]:
+            try:
+                if isinstance(row["weight_pct"], bool):
+                    raise ValueError()
+                weight = float(row["weight_pct"])
+                code = str(row.get("id") or "").strip()
+                if not code or code in seen or not math.isfinite(weight) or not 0 < weight <= 100:
+                    raise ValueError()
+            except (ValueError, TypeError, KeyError):
+                invalid = True
+                break
+            seen.add(code)
+            holdings.append({"id": code, "name": str(row.get("name") or code), "weight_pct": weight,
+                "sector": str(row.get("sector") or "待识别"), "currency": str(row.get("currency") or "待识别")})
+        if holdings and not invalid and sum(row["weight_pct"] for row in holdings) <= 100.01:
+            result[symbol] = {"source_url": source, "as_of": report["as_of"], "holdings": holdings}
+    return result
+
+
+def normalize_add_plan_sessions(payload):
+    import math
+    import datetime
+
+    def valid_date(value):
+        if not isinstance(value, str) or len(value) != 10:
+            return False
+        try:
+            return datetime.date.fromisoformat(value).isoformat() == value
+        except ValueError:
+            return False
+
+    def valid_timestamp(value):
+        if not isinstance(value, str) or len(value) < 11 or value[10] != "T" or not valid_date(value[:10]):
+            return False
+        try:
+            datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return True
+        except ValueError:
+            return False
+
+    def snapshot(row):
+        if not isinstance(row, dict):
+            return None
+        try:
+            anchor, amount = float(row.get("anchor_price")), float(row.get("amount"))
+            if not all(math.isfinite(v) and v > 0 for v in (anchor, amount)):
+                return None
+            if not valid_date(row.get("period")) or not valid_date(row.get("expires")) or row["expires"] <= row["period"] or not valid_timestamp(row.get("created_at")):
+                return None
+            raw_levels = row.get("levels")
+            if not isinstance(raw_levels, list) or not 1 <= len(raw_levels) <= 4:
+                return None
+            levels = []
+            for item in raw_levels:
+                if not isinstance(item, dict):
+                    return None
+                drawdown, ratio = float(item.get("drawdown_pct")), float(item.get("ratio"))
+                if not math.isfinite(drawdown) or not 0.5 <= drawdown <= 30 or not math.isfinite(ratio) or ratio <= 0:
+                    return None
+                levels.append({"drawdown_pct": drawdown, "ratio": ratio})
+            total = sum(item["ratio"] for item in levels)
+            if not math.isfinite(total):
+                return None
+            levels.sort(key=lambda item: item["drawdown_pct"])
+            for item in levels:
+                item["ratio"] /= total
+        except (ValueError, TypeError, KeyError):
+            return None
+        return {"period": row["period"], "expires": row["expires"], "created_at": row["created_at"],
+            "anchor_price": anchor, "amount": amount,
+            "anchor": "cost" if row.get("anchor") == "cost" else "price",
+            "preset_label": str(row.get("preset_label") or "已保存档位"), "levels": levels}
+
+    if not isinstance(payload, dict):
+        return {}
+    result = {}
+    for symbol, row in list(payload.items())[:100]:
+        if not isinstance(symbol, str) or not symbol.isascii() or not symbol.isdigit() or len(symbol) != 6:
+            continue
+        current = snapshot(row)
+        if current is None:
+            continue
+        history = []
+        for item in (row.get("previous_snapshots") if isinstance(row.get("previous_snapshots"), list) else [])[-24:]:
+            historical = snapshot(item)
+            if historical is None or not valid_timestamp(item.get("closed_at")):
+                continue
+            try:
+                spent, remaining = float(item.get("spent")), float(item.get("remaining"))
+                if not math.isfinite(spent) or not math.isfinite(remaining) or spent < 0 or not 0 <= remaining <= historical["amount"]:
+                    continue
+            except (ValueError, TypeError):
+                continue
+            history.append({**historical, "closed_at": item["closed_at"], "spent": spent, "remaining": remaining})
+        result[symbol] = {"symbol": symbol, **current,
+            "baseline_buy_ids": [str(v) for v in row.get("baseline_buy_ids", [])[:5000]] if isinstance(row.get("baseline_buy_ids"), list) else [],
+            "previous_snapshots": history}
+    return result
 
 
 def normalize_add_plan(payload):
@@ -685,6 +810,8 @@ def normalize_plan(payload):
         "strategy_config": normalize_strategy_config(raw_config),
         "strategy_overrides": normalize_strategy_overrides(raw_overrides),
         "add_plan": normalize_add_plan(raw_add_plan),
+        "add_plan_sessions": normalize_add_plan_sessions(payload.get("add_plan_sessions")),
+        "fund_disclosures": normalize_fund_disclosures(payload.get("fund_disclosures")),
         "trading_cost": normalize_trading_cost(payload.get("trading_cost")),
         "pending_orders": normalize_pending_orders(payload.get("pending_orders")),
         "cash_reserve": normalize_cash_reserve(payload.get("cash_reserve")),

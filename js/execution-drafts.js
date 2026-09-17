@@ -9,7 +9,6 @@ import {
   stampInitialBuildStarted,
 } from "./decision-support.js";
 import { buildPoolHoldingsForAllocation, prepareHoldingsForAllocation } from "./pool-alloc.js";
-import { buildRebalanceSellSuggestions } from "./rebalance-sell.js";
 import { buildTradePlan } from "./trade-plan.js";
 import {
   buildSignalSnapshot,
@@ -38,7 +37,7 @@ function draftId(period, symbol, side = "buy") {
 
 function ensurePeriodSignalSnapshot({ plan, holdings, period, now, force = false }) {
   const existing = getCurrentSignalSnapshot(plan, period.start);
-  if (existing && !force) {
+  if (existing?.schema_version === 2 && !force) {
     return { plan, snapshot: existing, created: false };
   }
   const previousKeys = Object.keys(plan.signal_snapshots || {})
@@ -70,7 +69,7 @@ export function buildExecutionDraftsFromAllocation({
   if (stamped.changed) state.plan = stamped.plan;
   let plan = normalizePlan(state.plan || {});
   const period = planPeriod(plan, now);
-  const rawHoldings = buildPoolHoldingsForAllocation();
+  const rawHoldings = buildPoolHoldingsForAllocation({ now });
   const holdings = prepareHoldingsForAllocation(rawHoldings);
   const snap = ensurePeriodSignalSnapshot({
     plan,
@@ -89,7 +88,7 @@ export function buildExecutionDraftsFromAllocation({
   }
 
   const tradePlan = buildTradePlan({
-    plan,
+    plan: { ...plan, strategy: snapshot.strategy, strategy_config: snapshot.strategy_config },
     holdings,
     quotes: state.quotesBySymbol,
     tradingCost: plan.trading_cost,
@@ -151,7 +150,7 @@ export function sellSuggestionForSymbol(symbol, { now = new Date(), preferLive =
   if (!code) return null;
   const plan = state.plan || {};
   const period = planPeriod(plan, now);
-  const rawHoldings = buildPoolHoldingsForAllocation({ preferLive: preferLive || null });
+  const rawHoldings = buildPoolHoldingsForAllocation({ preferLive: preferLive || null, now });
   const holdings = prepareHoldingsForAllocation(rawHoldings).map((item) => {
     const etf = (state.etfs || []).find((row) => row.symbol === item.symbol);
     return {
@@ -159,25 +158,18 @@ export function sellSuggestionForSymbol(symbol, { now = new Date(), preferLive =
       shares: Math.max(0, Number(etf?.shares) || 0) || undefined,
     };
   });
-  const execution = planExecutionContext({ plan, holdings: rawHoldings, now });
-  const capitalBase = Math.max(0, Number(plan.capital_base) || 0);
-  const initialTargetPct = Math.min(100, Math.max(0, Number(plan.initial_target_pct) || 0));
-  const absoluteTargetsBySymbol = Object.fromEntries(
-    holdings.map((h) => [
-      h.symbol,
-      Math.round(capitalBase * (initialTargetPct / 100) * (Math.max(0, Number(h.targetWeight) || 0) / 100) * 100) /
-        100,
-    ]),
-  );
-  const live =
-    buildRebalanceSellSuggestions({
-      holdings,
-      quotes: state.quotesBySymbol,
-      plan,
-      now,
-      phase: execution.phase,
-      absoluteTargetsBySymbol,
-    }).find((row) => row.symbol === code) || null;
+  const snapshot = getCurrentSignalSnapshot(plan, period.start);
+  const frozen = snapshot?.schema_version === 2 ? snapshot : null;
+  const tradePlan = buildTradePlan({
+    plan: frozen ? { ...plan, strategy: frozen.strategy, strategy_config: frozen.strategy_config } : plan,
+    holdings, quotes: state.quotesBySymbol, now,
+    existingDrafts: state.executionDrafts || [],
+    sentimentByMarket: sentimentByMarketFromState(),
+    analysisRegistry: analysisRegistryFromConfig(),
+    signalSnapshotId: frozen?.id || null,
+    strategyFrozenBySymbol: frozen?.holdings,
+  });
+  const live = tradePlan.sellSuggestions.find((row) => row.symbol === code) || null;
   if (!live) return null;
   const draft =
     normalizeExecutionDrafts(state.executionDrafts || []).find(
@@ -187,11 +179,13 @@ export function sellSuggestionForSymbol(symbol, { now = new Date(), preferLive =
         item.side === "sell" &&
         item.status !== "skipped",
     ) || null;
+  const currentDraft = tradePlan.sellDrafts.find((item) => item.symbol === code);
   return {
     ...live,
     draftId: draft?.id || null,
     draftStatus: draft?.status || null,
-    readinessStatus: draft?.readiness_status || null,
+    readinessStatus: currentDraft?.readiness_status || draft?.readiness_status || null,
+    signalSnapshotId: frozen?.id || null,
   };
 }
 

@@ -4,6 +4,9 @@
 
 import { appConfig, state } from "./state.js";
 import { aiProviderLabel, escapeHtml, money } from "./utils.js";
+import { buildTradePlan } from "./trade-plan.js";
+import { planExecutionContext } from "./decision-support.js";
+import { isAnalysisUsable } from "./analysis-cache.js";
 
 /** 从全池分配结果组装后端 baseline。 */
 export function buildPortfolioReviewBaseline(pool, strategy = "valuation") {
@@ -60,6 +63,76 @@ function listBlock(title, items) {
     .join("")}</ul></div>`;
 }
 
+/** AI amounts remain research candidates until the same deterministic order planner approves them. */
+export function validatePortfolioAiAmounts(result, context = state, config = appConfig, now = new Date()) {
+  const reject = (reason) => ({ ok: false, reasons: [reason], allocations: [] });
+  if (result?.requires_execution_validation !== true) return reject("旧版分析未包含完整执行依据，请重新审视。");
+  const source = result.final_allocations || [];
+  const etfs = context.etfs || [];
+  const facts = new Map((result.holdings || []).map((row) => [row.symbol, row]));
+  const quotes = context.quotesBySymbol || {};
+  const plan = context.plan || {};
+  const canonical = (value) => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+    return value ?? null;
+  };
+  if (!result.review_plan || Object.entries(result.review_plan).some(([key, value]) =>
+    JSON.stringify(canonical(value)) !== JSON.stringify(canonical(plan[key]))
+  )) return reject("计划参数已变化或快照缺失，请重新审视。");
+  const holdings = etfs.map((item) => {
+    const quote = quotes[item.symbol];
+    const fact = facts.get(item.symbol);
+    const analysis = context.analysisCache?.[item.symbol];
+    const analyzed = isAnalysisUsable(analysis);
+    const price = Number(quote?.price);
+    const shares = Math.max(0, Number(item.shares) || 0);
+    return {
+      symbol: item.symbol, name: item.name, shares,
+      targetWeight: Number(item.target_weight) || 0,
+      marketValue: price > 0 ? shares * price : 0,
+      quoteMissing: !(price > 0),
+      indexCode: config?.etf?.analysis_registry?.[item.symbol]?.index_code || config?.etf?.analysis_support?.[item.symbol]?.index_code || fact?.index_code || "",
+      assetClass: analysis?.asset_class || fact?.asset_class || null,
+      pePct: analyzed ? analysis.valuation?.pe_percentile_10y ?? null : null,
+      grade: analyzed ? analysis.score?.grade ?? null : null,
+      spreadPct: analyzed ? analysis.spread?.percentile ?? null : null,
+      biasPct: analyzed ? analysis.technicals?.bias_pct ?? null : null,
+      analyzed,
+    };
+  });
+  if (!holdings.length || holdings.some((row) => row.quoteMissing)) return reject("持仓行情不完整，暂不展示调整金额。");
+  // A cached model opinion cannot authorize a different position or plan.
+  if (holdings.some((row) => {
+    const fact = facts.get(row.symbol);
+    return !fact || fact.shares !== row.shares || fact.target_weight !== row.targetWeight;
+  })) return reject("持仓或目标已变化，请重新审视。");
+  if (source.length !== new Set(source.map((row) => row.symbol)).size || source.some((row) =>
+    !holdings.some((holding) => holding.symbol === row.symbol) ||
+    !Number.isFinite(row.final_amount) || row.final_amount < 0
+  )) return reject("调整明细不完整，暂不展示调整金额。");
+  const execution = planExecutionContext({ plan, holdings, now });
+  const requested = source.reduce((total, row) => total + row.final_amount, 0);
+  const reserve = Math.max(0, Number(plan.cash_reserve?.balance) || 0);
+  const release = Math.min(reserve, Math.max(0, Number(result.baseline?.cash_release) || 0));
+  if (requested > execution.budget + release + 0.01) return reject("调整总额超过当前可用预算。");
+  if (execution.phase === "initial" && source.some((row) => {
+    const holding = holdings.find((item) => item.symbol === row.symbol);
+    const gap = Math.max(0, execution.targetAmount * holding.targetWeight / 100 - holding.marketValue);
+    return row.final_amount > gap + 0.01;
+  })) return reject("调整金额超过初始建仓剩余目标。");
+  const candidate = buildTradePlan({
+    plan, holdings, quotes, now, existingDrafts: context.executionDrafts || [],
+    poolAllocation: { allocations: source.map((row) => ({ ...row, amount: row.final_amount })) },
+  });
+  const positive = source.filter((row) => row.final_amount > 0);
+  const blocked = candidate.buyDrafts.filter((row) => row.readiness_status !== "ready" || !(row.shares > 0));
+  if (candidate.conflicts.length || blocked.length || candidate.buyDrafts.length !== positive.length) {
+    return reject(blocked.flatMap((row) => row.readiness_reasons || []).join("；") || "本期交易状态或方向冲突，暂不展示调整金额。");
+  }
+  return { ok: true, reasons: [], allocations: candidate.buyDrafts };
+}
+
 /** 渲染全池 AI 结果卡片（纯展示，不含结论数字复述）。 */
 export function portfolioReviewResultHtml(review) {
   if (!review || review.status === "idle") return "";
@@ -87,17 +160,20 @@ export function portfolioReviewResultHtml(review) {
   const changed = (result.final_allocations || []).filter((row) => row.changed);
   const headline = proposal.summary || "模型未提供摘要";
   // 摘要已承载主结论；旁路只补新信息（分节、修正明细、观察、限制）
-  const adjustmentsHtml = changed.length
+  const validation = changed.length ? validatePortfolioAiAmounts(result) : null;
+  const adjustmentsHtml = changed.length && validation.ok
     ? `<div class="ai-portfolio-adjustments" aria-label="建议修正">
-        <strong>建议修正</strong>
+        <strong>通过当前执行核验的预算提案</strong>
         <ul>${changed
           .map(
             (row) =>
-              `<li>${escapeHtml(row.name || row.symbol)}：规则 ${money(row.rule_amount)} → ${money(row.final_amount)}</li>`,
+              `<li>${escapeHtml(row.name || row.symbol)}：规则 ${money(row.rule_amount)} → ${money(row.final_amount)}（仍需在今日执行确认）</li>`,
           )
           .join("")}</ul>
       </div>`
-    : "";
+    : changed.length
+      ? listBlock("执行核验", ["暂不展示调整金额。" + validation.reasons.join("；")])
+      : "";
   return `
     <section class="panel-block ai-portfolio-card" aria-label="AI 全池审视">
       <div class="panel-heading">

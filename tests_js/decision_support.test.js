@@ -314,3 +314,17 @@ test("return correlation uses aligned daily returns", () => {
   assert.ok(correlation.value > 0.99);
   assert.equal(correlation.samples, 29);
 });
+
+test("order sizing solves proportional fees directly even for huge numbers of lots", () => {
+  const result = orderPreview(100000000, 0.001, { lot_size: 1, min_commission: 5, commission_rate_pct: 10, max_fee_ratio_pct: 0 });
+  assert.equal(result.shares, 90909090909);
+  assert.ok(result.totalCash <= 100000000);
+  assert.equal(result.fee, Math.round(result.estimatedAmount * 0.1 * 100) / 100);
+});
+test("order sizing never exceeds budget after cent rounding at fractional-cent boundaries", () => {
+  for (const budget of [100.004, 100.006, 2000, 2045]) {
+    const result = orderPreview(budget, 0.001, { lot_size: 1, min_commission: 5, commission_rate_pct: 0.03, max_fee_ratio_pct: 0 });
+    assert.ok(result.totalCash <= budget);
+    assert.equal(result.totalCash, Math.round((result.estimatedAmount + result.fee) * 100) / 100);
+  }
+});

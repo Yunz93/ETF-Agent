@@ -11,6 +11,7 @@ import { drawPriceChart, buyEventMarkers, sellEventMarkers } from "../chart.js";
 import { buildChartNarrative } from "../chart-narrative.js";
 import {
   cycleExecution,
+  planPeriod,
   orderPreview,
   cashReserveHintBalance,
   pendingOrderState,
@@ -18,7 +19,7 @@ import {
   returnCorrelation,
   riskMetrics,
 } from "../decision-support.js";
-import { ADD_PLAN_PRESETS, buildAddPlan } from "../add-plan.js";
+import { ADD_PLAN_PRESETS, buildAddPlan, createAddPlanSession, evaluateAddPlanSession } from "../add-plan.js";
 import {
   analysisCacheKey,
   fetchAnalysis,
@@ -35,9 +36,48 @@ import {
 } from "../decision-status.js";
 import { judgmentArrow, judgmentTone, pePercentileBias } from "../metric-judgment.js";
 import { sellSuggestionForSymbol } from "../execution-drafts.js";
+import { getUSMarketJudgment } from "../us-market-judgment.js";
 
 let indexChartBound = false;
 const forceInefficientBySymbol = new Set();
+
+const US_MARKET_STATE_LABELS = {
+  rate_drawdown: "利率型回撤",
+  economic_liquidity_crisis: "经济或流动性危机",
+  policy_shock: "政策冲击",
+  drawdown_unclassified: "回撤原因待核实",
+  normal_or_watch: "常态观察",
+  insufficient_data: "数据不足",
+};
+
+function usMarketJudgmentHtml(item, symbol) {
+  const evidence = item.evidence || {};
+  const execution = item.execution_by_symbol?.[symbol] || item.execution || {};
+  const risk = { low: "低", medium: "中", high: "高", unknown: "待核实" }[item.risk_level] || "待核实";
+  const lines = [
+    `市场状态：${US_MARKET_STATE_LABELS[item.market_state] || "待核实"} · 风险 ${risk}`,
+    `建议动作：${item.suggested_action || "等待数据"}`,
+    `触发条件：${(item.trigger_conditions || []).join("；") || "数据不足"}`,
+    `下一档：${item.next_add_condition || "等待数据"}`,
+    `场内执行：${execution.alternative || (execution.etf_buy_status === "check_execution_policy" ? "继续核对折溢价、价差与报价时效" : "折溢价待核实")}`,
+    `防守仓位：${item.defensive_rebalance || "保持原计划"}`,
+  ];
+  return `<ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>
+    <p class="muted">Fed 政策与盈利预期：${escapeHtml(evidence.fed_policy || "unknown")} / ${escapeHtml(evidence.earnings_outlook || "unknown")}；本面板仅供观察，实际金额以本期策略和执行拦截为准。</p>`;
+}
+
+async function paintUSMarketJudgment(code, symbol) {
+  const container = els.dividendContent?.querySelector("#usMarketJudgment");
+  if (!container) return;
+  try {
+    const payload = await getUSMarketJudgment();
+    if (state.analysisSymbol !== symbol || !container.isConnected) return;
+    const item = payload?.items?.[code];
+    container.innerHTML = item ? usMarketJudgmentHtml(item, symbol) : `<p class="muted">市场判断数据不足</p>`;
+  } catch {
+    if (container.isConnected) container.innerHTML = `<p class="muted">市场判断暂不可用</p>`;
+  }
+}
 
 const GRADE_TONES = { A: "grade-a", B: "grade-b", C: "grade-c", D: "grade-d", E: "grade-e" };
 
@@ -242,8 +282,8 @@ function scoreCardHtml() {
     })
     .join("");
   const backtestLine = backtest.samples
-    ? `同评分 ±${backtest.band} · ${backtest.samples} 独立样本 · ${backtest.horizon_days} 日均 <strong>${fmtSigned(backtest.avg_return_pct, 1, "%")}</strong> · 胜率 <strong>${fmt(backtest.win_rate_pct, 0, "%")}</strong>（${escapeHtml(backtest.label || "")} · ${fmtSigned(backtest.worst_pct, 1, "%")} ~ ${fmtSigned(backtest.best_pct, 1, "%")}）`
-    : "历史同评分独立样本不足，暂无回测参考。";
+    ? `同评分 ±${backtest.band} · ${backtest.samples} 非重叠历史样本 · ${backtest.horizon_days} 日均 <strong>${fmtSigned(backtest.avg_return_pct, 1, "%")}</strong> · 历史正收益占比 <strong>${fmt(backtest.win_rate_pct, 0, "%")}</strong>（${escapeHtml(backtest.label || "")} · ${fmtSigned(backtest.worst_pct, 1, "%")} ~ ${fmtSigned(backtest.best_pct, 1, "%")}）`
+    : escapeHtml(backtest.reason || "历史样本不足，不能估计未来收益概率。");
   const kicker = technicalFramework
     ? `${grade} 档 · 技术面诊断（无估值权重）`
     : `${grade} 档`;
@@ -262,6 +302,7 @@ function scoreCardHtml() {
         </div>
       </div>
       <div class="dividend-components">${components}</div>
+      <p class="muted">${escapeHtml((score.missing_required || []).length ? "缺少必需指标：" + score.missing_required.join("、") : "指标诊断不代表买入机会；收益增益尚未验证。")}</p>
       <p class="muted dividend-backtest-line">${backtestLine}</p>
     </section>
   `;
@@ -482,11 +523,7 @@ function aiReviewHtml(advice, context) {
     `;
   }
   const proposal = result.ai_proposal || {};
-  const policy = result.policy_decision || {};
   const baselineAmount = result.baseline_recommendation?.remaining_amount || 0;
-  const correctedAmount = result.final_recommendation?.amount || 0;
-  const useCorrection = review.selection !== "baseline";
-  const displayedAmount = useCorrection ? correctedAmount : baselineAmount;
   const actionLabels = {
     keep: "维持",
     increase: "提高",
@@ -508,8 +545,8 @@ function aiReviewHtml(advice, context) {
       </div>
       <div class="ai-review-summary">
         <div><span>规则剩余额度</span><strong>${money(baselineAmount)}</strong></div>
-        <div><span>AI 判断</span><strong>${escapeHtml(actionLabels[proposal.action] || proposal.action)} · ${fmt(policy.accepted_multiplier, 2)}×</strong></div>
-        <div><span>风控后额度</span><strong>${money(correctedAmount)}</strong></div>
+        <div><span>AI 判断</span><strong>${escapeHtml(actionLabels[proposal.action] || proposal.action)}（研究意见）</strong></div>
+        <div><span>金额核验</span><strong>以今日执行为准</strong></div>
         <div><span>可信度</span><strong>${escapeHtml(confidenceLabels[proposal.confidence] || "—")}</strong></div>
       </div>
       <details class="ai-result-fold" open>
@@ -521,11 +558,7 @@ function aiReviewHtml(advice, context) {
           ${watchItems.length ? `<div class="ai-review-watch"><strong>后续观察</strong>${aiListHtml(watchItems)}</div>` : ""}
         </div>
       </details>
-      <div class="ai-review-choice" role="group" aria-label="选择本期参考建议">
-        <button class="${useCorrection ? "primary-button" : "ghost-button"} compact" data-ai-choice="corrected" type="button">采用 AI 分析</button>
-        <button class="${useCorrection ? "ghost-button" : "primary-button"} compact" data-ai-choice="baseline" type="button">保持规则建议</button>
-        <strong>当前参考：${money(displayedAmount)}</strong>
-      </div>
+      <p class="muted">AI 解释仅供研究，金额未经过完整交易计划核验。请使用今日执行中的规则额度与交易检查。</p>
     </section>
   `;
 }
@@ -850,12 +883,13 @@ function addPlanHtml(entry, price, advice, payload = null) {
   const config = state.plan?.add_plan;
   if (config && config.enabled === false) return "";
   if (!entry || !(entry.shares > 0)) return "";
-  if (advice?.canAdd !== true) return "";
+  const session = state.plan?.add_plan_sessions?.[entry.symbol];
+  if (!session && advice?.canAdd !== true) return "";
   const amount = Number(advice?.amount) || 0;
-  if (!(amount > 0)) return "";
+  if (!session && !(amount > 0)) return "";
 
   const assetClass = advice?.assetClass || payload?.asset_class || null;
-  const plan = buildAddPlan({
+  const plan = session ? evaluateAddPlanSession(session, { price, buys: state.buys, today: new Date().toLocaleDateString("sv-SE"), tradingCost: state.plan?.trading_cost }) : buildAddPlan({
     cost: entry.cost > 0 ? entry.cost : null,
     price,
     amount,
@@ -886,7 +920,7 @@ function addPlanHtml(entry, price, advice, payload = null) {
               <dl>
                 <div>
                   <dt>距离现价</dt>
-                  <dd>${level.triggered ? "已触发" : distance != null ? `${fmtSigned(distance, 2, "%")}` : "—"}</dd>
+                  <dd>${level.completed ? "额度已用完" : plan.expired ? "已到期" : level.triggered ? "已到观察价" : distance != null ? `${fmtSigned(distance, 2, "%")}` : "—"}</dd>
                 </div>
                 <div>
                   <dt>预留额度</dt>
@@ -907,7 +941,9 @@ function addPlanHtml(entry, price, advice, payload = null) {
   return `
     <section class="panel-block dividend-add-plan" aria-label="分档策略">
       ${addPlanHeadingHtml(presetLabel)}
+      <p class="muted">${session ? `锚价 ${fmt(plan.anchorPrice, 3)} · 保存于 ${escapeHtml(session.created_at.slice(0, 10))} · ${escapeHtml(session.expires)} 到期 · 剩余额度 ${money(plan.remaining)}。新增买入记录会扣减额度。` : "尚未保存，以下为预览。保存后本期锚价与档位保持不变。"}触达价格仍需通过今日执行的预算、行情和费用检查。</p>
       ${levelsHtml}
+      <button type="button" class="ghost-button compact" data-save-add-plan>${session ? "作废旧计划并重新设锚" : "保存本期锚点与额度"}</button>
     </section>
   `;
 }
@@ -1142,7 +1178,7 @@ function vehicleQualityHtml(context) {
     ["当日成交量", optionalMetric(volume, (value) => `${value}（行情源口径）`)],
     ["基金规模", optionalMetric(metadata.fund_size_yi, (value) => `${fmt(value, 2)} 亿元`)],
     ["综合费率", optionalMetric(metadata.annual_fee_pct, (value) => `${fmt(value, 2)}% / 年`)],
-    ["跟踪误差", optionalMetric(metadata.tracking_error_pct, (value) => `${fmt(value, 2)}%`)],
+    ["价格偏离波动", optionalMetric(metadata.price_deviation_volatility_pct, (value) => `${fmt(value, 2)}%（收盘价口径，非净值跟踪误差）`)],
     ["溢价 / 折价", optionalMetric(metadata.premium_discount_pct, (value) => `${fmtSigned(value, 2, "%")}`)],
     ["买卖价差", optionalMetric(metadata.bid_ask_spread_pct, (value) => `${fmt(value, 3)}%`)],
   ];
@@ -1337,6 +1373,9 @@ function paintDividend() {
     },
     payload,
   );
+  const indexCode = String(payload.index_code || payload.index?.code ||
+    appConfig?.etf?.analysis_registry?.[context.symbol]?.index_code || "").toUpperCase();
+  const usIndexCode = indexCode === "SPX" || indexCode === "NDX" ? indexCode : null;
   els.dividendContent.innerHTML = `
     ${errorsHtml()}
     <div class="dividend-hero">
@@ -1352,6 +1391,10 @@ function paintDividend() {
       ${vehicleQualityHtml(context)}
       ${riskAndConfidenceHtml(context)}
     </div>
+    ${usIndexCode ? `<section class="panel-block decision-secondary" aria-label="美股市场判断">
+      <div class="panel-heading"><h2 class="section-title">美股市场判断 · ${usIndexCode === "SPX" ? "标普500" : "纳指100"}</h2></div>
+      <div id="usMarketJudgment"><p class="muted">正在核对指数与美债数据…</p></div>
+    </section>` : ""}
     <section class="panel-block dividend-chart-block">
       <div class="panel-heading">
         <h2 class="section-title">ETF 走势</h2>
@@ -1396,6 +1439,7 @@ function paintDividend() {
   const tooltip = els.dividendContent.querySelector("#dividendChartTooltip");
   drawIndexChart(payload, canvas, tooltip, buildIndexChartMarkers(payload));
   bindIndexChartRangeControls();
+  if (usIndexCode) void paintUSMarketJudgment(usIndexCode, context.symbol);
 }
 
 function sliceIndexChartPoints(points, rangeKey) {
@@ -1425,6 +1469,23 @@ function bindIndexChartRangeControls() {
   if (!els.dividendContent || indexChartBound) return;
   indexChartBound = true;
   els.dividendContent.addEventListener("click", (event) => {
+    if (event.target.closest?.("[data-save-add-plan]")) {
+      const entry = state.etfs.find((row) => row.symbol === state.analysisSymbol);
+      const advice = currentPeriodAdvice();
+      if (!entry || !(advice.amount > 0) || !advice.canAdd) return;
+      const payload = currentPayload();
+      const period = planPeriod(state.plan);
+      const remaining = decisionContext(advice).cycle.remainingAmount;
+      const session = createAddPlanSession({ symbol: entry.symbol, period: period.start, expires: period.end,
+        buys: state.buys, price: state.quotesBySymbol[entry.symbol]?.price ?? payload?.etf?.price, cost: entry.cost,
+        amount: remaining, previousSession: state.plan.add_plan_sessions?.[entry.symbol], assetClass: advice.assetClass || payload?.asset_class, mult: advice.mult,
+        config: state.plan.add_plan, tradingCost: state.plan.trading_cost });
+      if (!session) return;
+      state.plan = { ...state.plan, add_plan_sessions: { ...state.plan.add_plan_sessions, [entry.symbol]: session } };
+      persistWorkspace({ immediate: true });
+      paintDividend();
+      return;
+    }
     const forceBuy = event.target.closest?.("[data-force-inefficient]");
     if (forceBuy && els.dividendContent.contains(forceBuy)) {
       forceInefficientBySymbol.add(forceBuy.dataset.forceInefficient);

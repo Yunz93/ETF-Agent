@@ -15,6 +15,7 @@ from .dividend import analysis_support_map, get_dividend_dashboard
 from .quotes import get_etf_quotes, get_price_history, get_single_quote
 from .sentiment import get_market_sentiment
 from .gold_macro import get_gold_macro
+from .us_market_judgment import get_us_market_judgment
 from .health import get_data_health, get_runtime_info
 from .ai_providers import AIProviderError
 from .ai_service import ai_status, review_portfolio, review_recommendation, test_connection
@@ -100,6 +101,10 @@ class Handler(BaseHTTPRequestHandler):
                 refresh = query.get("refresh", ["0"])[0] in ("1", "true")
                 self.send_json(get_gold_macro(refresh=refresh))
                 return
+            if parsed.path == "/api/market/us-judgment":
+                refresh = query.get("refresh", ["0"])[0] in ("1", "true")
+                self.send_json(get_us_market_judgment(refresh=refresh))
+                return
             if parsed.path == "/api/workspace":
                 self.send_json(get_workspace())
                 return
@@ -150,7 +155,7 @@ class Handler(BaseHTTPRequestHandler):
         if length < 0:
             self.send_json({"error": "Content-Length 无效"}, status=400)
             return
-        if parsed.path == "/api/strategy/research" and length > 2_000_000:
+        if parsed.path in {"/api/strategy/research", "/api/strategy/simulate"} and length > 2_000_000:
             self.close_connection = True
             self.send_json(
                 {"status": "request_too_large", "limitations": ["研究请求不能超过 2 MB"]},
@@ -219,6 +224,15 @@ class Handler(BaseHTTPRequestHandler):
                         force=payload.get("force") is True,
                     )
                 )
+                return
+            if parsed.path == "/api/strategy/simulate":
+                from .strategy_simulation import run_strategy_simulation
+
+                status, body = run_strategy_simulation(
+                    payload,
+                    rate_key=str(self.client_address[0]) if self.client_address else "unknown",
+                )
+                self.send_json(body, status=status)
                 return
             if parsed.path == "/api/strategy/research":
                 from .portfolio_research import run_portfolio_research

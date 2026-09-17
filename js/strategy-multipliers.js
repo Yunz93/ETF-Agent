@@ -341,8 +341,15 @@ export function sentimentMarketForHolding(item = {}, sentimentConfig, registry =
   });
 }
 
+function optionalSignal(value) {
+  if (value == null || typeof value === "boolean" || typeof value === "object" || String(value).trim() === "") return NaN;
+  return Number(value);
+}
+
+const missingValuation = () => ({ mult: 1, band: "估值数据不足", hint: "无法判断估值，仅保留中性预算预览，不提高投入倍率" });
+
 function multiplierFromPeBands(pePct, bands) {
-  const p = Number(pePct);
+  const p = optionalSignal(pePct);
   if (!Number.isFinite(p)) return null;
   const pct = p <= 1 ? p * 100 : p;
   for (const band of bands) {
@@ -464,7 +471,7 @@ export function commodityDcaMultiplier({ grade, biasPct, goldMacro, strategyConf
  * pePct: 0–1 近十年分位；spreadPct: 0–1 股债利差历史分位（越高越便宜）。
  * biasPct: 年线乖离（%），商品类在无档位时用作技术面代理。
  * assetClass: dividend / commodity / bond / equity_growth / equity_core。
- * 无估值时多数策略退回评分档位；商品类走技术面逻辑，债券类定额参与。
+ * 估值策略缺少必需 PE 时中性预览；商品类走技术面逻辑，债券类定额参与。
  */
 export function dcaMultiplier({
   strategy = "valuation",
@@ -507,28 +514,29 @@ export function dcaMultiplier({
   if (id === "custom") {
     return (
       multiplierFromPeBands(pePct, config.pe_bands) ||
-      multiplierFromGrade(grade, config.grade_mult)
+      missingValuation()
     );
   }
 
   // valuation（默认）：按资产类别差异化
   if (cls === "dividend") {
+    if (!Number.isFinite(optionalSignal(pePct))) return missingValuation();
     const mixed = dividendMixedPct(pePct, spreadPct);
     if (mixed != null) {
       const result = multiplierFromPeBands(mixed, DEFAULT_PE_BANDS);
       if (result) {
         return {
           ...result,
-          hint: `${result.hint}（PE 分位 + 股债利差分位混合）`,
+          hint: `${result.hint}（${Number.isFinite(optionalSignal(spreadPct)) ? "PE 分位 + 股债利差分位混合" : "仅 PE 分位，历史利差分位不足"}）`,
         };
       }
     }
-    return multiplierFromGrade(grade, DEFAULT_GRADE_MULT);
+    return missingValuation();
   }
 
   // 成长类：定额 + 极端高估保护（不再使用 GROWTH_PE_BANDS 网格）
   if (cls === "equity_growth") {
-    const p = Number(pePct);
+    const p = optionalSignal(pePct);
     if (Number.isFinite(p)) {
       const pct01 = p <= 1 ? p : p / 100;
       if (pct01 >= 0.95) {
@@ -549,20 +557,19 @@ export function dcaMultiplier({
 
   return (
     multiplierFromPeBands(pePct, DEFAULT_PE_BANDS) ||
-    multiplierFromGrade(grade, DEFAULT_GRADE_MULT)
+    missingValuation()
   );
 }
 
-/** 红利类：PE 分位与「1−利差分位」各 50% 混合；仅一方可用时用可用侧。 */
+/** 红利类：PE 为必需；有利差历史时各占 50%，否则仅使用 PE。 */
 function dividendMixedPct(pePct, spreadPct) {
-  const pe = Number(pePct);
-  const spread = Number(spreadPct);
+  const pe = optionalSignal(pePct);
+  const spread = optionalSignal(spreadPct);
   const hasPe = Number.isFinite(pe);
   const hasSpread = Number.isFinite(spread);
   const norm = (value) => (value <= 1 ? value : value / 100);
   if (hasPe && hasSpread) return norm(pe) * 0.5 + (1 - norm(spread)) * 0.5;
   if (hasPe) return norm(pe);
-  if (hasSpread) return 1 - norm(spread);
   return null;
 }
 

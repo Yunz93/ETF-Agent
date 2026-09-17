@@ -1,5 +1,6 @@
+import { normalizeFundDisclosures } from "./portfolio-risk.js";
 import { DEFAULT_TARGET_WEIGHTS } from "./constants.js";
-import { normalizeAddPlanConfig } from "./add-plan.js";
+import { normalizeAddPlanConfig, normalizeAddPlanSessions } from "./add-plan.js";
 import { hasInvestmentGoal, normalizeInvestmentGoal } from "./portfolio-goal.js";
 import {
   DEFAULT_EXECUTION_POLICY,
@@ -111,23 +112,27 @@ export function clampWeight(value) {
   return Math.min(100, Math.round(number * 100) / 100);
 }
 
+function signalNumber(value) {
+  return value == null || value === "" || typeof value === "boolean" ? NaN : Number(value);
+}
+
 function normalizeSignalHolding(row) {
   if (!row || typeof row !== "object") return null;
-  const pe = Number(row.pe_pct);
-  const base = Number(row.base_mult);
-  const sent = Number(row.sentiment_mult);
-  const eff = Number(row.effective_mult);
-  const score = Number(row.sentiment_score);
+  const pe = signalNumber(row.pe_pct);
+  const base = signalNumber(row.base_mult);
+  const sent = signalNumber(row.sentiment_mult);
+  const eff = signalNumber(row.effective_mult);
+  const score = signalNumber(row.sentiment_score);
   const bandIndex = Number.parseInt(row.band_index, 10);
   return {
     pe_pct: Number.isFinite(pe) ? Math.round(pe * 1e4) / 1e4 : null,
     grade: row.grade != null ? String(row.grade).toUpperCase() : null,
     asset_class: row.asset_class != null ? String(row.asset_class) : null,
-    spread_pct: Number.isFinite(Number(row.spread_pct))
-      ? Math.round(Number(row.spread_pct) * 1e4) / 1e4
+    spread_pct: Number.isFinite(signalNumber(row.spread_pct))
+      ? Math.round(signalNumber(row.spread_pct) * 1e4) / 1e4
       : null,
-    bias_pct: Number.isFinite(Number(row.bias_pct))
-      ? Math.round(Number(row.bias_pct) * 1e4) / 1e4
+    bias_pct: Number.isFinite(signalNumber(row.bias_pct))
+      ? Math.round(signalNumber(row.bias_pct) * 1e4) / 1e4
       : null,
     sentiment_market: row.sentiment_market != null ? String(row.sentiment_market) : null,
     sentiment_score: Number.isFinite(score) ? score : null,
@@ -161,6 +166,7 @@ export function normalizeSignalSnapshots(value) {
     entries.push({
       period,
       snapshot: {
+        schema_version: Number(raw.schema_version) || 1,
         id: String(raw.id || "").trim() || `sig_${period}`,
         period,
         created_at: String(raw.created_at || "").trim() || null,
@@ -351,12 +357,14 @@ export function normalizePlan(plan) {
       plan.strategy_overrides ?? plan.strategyOverrides,
     ),
     add_plan: normalizeAddPlanConfig(plan.add_plan ?? plan.addPlan),
+    add_plan_sessions: normalizeAddPlanSessions(plan.add_plan_sessions),
     trading_cost: normalizeTradingCost(plan.trading_cost),
     pending_orders: normalizePendingOrders(plan.pending_orders),
     cash_reserve: normalizeCashReserve(plan.cash_reserve ?? plan.cashReserve),
     execution_policy: normalizeExecutionPolicy(plan.execution_policy ?? plan.executionPolicy),
     signal_snapshots: normalizeSignalSnapshots(plan.signal_snapshots ?? plan.signalSnapshots),
     investment_goal: normalizeInvestmentGoal(plan.investment_goal),
+    fund_disclosures: normalizeFundDisclosures(plan.fund_disclosures),
   };
 }
 
@@ -371,7 +379,7 @@ export function normalizeWorkspaceEntries(items = []) {
       const targetRaw = item.target_weight ?? item.targetWeight;
       return {
         symbol,
-        name: String(item.name || ""),
+        name: symbol === "513100" && item.name === "纳指100ETF博时" ? "纳指100ETF国泰" : String(item.name || ""),
         shares: Number(item.shares) > 0 ? Number(item.shares) : 0,
         cost: Number(item.cost) > 0 ? Number(item.cost) : 0,
         target_weight: clampWeight(targetRaw),
@@ -545,6 +553,8 @@ export function planPersistenceScore(plan) {
   const overrides = plan.strategy_overrides;
   if (overrides && typeof overrides === "object" && Object.keys(overrides).length) score += 1;
   if (hasInvestmentGoal(plan.investment_goal)) score += 2;
+  if (Object.keys(normalizeFundDisclosures(plan.fund_disclosures)).length) score += 2;
+  if (Object.keys(normalizeAddPlanSessions(plan.add_plan_sessions)).length) score += 2;
   return score;
 }
 
@@ -568,8 +578,12 @@ export function parseWorkspaceTimestamp(value) {
   ).getTime();
 }
 
+function hasSavedResearch(plan) {
+  return hasInvestmentGoal(plan?.investment_goal) || Object.keys(normalizeFundDisclosures(plan?.fund_disclosures)).length > 0 || Object.keys(normalizeAddPlanSessions(plan?.add_plan_sessions)).length > 0;
+}
+
 export function chooseWorkspaceSource(remote, local) {
-  if (Array.isArray(remote?.etfs) && (remote.etfs.length || hasInvestmentGoal(remote.plan?.investment_goal))) {
+  if (Array.isArray(remote?.etfs) && (remote.etfs.length || hasSavedResearch(remote.plan))) {
     // Local cache may be newer when a debounced server PUT did not finish before reload.
     // But never let a weaker/default plan stampede over a richer server plan just because
     // hydrate rewrote local updated_at with a fresher ISO timestamp.
@@ -578,7 +592,7 @@ export function chooseWorkspaceSource(remote, local) {
     }
     return { source: "server", payload: remote, migrate: false };
   }
-  if (Array.isArray(local?.etfs) && (local.etfs.length || hasInvestmentGoal(local.plan?.investment_goal))) {
+  if (Array.isArray(local?.etfs) && (local.etfs.length || hasSavedResearch(local.plan))) {
     return { source: "local-cache", payload: local, migrate: true };
   }
   return { source: "default-pool", payload: null, migrate: true };

@@ -41,6 +41,7 @@ def fetch_csindex_history(index_code, start_date="20140101"):
             {
                 "date": f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}",
                 "close": float(close),
+                "ohlc_complete": row.get("high") is not None and row.get("low") is not None,
                 "high": float(row.get("high") or close),
                 "low": float(row.get("low") or close),
                 "change_pct": float(row["changePct"]) if row.get("changePct") is not None else None,
@@ -93,6 +94,7 @@ def fetch_sina_index_history(index_code, start_date="20140101", market_symbol=No
                 "close": close,
                 "high": high,
                 "low": low,
+                "ohlc_complete": item.get("high") is not None and item.get("low") is not None,
                 "change_pct": round(change_pct, 2) if change_pct is not None else None,
                 "pe": None,
             }
@@ -170,16 +172,18 @@ def _history_cache_as_index_rows(symbol, start_date="20140101"):
             date = str((point or {}).get("date") or "")[:10]
             try:
                 close = float(point.get("close"))
+                high = float(point.get("high"))
+                low = float(point.get("low"))
             except (TypeError, ValueError, AttributeError):
                 continue
-            if len(date) != 10 or date < start:
+            if len(date) != 10 or date < start or not (0 < low <= close <= high):
                 continue
             rows.append(
                 {
                     "date": date,
                     "close": close,
-                    "high": close,
-                    "low": close,
+                    "high": high,
+                    "low": low,
                     "change_pct": None,
                     "pe": None,
                 }
@@ -252,23 +256,7 @@ def fetch_index_history(index_code, start_date="20140101", preferred_source=None
     raise RuntimeError("；".join(errors) or f"无法获取 {code} 历史数据")
 
 def fill_missing_pe(index_rows, pe):
-    """非中证源日线无 PE 时，按「盈利恒定」假设用当前 PE 随价格回推填充。
-
-    pe_t ≈ pe_now × close_t / close_now（恒定 PE 填充会让股债利差历史只随国债
-    变动，几乎失真；价格回推能保留估值波动，历史分位与回测才有意义）。
-    """
-    if pe is None or not index_rows:
-        return index_rows
-    anchor_close = None
-    for row in reversed(index_rows):
-        if row.get("close"):
-            anchor_close = float(row["close"])
-            break
-    if not anchor_close:
-        return index_rows
-    for row in index_rows:
-        if row.get("pe") is None and row.get("close"):
-            row["pe"] = round(float(pe) * float(row["close"]) / anchor_close, 4)
+    """Compatibility no-op: current earnings must never be backfilled into history."""
     return index_rows
 
 def fetch_danjuan_valuation(danjuan_code):

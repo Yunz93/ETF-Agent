@@ -4,6 +4,13 @@ import assert from "node:assert/strict";
 import { buildPoolHoldingsForAllocation } from "../js/pool-alloc.js";
 import { state } from "../js/state.js";
 
+function analysisFields() {
+  return { asset_class: "equity_core", updated_at: new Date().toISOString(),
+    valuation: { pe: 12, pe_percentile_10y: 0.5 },
+    technicals: { bias_pct: 0, rsi14: 50 }, spread: { value: 2 },
+    score: { status: "diagnostic_only", grade: "C", total: 60, missing_required: [] } };
+}
+
 test("pool allocation input combines holdings, live quotes, and analysis cache", () => {
   state.etfs = [
     { symbol: "512890", name: "红利低波ETF", shares: 1000, target_weight: 60 },
@@ -16,8 +23,8 @@ test("pool allocation input combines holdings, live quotes, and analysis cache",
   state.analysisSymbol = "512890";
   state.analysisCache = {
     "512890": {
-      supported: true,
-      valuation: { pe_percentile_10y: 0.25 },
+      supported: true, ...analysisFields(),
+      valuation: { pe: 12, pe_percentile_10y: 0.25 },
       score: { grade: "B" },
     },
   };
@@ -36,10 +43,10 @@ test("pool allocation input passes assetClass and spreadPct from analysis cache"
   state.analysisSymbol = null;
   state.analysisCache = {
     "512890": {
-      supported: true,
+      supported: true, ...analysisFields(),
       asset_class: "dividend",
-      valuation: { pe_percentile_10y: 0.4 },
-      spread: { percentile: 0.72 },
+      valuation: { pe: 12, pe_percentile_10y: 0.4 },
+      spread: { value: 2, percentile: 0.72 },
       score: { grade: "B" },
     },
   };
@@ -91,13 +98,13 @@ test("missing quote with shares marks quoteMissing and null marketValue", () => 
 
 test("analysis freshness rejects errors and expired payloads", async () => {
   const { isAnalysisFresh, isAnalysisUsable } = await import("../js/analysis-cache.js");
-  assert.equal(isAnalysisUsable({ supported: true }), true);
+  assert.equal(isAnalysisUsable({ supported: true, ...analysisFields() }), true);
   assert.equal(isAnalysisUsable({ supported: false }), false);
   assert.equal(isAnalysisUsable({ error: "x" }), false);
-  assert.equal(isAnalysisFresh({ supported: true, updated_at: new Date().toISOString() }), true);
+  assert.equal(isAnalysisFresh({ supported: true, ...analysisFields(), updated_at: new Date().toISOString() }), true);
   assert.equal(
     isAnalysisFresh({
-      supported: true,
+      supported: true, ...analysisFields(),
       updated_at: new Date(Date.now() - 31 * 60_000).toISOString(),
     }),
     false,

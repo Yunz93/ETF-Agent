@@ -47,6 +47,7 @@ class PortfolioResearchTests(unittest.TestCase):
         self.assertEqual(body["goal_horizon_status"], "insufficient_history")
         self.assertFalse(body["methodology"]["out_of_sample"])
         self.assertFalse(body["methodology"]["future_target_validated"])
+        self.assertEqual(body["configured_strategy_replay"]["status"], "insufficient_history")
         for row in body["strategies"]:
             self.assertEqual(row["annualized_return_pct"], 0)
             self.assertEqual(row["net_profit"], 0)

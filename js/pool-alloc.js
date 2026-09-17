@@ -2,11 +2,11 @@ import { PLAN_CADENCE_LABELS } from "./constants.js";
 import { appConfig, state } from "./state.js";
 import { escapeAttr, escapeHtml, money, resolveEtfDisplayName } from "./utils.js";
 import { allocatePoolBudget, strategyLabel } from "./strategy.js";
-import { planExecutionContext } from "./decision-support.js";
+import { planExecutionContext, planPeriod } from "./decision-support.js";
 import {
   analysisCacheKey,
   analysisPrefetchIsPreliminary,
-  isAnalysisUsable,
+  isAnalysisFresh,
 } from "./analysis-cache.js";
 import {
   analysisRegistryFromConfig,
@@ -14,6 +14,7 @@ import {
 } from "./market-sentiment.js";
 import { goldMacroFromState } from "./gold-macro.js";
 import { portfolioReviewResultHtml } from "./ai-portfolio.js";
+import { getCurrentSignalSnapshot } from "./signal-snapshot.js";
 import { applyIndexExposureGroups } from "./index-exposure.js";
 import {
   allocStatusChip,
@@ -41,7 +42,7 @@ function poolEntryDisplayName(entry, cached) {
 }
 
 /** 用持仓 + 分析缓存组装全池分配输入。 */
-export function buildPoolHoldingsForAllocation({ preferLive = null } = {}) {
+export function buildPoolHoldingsForAllocation({ preferLive = null, now = new Date() } = {}) {
   const live = preferLive && !preferLive.error ? preferLive : null;
   const liveSymbol = live?.symbol || state.analysisSymbol || null;
   let total = 0;
@@ -65,7 +66,7 @@ export function buildPoolHoldingsForAllocation({ preferLive = null } = {}) {
   return state.etfs.map((entry) => {
     const cached =
       live && liveSymbol === entry.symbol ? live : state.analysisCache[cacheKey(entry.symbol)];
-    const analyzed = isAnalysisUsable(cached);
+    const analyzed = isAnalysisFresh(cached, now instanceof Date ? now.getTime() : Number(now));
     const quoteMissing = Boolean(quoteMissingMap[entry.symbol]);
     const marketValue = quoteMissing
       ? null
@@ -98,7 +99,7 @@ export function buildPoolHoldingsForAllocation({ preferLive = null } = {}) {
       shares: Math.max(0, Number(entry.shares) || 0),
       pePct: analyzed ? cached?.valuation?.pe_percentile_10y : null,
       grade: analyzed ? cached?.score?.grade : null,
-      assetClass: analyzed ? cached?.asset_class || null : null,
+      assetClass: cached?.asset_class || appConfig?.etf?.analysis_registry?.[entry.symbol]?.asset_class || null,
       spreadPct: analyzed ? cached?.spread?.percentile ?? null : null,
       biasPct: analyzed ? cached?.technicals?.bias_pct ?? null : null,
       goldMacro: analyzed ? cached?.gold_macro || null : null,
@@ -192,13 +193,16 @@ function progressNoteHtml(holdings) {
   return "";
 }
 
-export function poolAllocationHtml({ highlightSymbol = null, clickable = true } = {}) {
-  const plan = state.plan || {};
+export function poolAllocationHtml({ highlightSymbol = null, clickable = true, now = new Date() } = {}) {
+  const livePlan = state.plan || {};
+  const snapshot = getCurrentSignalSnapshot(livePlan, planPeriod(livePlan, now).start);
+  const frozen = snapshot?.schema_version === 2 ? snapshot : null;
+  const plan = frozen ? { ...livePlan, strategy: frozen.strategy, strategy_config: frozen.strategy_config } : livePlan;
   const cadenceLabel = PLAN_CADENCE_LABELS[plan.cadence] || "每月";
   const dayLabel = plan.cadence === "monthly" ? `${plan.day || 1} 号` : `周${plan.day || 1}`;
-  const rawHoldings = buildPoolHoldingsForAllocation();
+  const rawHoldings = buildPoolHoldingsForAllocation({ now });
   const holdings = prepareHoldingsForAllocation(rawHoldings);
-  const execution = planExecutionContext({ plan, holdings: rawHoldings });
+  const execution = planExecutionContext({ plan, holdings: rawHoldings, now });
   const cashBalance = Number(plan.cash_reserve?.balance) || 0;
   const pool = allocatePoolBudget({
     budget: execution.budget,
@@ -212,6 +216,7 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
     analysisRegistry: analysisRegistryFromConfig(),
     goldMacro: goldMacroFromState(),
     cashReserve: cashBalance,
+    strategyFrozenBySymbol: frozen?.holdings,
   });
   const strategyName = strategyLabel(plan.strategy);
   const preliminary = analysisPrefetchIsPreliminary();
@@ -318,11 +323,14 @@ export function poolAllocationHtml({ highlightSymbol = null, clickable = true } 
 }
 
 /** 供外部触发 AI 审视时复用当前分配结果。 */
-export function currentPoolAllocationResult() {
-  const plan = state.plan || {};
-  const rawHoldings = buildPoolHoldingsForAllocation();
+export function currentPoolAllocationResult({ now = new Date() } = {}) {
+  const livePlan = state.plan || {};
+  const snapshot = getCurrentSignalSnapshot(livePlan, planPeriod(livePlan, now).start);
+  const frozen = snapshot?.schema_version === 2 ? snapshot : null;
+  const plan = frozen ? { ...livePlan, strategy: frozen.strategy, strategy_config: frozen.strategy_config } : livePlan;
+  const rawHoldings = buildPoolHoldingsForAllocation({ now });
   const holdings = prepareHoldingsForAllocation(rawHoldings);
-  const execution = planExecutionContext({ plan, holdings: rawHoldings });
+  const execution = planExecutionContext({ plan, holdings: rawHoldings, now });
   if (!(execution.budget > 0) || !holdings.length) return null;
   return allocatePoolBudget({
     budget: execution.budget,
@@ -336,5 +344,6 @@ export function currentPoolAllocationResult() {
     analysisRegistry: analysisRegistryFromConfig(),
     goldMacro: goldMacroFromState(),
     cashReserve: Number(plan.cash_reserve?.balance) || 0,
+    strategyFrozenBySymbol: frozen?.holdings,
   });
 }

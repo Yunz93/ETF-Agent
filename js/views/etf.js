@@ -13,7 +13,7 @@ import { drawPriceChart, buyEventMarkers, sellEventMarkers } from "../chart.js";
 import { setSourceStatus } from "../navigation.js";
 import { persistWorkspace } from "../workspace.js";
 import { currentPoolAllocationResult } from "../pool-alloc.js";
-import { renderPortfolioGoalPanels } from "./portfolio-goal.js";
+import { renderStrategySimulation } from "./strategy-simulation.js";
 import {
   buildPortfolioReviewBaseline,
   isPortfolioAiReady,
@@ -2118,7 +2118,7 @@ export function addBuyRecord() {
 export async function renderEtfPool({ refresh = false } = {}) {
   if (!els.etfRows) return;
   syncPlanForm();
-  renderPortfolioGoalPanels();
+  renderStrategySimulation();
   if (refresh) homeQuoteRefreshCooldownUntil = 0;
   await refreshQuotes(refresh);
   const execution = planExecutionContext({ plan: state.plan, holdings: currentPlanHoldings() });
@@ -2129,7 +2129,7 @@ export async function renderEtfPool({ refresh = false } = {}) {
   }
   renderInitialSummary();
   renderMetrics();
-  renderPortfolioGoalPanels();
+  renderStrategySimulation();
   syncHomeExecutionDrafts({ persist: true });
   renderHomeTodayCard();
   renderHomeReturnsPanel();

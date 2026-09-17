@@ -2,9 +2,27 @@ import { state } from "../state.js";
 import { escapeHtml } from "../utils.js";
 import { RESEARCH_LABELS, researchRequest, researchResultIsStale } from "../portfolio-research.js";
 
+import { runStrategyReplay, replayDataRequirements } from "../strategy-replay.js";
+
 const pct = (value) => Number.isFinite(value) ? `${value.toFixed(1)}%` : "暂无数据";
 let research = null;
 let controller = null;
+let replay = null;
+let replayImportId = 0;
+
+function downloadJson(value, name, compact = false) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, compact ? 0 : 2)], { type: "application/json" }));
+  const link = document.createElement("a"); link.href = url; link.download = name; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function replayHtml(result) {
+  if (result.status !== "ready") return `<p class="research-goal-note">完整策略历史不足，未计算收益。</p><ul>${(result.reasons || []).map(r => `<li>${escapeHtml(r)}</li>`).join("")}</ul>`;
+  return `<p class="research-goal-note">历史包回放完成。结果来自导入包内固定计划，不代表当前工作区配置已验证。</p>
+    <table class="goal-table"><thead><tr><th scope="col">策略</th><th scope="col">全期年化</th><th scope="col">后 30% 留出年化</th><th scope="col">日度最大回撤</th><th scope="col">佣金 / 滑点成本</th></tr></thead><tbody>${result.strategies.map(s => `<tr><th scope="row">${s.id === "configured" ? "包内配置策略" : "固定倍率同源基准"}</th><td>${pct(s.annualized_return_pct)}</td><td>${pct(s.holdout.annualized_return_pct)}</td><td>${pct(s.max_drawdown_pct)}</td><td>¥${s.fees.toFixed(2)} / ¥${s.slippage_cost.toFixed(2)}</td></tr>`).join("")}</tbody></table>
+    <p class="muted">时间留出段 ${escapeHtml(result.strategies[0].holdout.start)} 至 ${escapeHtml(result.strategies[0].holdout.end)}。固定倍率基准保留相同卖出纪律。未自动优化参数，亦非前瞻样本外验证。</p>
+    <details open><summary>回放假设与边界</summary><ul>${result.limitations.map(r => `<li>${escapeHtml(r)}</li>`).join("")}</ul></details>`;
+}
 
 function resultsHtml(result) {
   if (["invalid_request", "busy", "request_too_large"].includes(result.status)) return `<p class="research-goal-note">${(result.limitations || []).map(escapeHtml).join("；")}</p>`;
@@ -30,7 +48,38 @@ export function renderPortfolioResearch() {
     root.innerHTML = `<div class="plan-section-heading"><h3 class="plan-section-title">长期历史研究</h3><span class="goal-status-label">价格基准研究</span></div>
       <p class="muted">检查当前目标权重在不同历史起点的表现。使用 ETF 自身历史，缺少数据时显示缺口。</p>
       <form class="research-form"><label>月度研究预算（元）<input type="number" name="budget" min="1" max="100000000" step="1" required placeholder="仅用于研究，不修改定投计划" /></label><button type="submit" class="primary-button">获取历史并比较</button><button type="button" class="ghost-button" data-research-cancel hidden>取消</button><button type="button" class="ghost-button" data-research-export hidden>导出研究 JSON</button></form>
-      <p class="muted research-status" role="status">尚未运行。使用当前目标权重与交易费用；按月研究，独立于实际执行频率。</p><div data-research-result></div>`;
+      <p class="muted research-status" role="status">尚未运行。使用当前目标权重与交易费用；按月研究，独立于实际执行频率。</p><div data-research-result></div>
+      <details class="research-limits"><summary>完整策略回放与时间留出验证</summary><p class="muted">当前价格接口缺少原时点策略数据，无法直接验证完整策略。导入历史包后可复用实际交易规划；不修改持仓或计划。</p><ul>${replayDataRequirements().map(r => `<li>${escapeHtml(r)}</li>`).join("")}</ul>
+      <p><a href="/docs/STRATEGY_REPLAY.md" target="_blank" rel="noopener">历史包格式与计算方法</a></p>
+      <label>导入历史 JSON（最多 20 MB）<input type="file" accept=".json,application/json" data-replay-file /></label><button type="button" class="ghost-button" data-replay-export hidden>导出可重放历史</button><button type="button" class="ghost-button" data-replay-report hidden>导出回放报告</button>
+      <p role="status" data-replay-status>尚未导入，完整策略验证不可用。</p><div data-replay-result></div></details>`;
+    root.querySelector("[data-replay-file]").addEventListener("change", async (event) => {
+      const file = event.target.files?.[0]; if (!file) return;
+      const importId = ++replayImportId;
+      const status = root.querySelector("[data-replay-status]");
+      status.textContent = "正在校验历史包并回放…";
+      try {
+        if (file.size > 20 * 1024 * 1024) throw new Error("too_large");
+        const parsed = JSON.parse(await file.text());
+        if (importId !== replayImportId) return;
+        const input = parsed.input || parsed;
+        if (new Blob([JSON.stringify(input)]).size > 20 * 1024 * 1024) throw new Error("too_large");
+        const result = runStrategyReplay(input);
+        replay = { input, result };
+        root.querySelector("[data-replay-result]").innerHTML = replayHtml(result);
+        root.querySelector("[data-replay-export]").hidden = false;
+        root.querySelector("[data-replay-report]").hidden = false;
+        status.textContent = result.status === "ready" ? "历史包回放完成，未修改工作区。" : "历史包缺少必要数据，未输出收益。";
+      } catch {
+        if (importId !== replayImportId) return;
+        replay = null; root.querySelector("[data-replay-export]").hidden = true;
+        root.querySelector("[data-replay-report]").hidden = true;
+        root.querySelector("[data-replay-result]").textContent = "";
+        status.textContent = "无法读取：请选择不超过 20 MB 的有效 JSON 历史包。";
+      }
+    });
+    root.querySelector("[data-replay-export]").addEventListener("click", () => { if (replay) downloadJson(replay.input, "strategy-replay-history.json", true); });
+    root.querySelector("[data-replay-report]").addEventListener("click", () => { if (replay) downloadJson(replay.result, "strategy-replay-report.json"); });
     const form = root.querySelector("form");
     form.elements.budget.value = state.plan?.cadence === "monthly" && state.plan?.amount > 0 ? Math.round(state.plan.amount) : "";
     form.elements.budget.addEventListener("input", () => {

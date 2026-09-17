@@ -30,6 +30,19 @@ def _pe_series(months):
 
 
 class PortfolioBacktestTests(unittest.TestCase):
+    def test_discounted_pe_multiplier_reduces_deployment_not_only_relative_weights(self):
+        dates = ["2020-01-28", "2020-02-28"]
+        kwargs = dict(month_dates=dates, prices={"510300": {d: 10 for d in dates}},
+                      pe_series={"510300": {"2020-01-01": 0.7}}, weights={"510300": 100},
+                      monthly_budget=2000, lot_size=1, min_commission=0, commission_rate=0,
+                      max_fee_ratio=0, pe_bands=[{"max_pct": 100, "mult": 0.5}])
+        discounted = run_strategy(mode="current", **kwargs)
+        fixed = run_strategy(mode="fixed", **kwargs)
+        self.assertEqual(discounted["ending_cash_pct"], 37.5)
+        self.assertEqual(fixed["ending_cash_pct"], 0)
+        self.assertEqual(discounted["contributed_capital"], fixed["contributed_capital"])
+        self.assertEqual(discounted["net_profit"], 0)
+
     def test_shared_performance_fixtures(self):
         fixture = json.loads((Path(__file__).parent / "fixtures/portfolio_performance.json").read_text())
         dates = fixture["dates"]

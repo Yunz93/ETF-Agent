@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { getPeriodAdvice, STANCE } from "../js/period-advice.js";
-import { setAppConfig } from "../js/state.js";
+import { setAppConfig, state } from "../js/state.js";
 
 test("period advice invests when strategy allocation assigns amount", () => {
+  state.quotesBySymbol = { "512890": { price: 1, market_timestamp: new Date().toISOString(), product_quality: { premium_discount_pct: 0, bid_ask_spread_pct: 0.05 } } };
   const advice = getPeriodAdvice({
     symbol: "512890",
     plan: { amount: 2000, strategy: "fixed" },

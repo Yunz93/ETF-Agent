@@ -552,10 +552,10 @@ class AIPolicyTests(unittest.TestCase):
         self.assertEqual(result["final_recommendation"]["amount"], 700)
         self.assertEqual(result["ai_proposal"]["focus_title"], "仓位约束压过低估值")
         sent_payload = provider.call_args.args[4]
-        self.assertEqual(sent_payload["output_version"], 4)
+        self.assertEqual(sent_payload["output_version"], 5)
         self.assertIn("portfolio", sent_payload)
         self.assertEqual(sent_payload["portfolio"]["budget"], 2000)
-        self.assertEqual(sent_payload["portfolio"]["weight_basis"], "cost")
+        self.assertEqual(sent_payload["portfolio"]["weight_basis"], "market")
         provider.assert_called_once()
         status = ai_status()
         self.assertEqual(status["usage_session"]["requests"], 1)
@@ -579,7 +579,7 @@ class AIPolicyTests(unittest.TestCase):
         self.assertNotIn("price", stripped["analysis"]["etf"])
         self.assertIn("price", base["analysis"]["etf"])  # 请求体仍完整
 
-    def test_portfolio_snapshot_uses_cost_weights(self):
+    def test_portfolio_snapshot_missing_prices_never_uses_cost_weights(self):
         portfolio = _portfolio_snapshot(
             {
                 "plan": {"amount": 2000},
@@ -591,8 +591,8 @@ class AIPolicyTests(unittest.TestCase):
         )
         self.assertEqual(portfolio["budget"], 2000)
         by_symbol = {row["symbol"]: row for row in portfolio["positions"]}
-        self.assertEqual(by_symbol["512890"]["actual_weight_pct"], 33.33)
-        self.assertEqual(by_symbol["510300"]["actual_weight_pct"], 66.67)
+        self.assertIsNone(by_symbol["512890"]["actual_weight_pct"])
+        self.assertIsNone(by_symbol["510300"]["actual_weight_pct"])
 
     def test_usage_normalizes_openai_response_keys(self):
         AI_USAGE_SESSION.update({"requests": 0, "prompt_tokens": 0, "completion_tokens": 0})
