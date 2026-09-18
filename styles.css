@@ -3676,6 +3676,63 @@ button:active {
 .research-form input { width: 100%; min-height: 42px; }
 
 /* The simulator reuses the plan surface, with a single comparison below it. */
+.portfolio-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 20px; padding: 20px 0; }
+.portfolio-stats > div { display: grid; gap: 8px; }
+.portfolio-stats span { color: var(--muted); font-size: 12px; }
+.portfolio-stats strong { font-size: 23px; font-variant-numeric: tabular-nums; }
+.portfolio-section { margin: 24px 0; padding: 20px 0; border-top: 1px solid var(--line); }
+.portfolio-section h2 { font-size: 18px; margin: 0 0 18px; }
+.portfolio-section h3 { font-size: 15px; margin-top: 24px; }
+.portfolio-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 16px; }
+.portfolio-heading h2 { margin: 0; }
+.portfolio-table-wrap { overflow-x: auto; }
+.portfolio-table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+.portfolio-table th, .portfolio-table td { padding: 13px 12px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+.portfolio-table th:first-child, .portfolio-table td:first-child { text-align: left; }
+.portfolio-table small { display: block; color: var(--muted); font-weight: 400; margin-top: 4px; }
+.portfolio-form { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; margin: 16px 0 24px; }
+.portfolio-form label { display: grid; gap: 8px; font-size: 12px; color: var(--muted); min-width: 150px; flex: 1 1 180px; }
+.portfolio-form label[hidden] { display: none; }
+.portfolio-form input, .portfolio-form select, .portfolio-form textarea { width: 100%; min-width: 0; min-height: 42px; }
+.portfolio-performance { display: block; width: 100%; height: auto; color: var(--accent-ink); }
+.portfolio-performance text { fill: var(--muted); font-size: 11px; }
+.portfolio-form button { min-height: 42px; }
+.portfolio-category-inputs { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 14px; }
+.portfolio-category-inputs label { min-width: 0; }
+.portfolio-section details { margin: 18px 0; }
+.portfolio-section summary, .portfolio-migration summary { cursor: pointer; font-size: 13px; }
+.portfolio-migration { padding: 20px; border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--radius-md); margin: 12px 0 24px; }
+.portfolio-migration h2 { margin: 0; font-size: 18px; }
+.portfolio-migration p { font-size: 13px; line-height: 1.7; }
+.portfolio-migration details { margin-top: 14px; }
+.portfolio-status:empty { display: none; }
+.portfolio-status, .portfolio-warning { font-size: 13px; line-height: 1.7; }
+.portfolio-warning { color: var(--warn); }
+.portfolio-empty { padding: 24px 0; color: var(--muted); }
+.portfolio-map { display: flex; gap: 0; height: 300px; margin-bottom: 24px; }
+.portfolio-map-category { display: flex; flex-direction: column; flex-grow: 0; flex-shrink: 0; min-width: 0; box-sizing: border-box; border: 2px solid var(--surface); padding: 0; overflow: hidden; background: color-mix(in srgb,var(--category-color) 14%,var(--surface)); border-radius: 8px; }
+.portfolio-map-category > button { display: grid; gap: 5px; height: 64px; flex-shrink: 0; padding: 8px; color: var(--text); text-align: left; overflow: hidden; white-space: nowrap; }
+.portfolio-map button { border: 0; background: transparent; cursor: pointer; }
+.portfolio-map button:active { transform: translateY(1px); }
+.portfolio-map-category > button span { font-size: 11px; }
+.portfolio-map-products { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 0; }
+.portfolio-map-products button { display: grid; align-content: center; gap: 6px; flex-basis: 0; min-height: 0; padding: 0 8px; text-align: left; background: color-mix(in srgb,var(--category-color) 12%,var(--surface)); border-radius: 4px; overflow: hidden; }
+.portfolio-map-products span, .portfolio-map-products small { font-size: 11px; }
+.portfolio-map-products strong { font-size: 15px; font-variant-numeric: tabular-nums; }
+.portfolio-map-channel { display: none; }
+.tone-0 { --category-color: #416ab5; }.tone-1 { --category-color: #447f75; }.tone-2 { --category-color: #ae852d; }
+.tone-3 { --category-color: #aa6170; }.tone-4 { --category-color: #786994; }.tone-5 { --category-color: #657588; }
+@media(max-width: 780px) {
+  .portfolio-map { height: 260px; }
+  .portfolio-map-category > button { font-size: 11px; }
+  .portfolio-map-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .portfolio-map-channel { display: block; }
+  .portfolio-map-products strong, .portfolio-map-products small { display: none; }
+  .portfolio-map-category > button span { overflow: hidden; text-overflow: ellipsis; }
+  .portfolio-form label { min-width: 0; flex-basis: 100%; }
+  .portfolio-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .portfolio-stats strong { font-size: 20px; }
+}
 .simulation-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 20px; margin: 20px 0; }
 .simulation-form > label { display: grid; gap: 8px; color: var(--muted); font-size: 12px; min-width: 0; }
 .simulation-form input, .simulation-form select { width: 100%; min-width: 0; min-height: 42px; }
@@ -3683,7 +3740,10 @@ button:active {
 .simulation-weight-list { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 13px; }
 .simulation-weight-list b { margin-left: 6px; font-variant-numeric: tabular-nums; }
 .simulation-rules { border-top: 1px solid var(--line); padding-top: 8px; font-size: 13px; line-height: 1.8; }
+.simulation-rules summary { cursor: pointer; font-weight: 600; }
 .simulation-rules p { margin: 6px 0; }
+.simulation-rules:not([open]) { padding-bottom: 0; }
+[data-simulation-status]:empty { display: none; }
 .simulation-actions { display: flex; gap: 12px; }
 .simulation-actions button:active { transform: translateY(1px); }
 .simulation-conclusion { border-top: 1px solid var(--line); padding: 20px 0 8px; }
@@ -4661,9 +4721,7 @@ button:active {
 }
 
 .target-allocation-heading { justify-content: space-between; }
-.target-allocation-heading h4,
-.target-allocation-heading p { margin: 0; }
-.target-allocation-heading p { margin-top: 4px; }
+.target-allocation-heading h4 { margin: 0; }
 .target-allocation-heading > strong { color: var(--accent); }
 .target-allocation-grid {
   display: grid;

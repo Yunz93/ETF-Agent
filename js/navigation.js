@@ -1,8 +1,9 @@
 import { MOBILE_SIDEBAR_MAX, PAGE_TITLES, SIDEBAR_COLLAPSE_MIN, SIDEBAR_KEY, THEME_KEY } from "./constants.js";
 import { appConfig, els, state } from "./state.js";
-import { registerRenderers, renderDividend, renderEtfPool, renderSettings, renderSidebarEtfs, openAnalysis } from "./views/render.js";
+import { callRenderer, registerRenderers, renderDividend, renderEtfPool, renderSettings, renderSidebarEtfs, openAnalysis } from "./views/render.js";
 
 export function switchView(view) {
+  if (state.portfolioMode && view === "etf") view = "plans";
   if (view === "dividend") {
     const symbol = state.analysisSymbol || defaultAnalysisSymbol();
     if (symbol) {
@@ -23,7 +24,8 @@ export function switchView(view) {
     else els.pageSubtitle.textContent = "";
   }
   document.querySelector(`#${view}View`)?.scrollIntoView({ block: "start" });
-  if (view === "home" || view === "etf") renderEtfPool();
+  if (state.portfolioMode && ["home", "assets", "transactions", "plans"].includes(view)) callRenderer("renderPortfolio");
+  else if (view === "home" || view === "etf") renderEtfPool();
   if (view === "settings") renderSettings();
   renderSidebarEtfs();
   closeMobileSidebar();

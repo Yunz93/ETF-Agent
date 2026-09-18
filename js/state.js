@@ -4,6 +4,8 @@ export function setAppConfig(nextConfig) {
 }
 
 export const state = {
+  portfolioMode: true,
+  portfolioEnvelope: null,
   // 定投计划内 ETF：[{symbol, name, shares, cost, target_weight, note}]
   etfs: [],
   // 买入记录：[{id, symbol, date, price, shares, fee, note, channel, otc_schedule_id}]

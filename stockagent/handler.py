@@ -11,6 +11,8 @@ from http.server import BaseHTTPRequestHandler
 from .paths import RESOURCE_ROOT, resolve_static_path
 from .config_store import public_config, save_config
 from .workspace_store import get_workspace, save_workspace
+from .portfolio_ledger import PortfolioError
+from .portfolio_service import PortfolioConflict, get_portfolio, portfolio_command
 from .dividend import analysis_support_map, get_dividend_dashboard
 from .quotes import get_etf_quotes, get_price_history, get_single_quote
 from .sentiment import get_market_sentiment
@@ -108,6 +110,13 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/workspace":
                 self.send_json(get_workspace())
                 return
+            if parsed.path == "/api/portfolio":
+                self.send_json(get_portfolio(refresh=query.get("refresh", ["0"])[0] == "1"))
+                return
+            if parsed.path == "/api/portfolio/performance":
+                from .portfolio_service import get_detail_performance
+                self.send_json(get_detail_performance(query.get("kind",[""])[0],query.get("id",[""])[0]))
+                return
             if parsed.path == "/api/health":
                 self.send_json(get_data_health())
                 return
@@ -131,6 +140,9 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/runtime":
                 self.send_json(get_runtime_info())
                 return
+        except PortfolioError as exc:
+            self.send_json({"error": str(exc)}, status=400)
+            return
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=500)
             return
@@ -192,6 +204,25 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
+            if parsed.path == "/api/portfolio/simulation":
+                from .portfolio_simulation import run
+                current = get_portfolio()
+                if not isinstance(payload,dict):
+                    raise PortfolioError("模拟请求必须为对象")
+                portfolio=current["portfolio"]
+                if payload.get("draft") is not None and not current["active"]:
+                    from .portfolio_ledger import validate_portfolio
+                    if payload.get("workspace_updated_at") != current["workspace_updated_at"]:
+                        raise PortfolioConflict("工作区已更新，请刷新后重新模拟")
+                    portfolio=validate_portfolio(payload["draft"])
+                elif "revision" in payload and (payload["revision"] != portfolio["revision"] or payload.get("workspace_updated_at") != current["workspace_updated_at"]):
+                    raise PortfolioConflict("工作区已更新，请刷新后重新模拟")
+                status, result = run(portfolio, payload, rate_key=self.client_address[0])
+                self.send_json(result, status=status)
+                return
+            if parsed.path == "/api/portfolio":
+                self.send_json(portfolio_command(payload))
+                return
             if parsed.path == "/api/config":
                 self.send_json(public_config(save_config(payload)))
                 return
@@ -250,6 +281,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(body, status=status)
                 return
             self.send_error(404)
+        except PortfolioConflict as exc:
+            self.send_json({"error": str(exc)}, status=409)
+        except PortfolioError as exc:
+            self.send_json({"error": str(exc)}, status=400)
         except AIProviderError as exc:
             self.send_json(
                 {"error": str(exc), "code": exc.code},

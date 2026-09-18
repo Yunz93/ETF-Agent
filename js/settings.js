@@ -1,4 +1,5 @@
-import { appConfig, els, runtimeInfo, setAppConfig } from "./state.js";
+import { appConfig, els, runtimeInfo, setAppConfig, state } from "./state.js";
+import { portfolioCommand } from "./portfolio-client.js";
 import { autoRefreshSettings, configureAutoRefresh } from "./auto-refresh.js";
 import { escapeAttr } from "./utils.js";
 import { registerRenderers } from "./views/render.js";
@@ -18,6 +19,26 @@ export async function loadAppConfig({ rerender = false } = {}) {
 
 export function renderSettings() {
   if (!els.settingsForm) return;
+  const recovery = document.querySelector("#portfolioRecovery");
+  if (recovery && state.portfolioMode) {
+    const backups = state.portfolioEnvelope?.backups || [];
+    recovery.innerHTML = backups.length ? `<details><summary>恢复本地备份</summary><form class="portfolio-form"><label>备份时间<select name="backup">${backups.map(b=>`<option value="${escapeAttr(b.name)}">${escapeAttr(new Date(b.saved_at).toLocaleString())} · ${escapeAttr(b.name)}</option>`).join("")}</select></label><button class="ghost-button">恢复此备份</button></form><p role="status"></p></details>` : "";
+    recovery.onsubmit = async event => {
+      event.preventDefault();
+      const status = recovery.querySelector('[role="status"]');
+      const name = new FormData(event.target).get("backup");
+      if(event.target.dataset.confirmBackup!==name) {
+        event.target.dataset.confirmBackup=name;
+        event.target.querySelector('button').textContent='确认恢复所选备份';
+        status.textContent='将替换当前组合；替换前自动另存当前账本。再次点击确认恢复。';
+        return;
+      }
+      try {
+        await portfolioCommand("rollback", {name});
+        window.location.reload();
+      } catch(error) { status.textContent = error.message; }
+    };
+  }
   const autoRefresh = autoRefreshSettings(appConfig);
   const ai = appConfig?.ai || {};
   const provider = ai.provider === "openai" ? "openai" : "deepseek";

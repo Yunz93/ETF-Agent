@@ -646,7 +646,7 @@ function renderTargetAllocationEditor() {
   if (root.dataset.symbols !== fingerprint) {
     root.dataset.symbols = fingerprint;
     root.dataset.dirty = "false";
-    root.innerHTML = `<div class="target-allocation-heading"><div><h4>目标仓位配置</h4><p class="muted">按整个 ETF 组合分配，合计需为 100%。修改后点击保存。</p></div><strong data-target-total></strong></div>
+    root.innerHTML = `<div class="target-allocation-heading"><h4>目标仓位配置</h4><strong data-target-total></strong></div>
       <form class="target-allocation-form" autocomplete="off"><div class="target-allocation-grid">${state.etfs.map((entry) => `<label><span>${escapeHtml(etfDisplayName(entry, state.quotesBySymbol[entry.symbol]))} <small>${escapeHtml(entry.symbol)}</small></span><span class="target-allocation-input"><input type="number" min="0" max="100" step="0.01" required data-target-symbol="${escapeAttr(entry.symbol)}" value="${holdingInputValue(entry.target_weight)}" aria-label="${escapeAttr(entry.symbol)} 目标仓位" /><span>%</span></span></label>`).join("")}</div>
       <div class="target-allocation-actions"><button class="primary-button" type="submit">保存目标仓位</button><button class="ghost-button" type="button" data-target-reset>撤销修改</button><p class="muted" data-target-status role="status"></p></div></form>`;
     const form = root.querySelector("form");
@@ -2378,6 +2378,7 @@ export function addBuyRecord() {
 }
 
 export async function renderEtfPool({ refresh = false } = {}) {
+  if (state.portfolioMode) return callRenderer(refresh ? "refreshPortfolio" : "renderPortfolio");
   if (!els.etfRows) return;
   syncPlanForm();
   renderStrategySimulation();
@@ -2406,6 +2407,7 @@ export async function renderEtfPool({ refresh = false } = {}) {
 }
 
 export function renderSidebarEtfs() {
+  if (state.portfolioMode) return callRenderer("renderPortfolioSidebar");
   if (!els.sidebarEtfList) return;
   if (els.sidebarPoolCount) els.sidebarPoolCount.textContent = String(state.etfs.length);
   if (!state.etfs.length) {

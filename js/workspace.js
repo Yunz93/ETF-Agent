@@ -38,6 +38,7 @@ export function buildWorkspacePayload() {
 export function buildBackupPayload() {
   return {
     ...buildWorkspacePayload(),
+    ...(state.portfolioMode && state.portfolioEnvelope?.active ? {version:11,portfolio:state.portfolioEnvelope.portfolio} : {}),
     settings: settingsSnapshot(appConfig),
   };
 }
@@ -234,6 +235,16 @@ export function renderWorkspaceStatus({ announce = false } = {}) {
 }
 
 export async function exportWorkspaceBackup() {
+  if (state.portfolioMode) {
+    try {
+      const response = await fetch("/api/workspace");
+      if (!response.ok) throw new Error("无法读取完整工作区");
+      const workspace = await response.json();
+      downloadBackup({...workspace, settings:settingsSnapshot(appConfig)});
+      setWorkspaceStatusText("已导出完整组合与设置", {status:"synced",clearAfterMs:3500});
+    } catch (error) { setWorkspaceStatusText(`导出失败：${error.message}`, {status:"error"}); }
+    return;
+  }
   try {
     const { readPlanFormIntoState } = await import("./views/etf.js");
     readPlanFormIntoState();
@@ -241,7 +252,12 @@ export async function exportWorkspaceBackup() {
     /* plan form may be unavailable */
   }
   writeLocalWorkspaceCache();
-  const payload = JSON.stringify(buildBackupPayload(), null, 2);
+  downloadBackup(buildBackupPayload());
+  setWorkspaceStatusText("已导出定投计划与设置", { status: "synced", clearAfterMs: 3500 });
+}
+
+function downloadBackup(data) {
+  const payload = JSON.stringify(data, null, 2);
   const blob = new Blob([payload], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -249,7 +265,28 @@ export async function exportWorkspaceBackup() {
   link.download = `stockagent-backup-${new Date().toISOString().slice(0, 10)}.json`;
   link.click();
   URL.revokeObjectURL(url);
-  setWorkspaceStatusText("已导出定投计划与设置", { status: "synced", clearAfterMs: 3500 });
+}
+
+let cancelPendingImport = null;
+
+function confirmPortfolioImport(payload, filename) {
+  cancelPendingImport?.();
+  const panel=document.querySelector('#portfolioImportReview');
+  if(!panel) return Promise.resolve(false);
+  panel.replaceChildren();
+  const summary=document.createElement('p');
+  summary.textContent=`${filename}：${payload.products?.length||0} 个产品，${payload.transactions?.length||0} 笔交易。导入前将自动备份当前组合。`;
+  const accept=document.createElement('button');
+  accept.type='button';accept.className='primary-button';accept.textContent='确认导入';
+  const cancel=document.createElement('button');
+  cancel.type='button';cancel.className='ghost-button';cancel.textContent='取消';
+  panel.append(summary,accept,cancel);
+  return new Promise(resolve=>{
+    const finish=value=>{panel.replaceChildren();cancelPendingImport=null;resolve(value);};
+    cancelPendingImport=()=>finish(false);
+    accept.onclick=()=>finish(true);
+    cancel.onclick=()=>finish(false);
+  });
 }
 
 export async function importWorkspaceBackup(event) {
@@ -258,6 +295,23 @@ export async function importWorkspaceBackup(event) {
   try {
     const text = await file.text();
     const payload = JSON.parse(text);
+    if (state.portfolioMode) {
+      if (!payload.portfolio) throw new Error("请选择包含新组合账本的备份；旧版数据请在迁移预览中核对");
+      if (!await confirmPortfolioImport(payload.portfolio,file.name)) return;
+      const {portfolioCommand} = await import("./portfolio-client.js");
+      await portfolioCommand("restore",payload.portfolio);
+      if(hasSettingsSnapshot(payload)) {
+        await applySettingsSnapshot(payload.settings);
+        const {configureAutoRefresh}=await import("./auto-refresh.js");
+        configureAutoRefresh();
+      }
+      const {renderSettings}=await import("./settings.js");
+      renderSettings();
+      const {renderPortfolio} = await import("./views/portfolio.js");
+      renderPortfolio();
+      setWorkspaceStatusText("已恢复组合，替换前数据已备份", {status:"synced",clearAfterMs:6000});
+      return;
+    }
     if (!Array.isArray(payload.etfs)) throw new Error("备份文件缺少 etfs 字段");
     applyWorkspace(payload, "import");
     await persistWorkspace({ immediate: true });

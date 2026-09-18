@@ -36,6 +36,7 @@ npm-debug.log*
 # Runtime workspace (local plan & holdings)
 workspace.json
 workspace.json.tmp
+workspace-before-portfolio-*.json
 
 # Local logs & agent artifacts
 logs/

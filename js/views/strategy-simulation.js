@@ -31,6 +31,7 @@ function chartHtml(strategies) {
 
 function resultsHtml(result, names) {
   const coverage = `<details class="simulation-details"><summary>数据来源与模拟规则</summary>
+    <p>本金收益率＝净盈亏 ÷ 累计投入；资金加权年化考虑每笔入金的时间。回撤按剔除入金影响的每日净值计算，不足一年不展示年化。</p>
     <ul>${(result.limitations || []).map(s => `<li>${escapeHtml(s)}</li>`).join("")}</ul>
     <div class="simulation-table-scroll" tabindex="0" role="region" aria-label="历史数据覆盖"><table class="goal-table simulation-table"><thead><tr><th>ETF / 来源</th><th>可用历史</th><th>记录数</th></tr></thead><tbody>${(result.coverage || []).map(r => `<tr><th>${escapeHtml(names[r.symbol] || r.symbol)}<small>${escapeHtml(r.symbol)} · ${escapeHtml(r.provider)}</small></th><td>${escapeHtml(r.start || "暂无")}<br>${escapeHtml(r.end || "")}</td><td>${r.observations}</td></tr>${r.error ? `<tr><td colspan="3">${escapeHtml(r.error)}</td></tr>` : ""}`).join("")}</tbody></table></div></details>`;
   if (result.status !== "ready") return `<p class="research-goal-note">${escapeHtml(result.limitations?.[0] || "本次未能完成模拟，请稍后重试。")}</p>${coverage}`;
@@ -46,20 +47,17 @@ function resultsHtml(result, names) {
   return `<div class="simulation-conclusion"><h4>${escapeHtml(comparisonText(a, b))}</h4>
     <p>${escapeHtml(result.start)} 至 ${escapeHtml(result.end)} · ${result.observations} 个共同交易日 · 两边各投入 ${money(a.contributed_capital)}</p>
     <p class="muted">本次参数：${result.cadence === "monthly" ? "每月" : "每周"}投入 ${money(result.budget)} · 回撤档距 ${result.dip_pct}% · 起始现金 ${money(result.initial_cash)}</p>
-    <p class="muted">价格历史模拟，分红与滑点未完整计入，不代表未来胜率。现金留得多通常会降低回撤，也可能错过上涨。</p></div>
+    <p class="muted">仅基于历史价格；分红与滑点未完整计入，不代表未来结果。</p></div>
     ${result.warnings.map(s => `<p class="research-goal-note">${escapeHtml(s)}</p>`).join("")}
     <table class="goal-table simulation-summary"><caption>相同组合、相同入金、相同费用</caption><thead><tr><th scope="col">组合对比</th><th scope="col">周期定投</th><th scope="col">逢低加仓</th></tr></thead>
     <tbody>${metrics.map(([label, fn]) => `<tr><th scope="row">${label}</th><td>${fn(a)}</td><td>${fn(b)}</td></tr>`).join("")}</tbody></table>
-    <p class="muted simulation-note">本金收益率＝净盈亏 ÷ 累计投入；资金加权年化考虑每笔入金的时间。回撤按剔除入金影响的每日净值计算，不足一年不展示年化。</p>
     ${chartHtml(result.strategies)}
     <h4>每只 ETF，哪种买法在这段历史里更好？</h4>
-    <p class="muted">以下金额均含该 ETF 分配到的闲置现金。同一只 ETF 的两种策略投入相同；各 ETF 都使用上方共同区间。</p>
     <div class="simulation-table-scroll" tabindex="0" role="region" aria-label="每只 ETF 的策略比较"><table class="goal-table simulation-table"><thead><tr><th scope="col">ETF / 比例</th><th scope="col">定投净盈亏<small>本金收益率 / 最大回撤</small></th><th scope="col">逢低净盈亏<small>本金收益率 / 最大回撤</small></th><th scope="col">历史净收益较高</th></tr></thead><tbody>${a.etfs.map((row, i) => {
       const dip = b.etfs[i]; const delta = dip.net_profit - row.net_profit;
-      return `<tr><th scope="row">${escapeHtml(names[row.symbol] || row.symbol)}<small>${escapeHtml(row.symbol)} · ${pct(row.weight)}</small></th><td>${money(row.net_profit)}<small>${pct(row.profit_on_capital_pct)} / ${pct(row.max_drawdown_pct)}</small><small>${row.trade_count} 笔 · 现金 ${money(row.ending_cash)}</small></td><td>${money(dip.net_profit)}<small>${pct(dip.profit_on_capital_pct)} / ${pct(dip.max_drawdown_pct)}</small><small>${dip.trade_count} 笔 · 现金 ${money(dip.ending_cash)}</small></td><td>${Math.abs(delta) < 0.01 ? "相同" : delta > 0 ? "逢低加仓" : "周期定投"}<small>${row.blocked_days || dip.blocked_days ? "有买入因现金、整手或费用条件未执行" : "仅比较本段历史"}</small></td></tr>`;
+      return `<tr><th scope="row">${escapeHtml(names[row.symbol] || row.symbol)}<small>${escapeHtml(row.symbol)} · ${pct(row.weight)}</small></th><td>${money(row.net_profit)}<small>${pct(row.profit_on_capital_pct)} / ${pct(row.max_drawdown_pct)}</small><small>${row.trade_count} 笔 · 现金 ${money(row.ending_cash)}</small></td><td>${money(dip.net_profit)}<small>${pct(dip.profit_on_capital_pct)} / ${pct(dip.max_drawdown_pct)}</small><small>${dip.trade_count} 笔 · 现金 ${money(dip.ending_cash)}</small></td><td>${Math.abs(delta) < 0.01 ? "相同" : delta > 0 ? "逢低加仓" : "周期定投"}${row.blocked_days || dip.blocked_days ? "<small>部分买入受现金、整手或费用限制</small>" : ""}</td></tr>`;
     }).join("")}</tbody></table></div>
     <details class="simulation-details"><summary>模拟买入记录（共 ${a.trade_count + b.trade_count} 笔）</summary>
-      <p class="muted">展示最近 200 笔模拟买入，可核对信号日和成交日。不会写入真实交易记录。</p>
       <div class="simulation-table-scroll simulation-trade-scroll" tabindex="0" role="region" aria-label="模拟交易明细"><table class="goal-table simulation-table"><thead><tr><th>策略 / ETF</th><th>信号日 → 成交日</th><th>份额 / 价格</th><th>金额 / 佣金</th></tr></thead><tbody>${result.strategies.flatMap(s => s.trades.map(t => ({ ...t, mode: s.id }))).sort((x, y) => x.date.localeCompare(y.date)).slice(-200).map(t => `<tr><th>${SIMULATION_LABELS[t.mode]}<small>${escapeHtml(t.symbol)}${t.drawdown_tier ? ` · 第 ${t.drawdown_tier} 档` : ""}</small></th><td>${t.signal_date || "按周期"}<br>→ ${t.date}</td><td>${t.shares} 份<small>¥${t.price}</small></td><td>${money(t.amount)}<small>${money(t.fee)}</small></td></tr>`).join("")}</tbody></table></div></details>
     ${coverage}`;
 }
@@ -77,7 +75,6 @@ export function renderStrategySimulation() {
   if (!root) return;
   if (!root.querySelector("form")) {
     root.innerHTML = `<div class="plan-section-heading"><h3 class="plan-section-title">同一组合，两种买法</h3></div>
-      <p class="muted">如果过去按期买入，或等回撤再买，结果会差多少？选择参数，用 ETF 的真实历史价格比较。</p>
       <form class="simulation-form">
         <label>组合比例<select name="basis"><option value="target">按目标比例</option><option value="holdings">按当前持仓市值比例</option></select></label>
         <label>历史区间<select name="years"><option value="1">最近 1 年</option><option value="3" selected>最近 3 年</option><option value="5">最近 5 年</option><option value="10">最近 10 年</option><option value="0">全部可用历史</option></select></label>
@@ -86,12 +83,12 @@ export function renderStrategySimulation() {
         <label>每回撤多少加一档（%）<input name="dip_pct" type="number" min="1" max="50" step="0.5" value="5" required list="simulationDipPresets" /><datalist id="simulationDipPresets"><option value="3"></option><option value="5"></option></datalist></label>
         <label>起始备用现金（元）<input name="initial_cash" type="number" min="0" max="100000000" step="1" value="0" required /></label>
         <div class="simulation-composition" data-simulation-composition></div>
-        <div class="simulation-rules"><p><strong>周期定投：</strong>每个周期的首个共同交易日入金并买入，未花完的钱留到下期。</p>
+        <details class="simulation-rules"><summary>计算规则与交易费用</summary><p><strong>周期定投：</strong>每个周期的首个共同交易日入金并买入，未花完的钱留到下期。</p>
         <p><strong>逢低加仓：</strong><span data-simulation-rule></span>每笔最多买入该 ETF 的一期额度，未触发的钱留作现金。</p>
-        <p class="muted">两边同日拿到同样的钱，按比例分给各 ETF，互不挪用。起始现金另加在首期；定投首期会一并投入，逢低仍按档位分批买。</p></div>
+        <p>两边同日拿到同样的钱，按比例分给各 ETF，互不挪用。起始现金另加在首期；定投首期会一并投入，逢低仍按档位分批买。</p><p data-simulation-cost></p><p>模拟不会修改持仓、计划或真实交易记录。</p></details>
         <div class="simulation-actions"><button type="submit" class="primary-button">开始比较</button><button type="button" class="ghost-button" data-simulation-cancel hidden>取消</button></div>
       </form>
-      <p role="status" data-simulation-status class="muted">选择参数后开始。模拟不会修改持仓或定投计划。</p>
+      <p role="status" data-simulation-status class="muted"></p>
       <div data-simulation-result></div>`;
     root.querySelector("form").addEventListener("input", event => {
       if (event.target.name) root.dataset[`${event.target.name}Edited`] = "true";
@@ -130,11 +127,11 @@ export function renderStrategySimulation() {
   try { current = requestFor(root); } catch (error) { issue = error.message; }
   const names = Object.fromEntries(state.etfs.map(e => [e.symbol, e.name || e.symbol]));
   root.querySelector("[data-simulation-composition]").innerHTML = issue ? `<p class="research-goal-note">${escapeHtml(issue)}</p>`
-    : `<p class="muted">本次组合 · ${Object.keys(current.target_weights).length} 只 ETF · 从空仓模拟新增投入</p><div class="simulation-weight-list">${Object.entries(current.target_weights).map(([s, w]) => `<span>${escapeHtml(names[s] || s)} <b>${w.toFixed(1)}%</b></span>`).join("")}</div>`;
+    : `<div class="simulation-weight-list">${Object.entries(current.target_weights).map(([s, w]) => `<span>${escapeHtml(names[s] || s)} <b>${w.toFixed(1)}%</b></span>`).join("")}</div>`;
   const threshold = Number(root.querySelector('[name="dip_pct"]').value);
   root.querySelector("[data-simulation-rule]").textContent = `各 ETF 相对模拟期间的历史高点每回撤 ${threshold || "设定"}% 加一档${threshold > 0 ? `（如 ${threshold}%、${threshold * 2}%、${threshold * 3}%）` : ""}，同档只买一次，创新高后重置。信号次日买入。`;
   const cost = current?.trading_cost;
-  root.querySelector("[data-simulation-composition]").insertAdjacentHTML("beforeend", cost ? `<p class="muted simulation-note">沿用计划费用：最低佣金 ${money(cost.min_commission)} · 费率 ${cost.commission_rate_pct}% · 费用占比上限 ${cost.max_fee_ratio_pct === 0 ? "不限制" : `${cost.max_fee_ratio_pct}%`} · ${cost.lot_size} 份起买</p>` : "");
+  root.querySelector("[data-simulation-cost]").textContent = cost ? `沿用计划费用：最低佣金 ${money(cost.min_commission)} · 费率 ${cost.commission_rate_pct}% · 费用占比上限 ${cost.max_fee_ratio_pct === 0 ? "不限制" : `${cost.max_fee_ratio_pct}%`} · ${cost.lot_size} 份起买` : "";
   root.querySelector('[type="submit"]').disabled = Boolean(active) || Boolean(issue);
   root.querySelector("[data-simulation-cancel]").hidden = !active;
   root.querySelector("[data-simulation-result]").setAttribute("aria-busy", String(Boolean(active)));

@@ -103,6 +103,10 @@ def resolve_static_path(url_path: str) -> Path | None:
     rel = rel.lstrip("/")
     if not rel or ".." in Path(rel).parts:
         return None
+    if any(part.startswith(".") for part in Path(rel).parts):
+        return None
+    if Path(rel).name.startswith("workspace") and Path(rel).suffix == ".json":
+        return None
 
     roots: list[Path] = []
     primary = resource_root()
@@ -130,4 +134,4 @@ DATA_DIR = _resolve_data_dir()
 ROOT = RESOURCE_ROOT
 CONFIG_PATH = DATA_DIR / "config.json"
 WORKSPACE_PATH = DATA_DIR / "workspace.json"
-WORKSPACE_LOCK = threading.Lock()
+WORKSPACE_LOCK = threading.RLock()

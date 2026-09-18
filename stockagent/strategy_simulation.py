@@ -25,7 +25,7 @@ def _period(day, cadence):
     return day[:7] if cadence == "monthly" else date.isocalendar()[:2]
 
 
-def simulate(mode, dates, prices, weights, budget, cadence, dip_pct, initial_cash, cost):
+def simulate(mode, dates, prices, weights, budget, cadence, dip_pct, initial_cash, cost, product_costs=None):
     """Pure deterministic engine; previous close is the only drawdown signal."""
     sleeves = {s: {"cash": 0.0, "shares": 0, "fees": 0.0, "peak": 0.0,
                    "tier": 0, "trades": [], "nav": 1.0, "nav_peak": 1.0,
@@ -55,9 +55,17 @@ def simulate(mode, dates, prices, weights, budget, cadence, dip_pct, initial_cas
             buy = funding_day if mode == "periodic" else tier > account["tier"]
             if buy:
                 cash = account["cash"] if mode == "periodic" else min(account["cash"], budget * weight / 100)
-                qty, amount, fee = _lot_buy(cash, prices[symbol][day], int(cost["lot_size"]),
-                                           cost["min_commission"], cost["commission_rate_pct"] / 100,
-                                           cost["max_fee_ratio_pct"] / 100)
+                terms = (product_costs or {}).get(symbol, cost)
+                if terms.get("kind") == "fund":
+                    cash = min(cash, terms.get("purchase_limit") or cash)
+                    rate = terms["commission_rate_pct"] / 100
+                    qty = math.floor(cash / (1 + rate) / prices[symbol][day] * 10000) / 10000 if cash >= terms.get("min_purchase", 1) else 0
+                    amount = qty * prices[symbol][day]
+                    fee = amount * rate
+                else:
+                    qty, amount, fee = _lot_buy(cash, prices[symbol][day], int(terms["lot_size"]),
+                                               terms["min_commission"], terms["commission_rate_pct"] / 100,
+                                               terms["max_fee_ratio_pct"] / 100)
                 # Rounded settlement must also fit the actual available cash.
                 if qty and amount + fee <= cash + 1e-8:
                     account["cash"] = max(0, account["cash"] - amount - fee)

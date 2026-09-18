@@ -8,6 +8,7 @@ from .defaults import DEFAULT_STRATEGY_CONFIG, DEFAULT_TARGET_WEIGHTS, DEFAULT_W
 from .investment_goal import normalize_investment_goal
 from .paths import WORKSPACE_LOCK, WORKSPACE_PATH
 from .symbols import as_of
+from .portfolio_ledger import PortfolioError, validate_portfolio
 
 STRATEGY_IDS = ("fixed", "valuation", "grade", "rebalance", "custom")
 
@@ -1026,6 +1027,9 @@ def normalize_workspace(payload):
         workspace["prefs"] = payload["prefs"]
 
     workspace["version"] = 10
+    if payload.get("portfolio") is not None:
+        workspace["portfolio"] = validate_portfolio(payload["portfolio"])
+        workspace["version"] = 11
     workspace["updated_at"] = payload.get("updated_at") or as_of(None)
     return workspace
 
@@ -1033,7 +1037,7 @@ def normalize_workspace(payload):
 def workspace_has_user_data(workspace):
     if not isinstance(workspace, dict):
         return False
-    return bool(workspace.get("etfs") or workspace.get("buys") or workspace.get("sells"))
+    return bool(workspace.get("portfolio") or workspace.get("etfs") or workspace.get("buys") or workspace.get("sells"))
 
 
 def get_workspace():
@@ -1061,7 +1065,7 @@ def get_workspace():
             with WORKSPACE_PATH.open(encoding="utf-8") as handle:
                 loaded = json.load(handle)
             return normalize_workspace(loaded)
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             return empty_workspace()
 
 
@@ -1085,6 +1089,16 @@ def _workspace_updated_at(payload):
 
 def save_workspace(payload):
     with WORKSPACE_LOCK:
+        if WORKSPACE_PATH.exists():
+            existing = json.loads(WORKSPACE_PATH.read_text(encoding="utf-8"))
+            current = existing.get("portfolio")
+            if current:
+                proposed = payload.get("portfolio")
+                if proposed is None:
+                    # Pre-upgrade tabs may save their plan; they cannot erase the new ledger.
+                    payload = {**payload, "portfolio": current}
+                elif proposed != current and proposed.get("revision", -1) != current.get("revision", 0) + 1:
+                    raise PortfolioError("组合已更新，请刷新后重试")
         workspace = normalize_workspace(payload)
         workspace["updated_at"] = _workspace_updated_at(payload)
         temp_path = WORKSPACE_PATH.with_suffix(".json.tmp")

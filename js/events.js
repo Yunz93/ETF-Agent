@@ -184,7 +184,19 @@ export function bindEvents() {
   els.exportWorkspace?.addEventListener("click", exportWorkspaceBackup);
   els.importWorkspace?.addEventListener("click", () => els.importWorkspaceFile?.click());
   els.importWorkspaceFile?.addEventListener("change", importWorkspaceBackup);
-  els.syncWorkspaceNow?.addEventListener("click", () => {
+  els.syncWorkspaceNow?.addEventListener("click", async () => {
+    if (state.portfolioMode) {
+      try {
+        const {loadPortfolio} = await import("./portfolio-client.js");
+        await loadPortfolio();
+        const {renderSettings} = await import("./settings.js");
+        renderSettings();
+        if (els.workspaceStatus) { els.workspaceStatus.hidden = false; els.workspaceStatus.textContent = "已读取最新组合"; }
+      } catch(error) {
+        if (els.workspaceStatus) { els.workspaceStatus.hidden = false; els.workspaceStatus.textContent = error.message; }
+      }
+      return;
+    }
     try {
       if (workspaceRuntime.planFormReady) readPlanFormIntoState();
     } catch {
@@ -224,6 +236,7 @@ export function bindEvents() {
   window.addEventListener("resize", syncSidebarForViewport);
 
   window.addEventListener("beforeunload", () => {
+    if (state.portfolioMode) return;
     try {
       // 表单尚未从 state 回填前禁止回读，否则空表单会冲掉刚 hydrate 的计划并污染 localStorage
       if (workspaceRuntime.planFormReady) readPlanFormIntoState();
