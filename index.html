@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ETF Agent | 指数 ETF 工作台</title>
+    <title>ETF Agent | 指数决策工作台</title>
     <script>
       (function () {
         const stored = localStorage.getItem("stockagent.theme");
@@ -35,7 +35,7 @@
           <div class="brand-mark" aria-hidden="true">EA</div>
           <div class="brand-text">
             <p>ETF Agent</p>
-            <span>投资组合工作台</span>
+            <span>指数决策工作台</span>
           </div>
           <button id="mobileSidebarClose" class="mobile-sidebar-close ghost-button" type="button" aria-label="关闭导航">
             <span aria-hidden="true">×</span>
@@ -44,24 +44,26 @@
 
         <div class="sidebar-pool">
           <div class="sidebar-pool-heading">
-            <p>资产类别</p>
+            <p>跟踪指数</p>
             <span class="muted" id="sidebarPoolCount">0</span>
           </div>
-          <nav id="sidebarEtfList" class="sidebar-etf-list" aria-label="资产类别"></nav>
+          <nav id="sidebarEtfList" class="sidebar-etf-list" aria-label="跟踪指数"></nav>
         </div>
 
         <div class="sidebar-footer">
           <nav class="nav-stack nav-stack-footer" aria-label="工作区工具">
-            <button class="nav-item active" data-view="home" type="button" title="组合总览">
+            <button class="nav-item active" data-view="home" type="button" title="决策台">
               <span class="icon" aria-hidden="true">◎</span>
-              <span class="nav-label">组合总览</span>
+              <span class="nav-label">决策台</span>
             </button>
-            <button class="nav-item" data-view="assets" type="button" title="资产与持仓">
+            <button class="nav-item" data-view="assets" type="button" title="编辑组合">
               <span class="icon" aria-hidden="true">▣</span>
-              <span class="nav-label">资产与持仓</span>
+              <span class="nav-label">编辑组合</span>
             </button>
-            <button class="nav-item" data-view="transactions" type="button" title="交易记录"><span class="icon" aria-hidden="true">≡</span><span class="nav-label">交易记录</span></button>
-            <button class="nav-item" data-view="plans" type="button" title="投资计划"><span class="icon" aria-hidden="true">◷</span><span class="nav-label">投资计划</span></button>
+            <button class="nav-item" data-view="dividend" type="button" title="指数研究">
+              <span class="icon" aria-hidden="true">◉</span>
+              <span class="nav-label">指数研究</span>
+            </button>
             <button class="nav-item" data-view="settings" type="button" title="设置">
               <span class="icon" aria-hidden="true">⚙</span>
               <span class="nav-label">设置</span>
@@ -177,6 +179,6 @@
       </main>
     </div>
 
-    <script type="module" src="./js/main.js?v=20260916a"></script>
+    <script type="module" src="./js/main.js?v=20260928a"></script>
   </body>
 </html>

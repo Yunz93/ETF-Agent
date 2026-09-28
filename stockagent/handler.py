@@ -80,6 +80,11 @@ class Handler(BaseHTTPRequestHandler):
                 symbols = [part.strip() for part in raw.replace("，", ",").split(",") if part.strip()] or None
                 self.send_json({"items": analysis_support_map(symbols)})
                 return
+            if parsed.path == "/api/index/catalog":
+                from .decision_portfolio import index_instrument_catalog
+
+                self.send_json(index_instrument_catalog())
+                return
             if parsed.path == "/api/etf/quotes":
                 raw = query.get("symbols", [""])[0]
                 symbols = [part.strip() for part in raw.replace("，", ",").split(",") if part.strip()]

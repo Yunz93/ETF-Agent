@@ -44,7 +44,13 @@ class UnknownApiTests(unittest.TestCase):
         payload = json.loads(body)
         self.assertIn("error", payload)
 
-    def test_market_sentiment_route_returns_json(self):
+    def test_index_catalog_route_returns_json(self):
+        url = f"http://127.0.0.1:{self.port}/api/index/catalog"
+        with urllib.request.urlopen(url, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertIn("presets", payload)
+        self.assertIn("indexes", payload)
+        self.assertTrue(any(row.get("index_code") == "NDX" for row in payload["indexes"]))
         url = f"http://127.0.0.1:{self.port}/api/market/sentiment?markets=A"
         with urllib.request.urlopen(url, timeout=60) as response:
             body = response.read().decode("utf-8")

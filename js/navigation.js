@@ -3,7 +3,9 @@ import { appConfig, els, state } from "./state.js";
 import { callRenderer, registerRenderers, renderDividend, renderEtfPool, renderSettings, renderSidebarEtfs, openAnalysis } from "./views/render.js";
 
 export function switchView(view) {
-  if (state.portfolioMode && view === "etf") view = "plans";
+  if (state.portfolioMode && (view === "etf" || view === "plans" || view === "transactions")) {
+    view = "home";
+  }
   if (view === "dividend") {
     const symbol = state.analysisSymbol || defaultAnalysisSymbol();
     if (symbol) {
@@ -14,7 +16,10 @@ export function switchView(view) {
   }
   if (!PAGE_TITLES[view]) view = "home";
   state.activeView = view;
-  if (view !== "dividend") state.analysisSymbol = null;
+  if (view !== "dividend") {
+    state.analysisSymbol = null;
+    state.analysisLayer = "index";
+  }
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
   document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === `${view}View`));
   if (els.pageTitle) els.pageTitle.textContent = PAGE_TITLES[view] || "ETF Agent";
@@ -24,7 +29,7 @@ export function switchView(view) {
     else els.pageSubtitle.textContent = "";
   }
   document.querySelector(`#${view}View`)?.scrollIntoView({ block: "start" });
-  if (state.portfolioMode && ["home", "assets", "transactions", "plans"].includes(view)) callRenderer("renderPortfolio");
+  if (state.portfolioMode && ["home", "assets"].includes(view)) callRenderer("renderPortfolio");
   else if (view === "home" || view === "etf") renderEtfPool();
   if (view === "settings") renderSettings();
   renderSidebarEtfs();
@@ -33,6 +38,10 @@ export function switchView(view) {
 
 function defaultAnalysisSymbol() {
   const preferred = appConfig?.dividend?.etf_symbol || "512890";
+  const sleeves = state.decision?.sleeves || [];
+  const fromSleeve = sleeves[0]?.instruments?.find((row) => row.role === "primary")?.symbol
+    || sleeves[0]?.instruments?.[0]?.symbol;
+  if (fromSleeve) return fromSleeve;
   if (state.etfs.some((item) => item.symbol === preferred)) return preferred;
   return state.etfs[0]?.symbol || null;
 }

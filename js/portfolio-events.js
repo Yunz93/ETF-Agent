@@ -1,25 +1,25 @@
 import {els,state} from './state.js';
-import {exportWorkspaceBackup,importWorkspaceBackup} from './workspace.js';
+import {exportWorkspaceBackup,importWorkspaceBackup,hydrateWorkspace} from './workspace.js';
 import {saveAppConfig,renderSettings} from './settings.js';
-import {loadPortfolio} from './portfolio-client.js';
-import {refreshPortfolio,renderPortfolio} from './views/portfolio.js';
 import {renderDividend} from './views/render.js';
+import {syncDecisionProjection,renderDecision,openSleeve} from './views/decision.js';
 import {switchView,closeMobileSidebar,toggleMobileSidebar,toggleSidebar,toggleTheme,syncSidebarForViewport} from './navigation.js';
 
 export function bindEvents() {
   document.querySelectorAll('.nav-item').forEach(button=>button.addEventListener('click',()=>switchView(button.dataset.view)));
-  els.etfRefresh?.addEventListener('click',()=>state.activeView==='dividend'?renderDividend({force:true}):refreshPortfolio());
+  els.etfRefresh?.addEventListener('click',()=>state.activeView==='dividend'?renderDividend({force:true}):renderDecision({refresh:true}));
   els.saveConfig?.addEventListener('click',saveAppConfig);
   els.exportWorkspace?.addEventListener('click',exportWorkspaceBackup);
   els.importWorkspace?.addEventListener('click',()=>els.importWorkspaceFile?.click());
   els.importWorkspaceFile?.addEventListener('change',importWorkspaceBackup);
   els.syncWorkspaceNow?.addEventListener('click',async()=>{
     try {
-      await loadPortfolio();
+      await hydrateWorkspace();
+      syncDecisionProjection();
       renderSettings();
-      renderPortfolio();
+      renderDecision();
       els.workspaceStatus.hidden=false;
-      els.workspaceStatus.textContent='已读取最新组合';
+      els.workspaceStatus.textContent='已读取最新决策组合';
     } catch(error) {
       els.workspaceStatus.hidden=false;
       els.workspaceStatus.textContent=error.message;
@@ -40,4 +40,8 @@ export function bindEvents() {
     else if(!event.shiftKey&&document.activeElement===items.at(-1)) {event.preventDefault();items[0].focus();}
   });
   window.addEventListener('resize',syncSidebarForViewport);
+  els.sidebarEtfList?.addEventListener('click',event=>{
+    const sleeve=event.target.closest?.('[data-open-sleeve]');
+    if(sleeve) openSleeve(sleeve.dataset.openSleeve,'index');
+  });
 }

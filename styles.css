@@ -5056,3 +5056,63 @@ button:active {
     font-weight: 700;
   }
 }
+
+.decision-sleeve-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.decision-sleeve-card,
+.decision-sleeve-edit {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 12px);
+  background: color-mix(in oklab, var(--panel, transparent) 88%, transparent);
+}
+
+.decision-sleeve-card header,
+.decision-sleeve-edit .portfolio-heading,
+.analysis-chrome {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.decision-grade,
+.decision-sleeve-card .decision-grade {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.decision-instrument-chips {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  display: grid;
+  gap: 8px;
+}
+
+.decision-sleeve-actions,
+.analysis-layer-tabs,
+.analysis-sleeve-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.decision-weight-form {
+  align-items: end;
+}
+
+.analysis-chrome {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.decision-add-sleeve {
+  margin: 16px 0;
+}

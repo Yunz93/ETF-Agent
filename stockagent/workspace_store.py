@@ -6,6 +6,7 @@ import json
 
 from .defaults import DEFAULT_STRATEGY_CONFIG, DEFAULT_TARGET_WEIGHTS, DEFAULT_WORKSPACE
 from .investment_goal import normalize_investment_goal
+from .decision_portfolio import normalize_decision
 from .paths import WORKSPACE_LOCK, WORKSPACE_PATH
 from .symbols import as_of
 from .portfolio_ledger import PortfolioError, validate_portfolio
@@ -1030,6 +1031,10 @@ def normalize_workspace(payload):
     if payload.get("portfolio") is not None:
         workspace["portfolio"] = validate_portfolio(payload["portfolio"])
         workspace["version"] = 11
+    workspace["decision"] = normalize_decision(
+        payload.get("decision"),
+        portfolio=workspace.get("portfolio"),
+    )
     workspace["updated_at"] = payload.get("updated_at") or as_of(None)
     return workspace
 
@@ -1060,13 +1065,13 @@ def get_workspace():
             except Exception:
                 pass
         if not WORKSPACE_PATH.exists():
-            return empty_workspace()
+            return normalize_workspace({})
         try:
             with WORKSPACE_PATH.open(encoding="utf-8") as handle:
                 loaded = json.load(handle)
             return normalize_workspace(loaded)
         except (OSError, json.JSONDecodeError):
-            return empty_workspace()
+            return normalize_workspace({})
 
 
 def _workspace_updated_at(payload):
