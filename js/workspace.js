@@ -1,4 +1,4 @@
-import { WORKSPACE_CACHE_KEY, WORKSPACE_SYNC_DEBOUNCE_MS, DEFAULT_TARGET_WEIGHTS } from "./constants.js";
+import { WORKSPACE_CACHE_KEY, WORKSPACE_SYNC_DEBOUNCE_MS } from "./constants.js";
 import { appConfig, els, state, workspaceRuntime } from "./state.js";
 import { loadJSON, saveJSON } from "./utils.js";
 import {
@@ -8,7 +8,6 @@ import {
 } from "./backup.js";
 import {
   chooseWorkspaceSource,
-  clampWeight,
   normalizeBuys,
   normalizeDecisionHistory,
   normalizeExecutionDrafts,
@@ -18,6 +17,7 @@ import {
   normalizeWorkspaceEntries,
   WORKSPACE_VERSION,
 } from "./workspace_model.js";
+import { defaultDecision, normalizeDecision, projectDecisionEtfs } from "./decision-model.js";
 
 export function buildWorkspacePayload() {
   return {
@@ -26,6 +26,7 @@ export function buildWorkspacePayload() {
     buys: state.buys,
     sells: state.sells,
     plan: state.plan,
+    decision: state.decision || defaultDecision(),
     execution_drafts: state.executionDrafts || [],
     execution_drafts_meta: normalizeExecutionDraftsMeta(state.execDraftsMeta || {}),
     decision_history: normalizeDecisionHistory(state.decisionHistory || []),
@@ -55,11 +56,13 @@ export function writeLocalWorkspaceCache({ updatedAt = null } = {}) {
 }
 
 function applyWorkspace(payload, source) {
-  if (!payload || !Array.isArray(payload.etfs)) return false;
-  state.etfs = normalizeWorkspaceEntries(payload.etfs);
+  if (!payload || (!Array.isArray(payload.etfs) && !payload.decision)) return false;
+  state.etfs = normalizeWorkspaceEntries(payload.etfs || []);
   state.buys = normalizeBuys(payload.buys || []);
   state.sells = normalizeSells(payload.sells || []);
   state.plan = normalizePlan(payload.plan);
+  state.decision = normalizeDecision(payload.decision, { portfolio: payload.portfolio });
+  state.etfs = projectDecisionEtfs(state.decision);
   state.executionDrafts = normalizeExecutionDrafts(payload.execution_drafts || []);
   state.execDraftsMeta = normalizeExecutionDraftsMeta(payload.execution_drafts_meta || {});
   state.decisionHistory = normalizeDecisionHistory(payload.decision_history || []);
@@ -68,21 +71,14 @@ function applyWorkspace(payload, source) {
 }
 
 function seedDefaultPool() {
-  const pool = appConfig?.etf?.pool || [];
-  state.etfs = pool.map((item) => ({
-    symbol: String(item.symbol),
-    name: String(item.name || ""),
-    shares: 0,
-    cost: 0,
-    target_weight: clampWeight(DEFAULT_TARGET_WEIGHTS[item.symbol] || 0),
-    note: "",
-  }));
   state.buys = [];
   state.sells = [];
   state.executionDrafts = [];
   state.execDraftsMeta = normalizeExecutionDraftsMeta(null);
   state.decisionHistory = [];
   state.plan = normalizePlan(null);
+  state.decision = defaultDecision();
+  state.etfs = projectDecisionEtfs(state.decision);
   state.workspaceSync.source = "default-pool";
 }
 
@@ -110,7 +106,7 @@ export async function hydrateWorkspace() {
       cacheUpdatedAt = state.workspaceSync.updatedAt;
     }
   } catch (error) {
-    if (local && Array.isArray(local.etfs) && local.etfs.length) {
+    if (local && ((Array.isArray(local.etfs) && local.etfs.length) || local.decision?.sleeves?.length)) {
       applyWorkspace(local, "local-cache");
       cacheUpdatedAt = local.updated_at || null;
     } else {

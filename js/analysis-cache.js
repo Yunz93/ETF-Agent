@@ -21,6 +21,10 @@ export function analysisCacheKey(symbol) {
 }
 
 function poolSymbols() {
+  const fromDecision = (state.decision?.sleeves || []).flatMap((sleeve) =>
+    (sleeve.instruments || []).map((row) => row.symbol).filter(Boolean),
+  );
+  if (fromDecision.length) return [...new Set(fromDecision)];
   return (state.etfs || []).map((item) => item.symbol).filter(Boolean);
 }
 

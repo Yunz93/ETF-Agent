@@ -31,6 +31,12 @@ import {
 import { callRenderer, registerRenderers } from "./render.js";
 import { persistWorkspace } from "../workspace.js";
 import {
+  kindLabel,
+  primaryInstrument,
+  sleeveById,
+  sleeveBySymbol,
+} from "../decision-model.js";
+import {
   orderActionLabel,
   positionGlance,
 } from "../decision-status.js";
@@ -129,28 +135,36 @@ function fmtSigned(value, digits = 2, suffix = "") {
 }
 
 function syncAnalysisChrome(payload) {
+  const sleeve = currentAnalysisSleeve();
   const symbol = state.analysisSymbol;
-  const indexName = payload?.index_name || payload?.name || symbol || "指数";
+  const indexName = sleeve?.name || payload?.index_name || payload?.name || symbol || "指数";
   const etfName = payload?.etf?.symbol_name || payload?.etf?.name || payload?.etf_name || "";
-  const fundTitle = etfName
-    ? symbol
-      ? `${etfName} · ${symbol}`
-      : etfName
-    : symbol || indexName || "分析";
+  const layer = state.analysisLayer === "instrument" ? "品种跟踪" : "指数分析";
+  const title = sleeve ? `${sleeve.name} · ${layer}` : etfName || symbol || indexName;
   const proxy = payload?.analysis_mode === "etf_proxy";
 
-  if (els.pageTitle) els.pageTitle.textContent = fundTitle;
+  if (els.pageTitle) els.pageTitle.textContent = title;
   if (els.pageSubtitle) {
-    const text = indexName
-      ? proxy
-        ? `跟踪指数：${indexName} · ETF 口径`
-        : `跟踪指数：${indexName}`
-      : "";
+    const text = sleeve
+      ? `跟踪 ${sleeve.index_code}${proxy ? " · ETF 口径" : ""}${etfName ? ` · 主品种 ${etfName}` : ""}`
+      : indexName
+        ? proxy
+          ? `跟踪指数：${indexName} · ETF 口径`
+          : `跟踪指数：${indexName}`
+        : "";
     if (els.pageSubtitleText) els.pageSubtitleText.textContent = text;
     else els.pageSubtitle.textContent = text;
     els.pageSubtitle.hidden = !text;
   }
   syncDividendDataStatus(payload);
+}
+
+function currentAnalysisSleeve() {
+  return (
+    sleeveById(state.decision, state.analysisSleeveId) ||
+    sleeveBySymbol(state.decision, state.analysisSymbol) ||
+    null
+  );
 }
 
 /** 分析状态统一写在顶栏 topSourceStatus；dividendStatus 仅作错误兜底。 */
@@ -238,18 +252,33 @@ export async function renderDividend({ force = false } = {}) {
 
 /** 打开某只池内 ETF 的分析页。 */
 export async function openAnalysis(symbol = null) {
+  const sleeveHint = currentAnalysisSleeve();
   if (!symbol) {
+    symbol = primaryInstrument(sleeveHint)?.symbol || null;
     const preferred = appConfig?.dividend?.etf_symbol || "512890";
-    symbol = state.etfs.find((item) => item.symbol === preferred)?.symbol || state.etfs[0]?.symbol || null;
+    symbol = symbol
+      || state.etfs.find((item) => item.symbol === preferred)?.symbol
+      || state.etfs[0]?.symbol
+      || null;
   }
   if (!symbol) {
     callRenderer("switchView", "home");
     return;
   }
+  const sleeve = sleeveBySymbol(state.decision, symbol) || sleeveHint;
+  if (sleeve) {
+    state.analysisSleeveId = sleeve.id;
+    const primary = primaryInstrument(sleeve);
+    if (state.analysisLayer !== "instrument" && primary?.symbol) {
+      symbol = primary.symbol;
+    }
+  }
   prioritizeAnalysis(symbol);
   state.analysisSymbol = symbol;
   state.activeView = "dividend";
-  document.querySelectorAll(".nav-item").forEach((button) => button.classList.remove("active"));
+  document.querySelectorAll(".nav-item").forEach((button) => {
+    button.classList.toggle("active", button.dataset.view === "dividend");
+  });
   document.querySelectorAll(".view").forEach((section) => {
     section.classList.toggle("active", section.id === "dividendView");
   });
@@ -1178,13 +1207,13 @@ function vehicleQualityHtml(context) {
     ["当日成交量", optionalMetric(volume, (value) => `${value}（行情源口径）`)],
     ["基金规模", optionalMetric(metadata.fund_size_yi, (value) => `${fmt(value, 2)} 亿元`)],
     ["综合费率", optionalMetric(metadata.annual_fee_pct, (value) => `${fmt(value, 2)}% / 年`)],
-    ["价格偏离波动", optionalMetric(metadata.price_deviation_volatility_pct, (value) => `${fmt(value, 2)}%（收盘价口径，非净值跟踪误差）`)],
+    ["价格偏离波动", optionalMetric(metadata.price_deviation_volatility_pct, (value) => `${fmt(value, 2)}%（相对指数收盘价，非官方净值跟踪误差）`)],
     ["溢价 / 折价", optionalMetric(metadata.premium_discount_pct, (value) => `${fmtSigned(value, 2, "%")}`)],
     ["买卖价差", optionalMetric(metadata.bid_ask_spread_pct, (value) => `${fmt(value, 3)}%`)],
   ];
   return `
     <section class="panel-block decision-detail-card decision-secondary" aria-label="ETF 交易质量">
-      <div class="panel-heading"><div><h2 class="section-title">ETF 交易质量</h2></div></div>
+      <div class="panel-heading"><div><h2 class="section-title">品种交易质量</h2></div></div>
       <dl class="decision-quality-grid">
         ${rows.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join("")}
       </dl>
@@ -1300,16 +1329,6 @@ function buildIndexChartMarkers(payload) {
   if (markerValues.boll_upper != null) markers.push({ key: "tp", label: "布林上轨", value: markerValues.boll_upper });
   if (markerValues.boll_lower != null) markers.push({ key: "sl", label: "布林下轨", value: markerValues.boll_lower });
   const symbol = state.analysisSymbol || payload?.symbol || "";
-  markers.push(
-    ...buyEventMarkers(
-      (state.buys || []).filter((item) => item.symbol === symbol),
-      { useBuyPrice: false },
-    ),
-    ...sellEventMarkers(
-      (state.sells || []).filter((item) => item.symbol === symbol),
-      { useSellPrice: false },
-    ),
-  );
   return markers;
 }
 
@@ -1333,6 +1352,98 @@ function commentaryHtml() {
   const lines = Array.isArray(raw) ? raw.filter(Boolean) : [];
   if (!lines.length) return '<p class="muted">暂无盘面点评。</p>';
   return `<ol class="dividend-commentary">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ol>`;
+}
+
+function analysisChromeHtml() {
+  const sleeves = state.decision?.sleeves || [];
+  const sleeve = currentAnalysisSleeve();
+  const layer = state.analysisLayer === "instrument" ? "instrument" : "index";
+  return `
+    <div class="analysis-chrome">
+      <div class="analysis-sleeve-switch" role="tablist" aria-label="指数袖子">
+        ${sleeves
+          .map(
+            (row) => `<button type="button" class="segment-button${row.id === sleeve?.id ? " active" : ""}" data-switch-sleeve="${escapeAttr(row.id)}">${escapeHtml(row.name)}</button>`,
+          )
+          .join("")}
+      </div>
+      <div class="analysis-layer-tabs" role="tablist" aria-label="分析层级">
+        <button type="button" class="segment-button${layer === "index" ? " active" : ""}" data-analysis-layer="index">指数分析</button>
+        <button type="button" class="segment-button${layer === "instrument" ? " active" : ""}" data-analysis-layer="instrument">品种跟踪</button>
+      </div>
+    </div>
+  `;
+}
+
+function indexJudgmentHtml() {
+  const payload = currentPayload() || {};
+  const score = payload.score || {};
+  const grade = score.grade || "—";
+  const tone = GRADE_TONES[grade] || "grade-c";
+  const pe = payload.valuation?.pe_percentile_10y;
+  const action = score.action || "观察";
+  return `
+    <section class="panel-block dividend-advice dividend-conclusion-card ${tone}" aria-label="指数层判断">
+      <div class="panel-heading">
+        <div>
+          <h2 class="section-title">指数层判断</h2>
+          <p class="muted">只评估跟踪指数本身，不产生下单金额或记账。</p>
+        </div>
+        <strong class="dividend-grade-mark">${escapeHtml(grade)}</strong>
+      </div>
+      <p class="dividend-conclusion-headline">${escapeHtml(action)}</p>
+      <p class="muted">综合评分 ${score.total == null ? "—" : Math.round(score.total)} · PE 近 10 年分位 ${pe == null ? "—" : `${Math.round(pe * 100)}%`}</p>
+    </section>
+  `;
+}
+
+function instrumentLayerHtml() {
+  const sleeve = currentAnalysisSleeve();
+  const payload = currentPayload() || {};
+  const selected = state.analysisInstrument || state.analysisSymbol;
+  if (!sleeve) {
+    return `<section class="panel-block"><p class="muted">先在决策台把该品种纳入某个指数袖子。</p></section>`;
+  }
+  const rows = (sleeve.instruments || [])
+    .map((row) => {
+      const cached = row.symbol === selected ? payload : getCachedAnalysis(row.symbol);
+      const quality = cached?.etf?.product_quality || {};
+      const tracking = quality.price_deviation_volatility_pct;
+      const premium = quality.premium_discount_pct;
+      const fee = quality.annual_fee_pct;
+      const active = row.symbol === selected;
+      return `<tr class="${active ? "is-editing" : ""}">
+        <td><button class="link-button" type="button" data-select-instrument="${escapeAttr(row.symbol)}">${escapeHtml(row.name)}</button><small>${escapeHtml(row.symbol)}</small></td>
+        <td>${escapeHtml(kindLabel(row.kind))}</td>
+        <td>${row.role === "primary" ? "主品种" : "备选"}</td>
+        <td class="num">${row.kind === "fund" ? "场外无实时溢价" : premium == null ? "—" : `${Number(premium).toFixed(2)}%`}</td>
+        <td class="num">${tracking == null ? "—" : `${Number(tracking).toFixed(2)}%`}</td>
+        <td class="num">${fee == null ? "—" : `${Number(fee).toFixed(2)}%`}</td>
+      </tr>`;
+    })
+    .join("");
+  const selectedRow = (sleeve.instruments || []).find((row) => row.symbol === selected);
+  const fundNote = selectedRow?.kind === "fund"
+    ? `<p class="muted">场外基金没有盘中溢价；跟踪误差需净值序列。当前仅展示已纳入组合的代码与费率口径。</p>`
+    : "";
+  return `
+    <section class="panel-block" aria-label="品种跟踪">
+      <div class="panel-heading">
+        <div>
+          <h2 class="section-title">品种跟踪 · ${escapeHtml(sleeve.name)}</h2>
+          <p class="muted">跟踪误差、溢价和费率体现在具体 ETF / 场外基金上，而不是指数层。</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="portfolio-table">
+          <thead><tr><th>品种</th><th>渠道</th><th>角色</th><th>溢价/折价</th><th>价格偏离波动</th><th>综合费率</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${fundNote}
+    </section>
+    ${vehicleQualityHtml({ symbol: selected })}
+  `;
 }
 
 function paintDividend() {
@@ -1361,34 +1472,17 @@ function paintDividend() {
   els.dividendContent.hidden = false;
   const advice = currentPeriodAdvice();
   const context = decisionContext(advice);
-  const addPlanEntry = state.etfs.find((item) => item.symbol === context.symbol);
-  const addPlanPrice = payload.etf?.price != null ? payload.etf.price : payload.index?.close;
-  // 有可用档位才渲染；放在持仓对照同列底部，与本期结论底端对齐
-  const addPlan = addPlanHtml(
-    addPlanEntry,
-    addPlanPrice,
-    {
-      ...advice,
-      amount: context.cycle.remainingAmount,
-    },
-    payload,
-  );
+  const layer = state.analysisLayer === "instrument" ? "instrument" : "index";
   const indexCode = String(payload.index_code || payload.index?.code ||
     appConfig?.etf?.analysis_registry?.[context.symbol]?.index_code || "").toUpperCase();
   const usIndexCode = indexCode === "SPX" || indexCode === "NDX" ? indexCode : null;
-  els.dividendContent.innerHTML = `
-    ${errorsHtml()}
+  const indexBody = `
     <div class="dividend-hero">
-      ${dcaAdviceHtml(advice, context)}
-      <div class="dividend-hero-aside-stack">
-        ${holdingsCardHtml(advice, context)}
-        ${addPlan}
-      </div>
+      ${indexJudgmentHtml()}
       ${scoreCardHtml()}
       ${metricsCardHtml()}
     </div>
     <div class="decision-detail-grid">
-      ${vehicleQualityHtml(context)}
       ${riskAndConfidenceHtml(context)}
     </div>
     ${usIndexCode ? `<section class="panel-block decision-secondary" aria-label="美股市场判断">
@@ -1397,8 +1491,8 @@ function paintDividend() {
     </section>` : ""}
     <section class="panel-block dividend-chart-block">
       <div class="panel-heading">
-        <h2 class="section-title">ETF 走势</h2>
-        <div class="range-segment" role="group" aria-label="ETF 走势区间">
+        <h2 class="section-title">指数走势</h2>
+        <div class="range-segment" role="group" aria-label="指数走势区间">
           ${Object.entries(INDEX_CHART_RANGE_LABELS)
             .map(
               ([key, label]) => `
@@ -1409,11 +1503,11 @@ function paintDividend() {
         </div>
       </div>
       <div class="price-chart-shell">
-        <canvas id="dividendChart" width="960" height="360" aria-label="ETF 价格走势"></canvas>
+        <canvas id="dividendChart" width="960" height="360" aria-label="指数价格走势"></canvas>
         <div class="price-tooltip" id="dividendChartTooltip" hidden></div>
       </div>
       <div class="chart-narrative-block">
-        <div id="dividendChartNarrative" aria-label="ETF 走势解读">${chartNarrativeHtml(payload)}</div>
+        <div id="dividendChartNarrative" aria-label="走势解读">${chartNarrativeHtml(payload)}</div>
       </div>
     </section>
     <section class="panel-block">
@@ -1425,6 +1519,11 @@ function paintDividend() {
       ${commentaryHtml()}
     </section>
     ${aiReviewHtml(advice, context)}
+  `;
+  els.dividendContent.innerHTML = `
+    ${analysisChromeHtml()}
+    ${errorsHtml()}
+    ${layer === "instrument" ? instrumentLayerHtml() : indexBody}
     <section class="panel-block dividend-sources decision-secondary">
       <div class="panel-heading">
         <div>
@@ -1437,9 +1536,9 @@ function paintDividend() {
 
   const canvas = els.dividendContent.querySelector("#dividendChart");
   const tooltip = els.dividendContent.querySelector("#dividendChartTooltip");
-  drawIndexChart(payload, canvas, tooltip, buildIndexChartMarkers(payload));
+  if (canvas) drawIndexChart(payload, canvas, tooltip, buildIndexChartMarkers(payload));
   bindIndexChartRangeControls();
-  if (usIndexCode) void paintUSMarketJudgment(usIndexCode, context.symbol);
+  if (layer !== "instrument" && usIndexCode) void paintUSMarketJudgment(usIndexCode, context.symbol);
 }
 
 function sliceIndexChartPoints(points, rangeKey) {
@@ -1469,6 +1568,37 @@ function bindIndexChartRangeControls() {
   if (!els.dividendContent || indexChartBound) return;
   indexChartBound = true;
   els.dividendContent.addEventListener("click", (event) => {
+    const layerBtn = event.target.closest?.("[data-analysis-layer]");
+    if (layerBtn && els.dividendContent.contains(layerBtn)) {
+      const next = layerBtn.dataset.analysisLayer === "instrument" ? "instrument" : "index";
+      if (state.analysisLayer === next) return;
+      state.analysisLayer = next;
+      const sleeve = currentAnalysisSleeve();
+      const primary = primaryInstrument(sleeve);
+      if (next === "index" && primary?.symbol) {
+        state.analysisSymbol = primary.symbol;
+        void openAnalysis(primary.symbol);
+      } else {
+        const symbol = state.analysisInstrument || primary?.symbol || state.analysisSymbol;
+        state.analysisInstrument = symbol;
+        void openAnalysis(symbol);
+      }
+      return;
+    }
+    const switchSleeve = event.target.closest?.("[data-switch-sleeve]");
+    if (switchSleeve && els.dividendContent.contains(switchSleeve)) {
+      import("./decision.js").then(({ openSleeve: open }) =>
+        open(switchSleeve.dataset.switchSleeve, state.analysisLayer || "index"),
+      );
+      return;
+    }
+    const selectInstrument = event.target.closest?.("[data-select-instrument]");
+    if (selectInstrument && els.dividendContent.contains(selectInstrument)) {
+      state.analysisLayer = "instrument";
+      state.analysisInstrument = selectInstrument.dataset.selectInstrument;
+      void openAnalysis(selectInstrument.dataset.selectInstrument);
+      return;
+    }
     if (event.target.closest?.("[data-save-add-plan]")) {
       const entry = state.etfs.find((row) => row.symbol === state.analysisSymbol);
       const advice = currentPeriodAdvice();

@@ -3,11 +3,11 @@ export const CURRENCY = {
 };
 
 export const PAGE_TITLES = {
-  home: "组合总览",
-  assets: "资产与持仓",
+  home: "决策台",
+  assets: "编辑组合",
   transactions: "交易记录",
   plans: "投资计划",
-  dividend: "分析",
+  dividend: "指数研究",
   etf: "定投计划",
   settings: "设置",
 };
