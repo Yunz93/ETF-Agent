@@ -3,10 +3,7 @@ export const CURRENCY = {
 };
 
 export const PAGE_TITLES = {
-  home: "组合总览",
-  assets: "资产与持仓",
-  transactions: "交易记录",
-  plans: "投资计划",
+  home: "今日执行",
   dividend: "分析",
   etf: "定投计划",
   settings: "设置",
